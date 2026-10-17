@@ -81,16 +81,44 @@ TextStyle barClockStyle(Color color) => AmalfiType.bodyEmphasis(color: color);
 /// `menuTitle`.
 const List<String> genericMenus = ['file', 'edit', 'view', 'window', 'help'];
 
-/// Date and time as in the bar: "Lun 12 ott  22:15" (double space between date and time).
-String clockText(DateTime t, [String locale = 'en']) {
+/// Date and time as in the bar: "Lun 12 ott  22:15" (double space between date and time),
+/// as [style] says (Settings › Date & Time): 12 or 24 hours, seconds, the weekday, the date.
+String clockText(
+  DateTime t, [
+  String locale = 'en',
+  ClockStyle style = const ClockStyle(),
+]) {
   _dates ??= initializeDateFormatting();
-  final date = DateFormat('EEE d MMM', locale).format(t);
-  final hh = t.hour.toString().padLeft(2, '0');
-  final mm = t.minute.toString().padLeft(2, '0');
-  // The weekday starts with a capital, as in the bar ("Mon", "Lun").
-  final shown = date.isEmpty ? date : date[0].toUpperCase() + date.substring(1);
-  return '$shown  $hh:$mm';
+  final seconds = style.seconds
+      ? ':${t.second.toString().padLeft(2, '0')}'
+      : '';
+  final String time;
+  if (style.hour24) {
+    final hh = t.hour.toString().padLeft(2, '0');
+    final mm = t.minute.toString().padLeft(2, '0');
+    time = '$hh:$mm$seconds';
+  } else {
+    final hour = t.hour % 12 == 0 ? 12 : t.hour % 12;
+    final mm = t.minute.toString().padLeft(2, '0');
+    final meridiem = DateFormat('a', locale).format(t);
+    time = '$hour:$mm$seconds $meridiem';
+  }
+  if (style.date == ClockDate.never) {
+    // Without the date the weekday alone stays, if asked for.
+    if (!style.weekday) return time;
+    final day = DateFormat('EEE', locale).format(t);
+    return '${_capital(day)} $time';
+  }
+  final date = DateFormat(
+    style.weekday ? 'EEE d MMM' : 'd MMM',
+    locale,
+  ).format(t);
+  return '${_capital(date)}  $time';
 }
+
+// The weekday starts with a capital, as in the bar ("Mon", "Lun").
+String _capital(String text) =>
+    text.isEmpty ? text : text[0].toUpperCase() + text.substring(1);
 
 /// The date symbols of every intl locale, loaded once (synchronously, from the package).
 Future<void>? _dates;
@@ -348,12 +376,14 @@ class _MenuBarState extends State<MenuBar> {
 
   RecentItems _loadRecent() {
     final entries = widget.entries ?? const <String, DesktopEntry>{};
+    // Settings › Menu Bar › recent items: how many of each.
+    final count = _config.value.recentItems;
     return RecentItems(
       apps: [
         for (final id in RecentApps().load())
           if (entries[id] case final e?) e,
-      ],
-      documents: RecentItems.loadDocuments(),
+      ].take(count).toList(),
+      documents: RecentItems.loadDocuments(limit: count),
     );
   }
 
@@ -514,6 +544,8 @@ class _MenuBarState extends State<MenuBar> {
     super.initState();
     _layer = LayerControl.of(context);
     _config.addListener(_changed);
+    // Seconds shown or hidden: the clock ticks at another pace.
+    _config.addListener(_scheduleTick);
     ShellChannel.instance.toplevels.addListener(_changed);
     ShellChannel.instance.focused.addListener(_changed);
     ShellChannel.instance.appMenu.addListener(_changed);
@@ -693,17 +725,22 @@ class _MenuBarState extends State<MenuBar> {
     _layer.size(0, barHeight);
   }
 
-  // The next minute, aligned with the clock.
+  // The next minute (the next second with seconds shown), aligned with the clock.
   void _scheduleTick() {
     if (widget.now != null) return;
+    _timer?.cancel();
     final now = DateTime.now();
-    final next = DateTime(
-      now.year,
-      now.month,
-      now.day,
-      now.hour,
-      now.minute + 1,
-    );
+    final seconds = _config.value.clock.seconds;
+    final next = seconds
+        ? DateTime(
+            now.year,
+            now.month,
+            now.day,
+            now.hour,
+            now.minute,
+            now.second + 1,
+          )
+        : DateTime(now.year, now.month, now.day, now.hour, now.minute + 1);
     _timer = Timer(next.difference(now), () {
       _changed();
       _scheduleTick();
@@ -713,6 +750,7 @@ class _MenuBarState extends State<MenuBar> {
   @override
   void dispose() {
     _config.removeListener(_changed);
+    _config.removeListener(_scheduleTick);
     _ownConfig?.dispose();
     _timer?.cancel();
     _switchTimer?.cancel();
@@ -824,6 +862,7 @@ class _MenuBarState extends State<MenuBar> {
                     clockText(
                       widget.now ?? DateTime.now(),
                       l10nOf(context).localeName,
+                      _config.value.clock,
                     ),
                     barClockStyle,
                     key: _keyFor('clock'),

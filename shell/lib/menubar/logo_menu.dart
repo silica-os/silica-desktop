@@ -34,7 +34,10 @@ class RecentItems {
 
   /// The documents of `recently-used.xbel` (freedesktop recent files), newest first, only
   /// local files that still exist and were used after the last "Clear Menu".
-  static List<String> loadDocuments({Map<String, String>? env}) {
+  static List<String> loadDocuments({
+    Map<String, String>? env,
+    int limit = RecentItems.limit,
+  }) {
     final e = env ?? Platform.environment;
     final home = e['HOME'] ?? '';
     final data = e['XDG_DATA_HOME'] ?? '$home/.local/share';

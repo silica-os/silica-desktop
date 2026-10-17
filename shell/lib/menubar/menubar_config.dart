@@ -16,6 +16,56 @@ import 'package:flutter/foundation.dart';
 
 enum SoundItem { always, active, never }
 
+/// When the bar's clock shows the date (menubar.json `clock.date`).
+enum ClockDate { auto, always, never }
+
+/// The clock's format (menubar.json `clock`, Settings › Date & Time). `hour24` absent is 24
+/// hours: the 12/24 preference of the system language is not read yet.
+@immutable
+class ClockStyle {
+  const ClockStyle({
+    this.hour24 = true,
+    this.seconds = false,
+    this.weekday = true,
+    this.date = ClockDate.auto,
+  });
+
+  final bool hour24;
+  final bool seconds;
+  final bool weekday;
+  final ClockDate date;
+
+  factory ClockStyle.fromJson(Object? json) {
+    if (json is! Map) return const ClockStyle();
+    bool flag(String key, bool fallback) =>
+        json[key] is bool ? json[key] as bool : fallback;
+    return ClockStyle(
+      hour24: flag('hour24', true),
+      seconds: flag('seconds', false),
+      weekday: flag('weekday', true),
+      date: switch (json['date']) {
+        'always' => ClockDate.always,
+        'never' => ClockDate.never,
+        _ => ClockDate.auto,
+      },
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is ClockStyle &&
+      other.hour24 == hour24 &&
+      other.seconds == seconds &&
+      other.weekday == weekday &&
+      other.date == date;
+
+  @override
+  int get hashCode => Object.hash(hour24, seconds, weekday, date);
+}
+
+/// The counts Settings offers for the recent items (menubar.json `recentItems`).
+const List<int> recentItemChoices = [0, 5, 10, 15, 20, 30, 50];
+
 @immutable
 class MenubarConfig {
   const MenubarConfig({
@@ -24,6 +74,8 @@ class MenubarConfig {
     this.battery = true,
     this.batteryPercent = false,
     this.focus = false,
+    this.clock = const ClockStyle(),
+    this.recentItems = 10,
   });
 
   final SoundItem sound;
@@ -34,6 +86,12 @@ class MenubarConfig {
   /// The Focus moon always shown (Control Center › Copy to Menu Bar); otherwise only while a
   /// Focus is on.
   final bool focus;
+
+  /// The clock's format.
+  final ClockStyle clock;
+
+  /// How many recent applications and documents the Apple-menu equivalent lists (0: none).
+  final int recentItems;
 
   factory MenubarConfig.fromJson(Object? json) {
     if (json is! Map) return const MenubarConfig();
@@ -50,6 +108,11 @@ class MenubarConfig {
       battery: flag('battery', true),
       batteryPercent: flag('batteryPercent', false),
       focus: flag('focus', false),
+      clock: ClockStyle.fromJson(json['clock']),
+      recentItems: switch (json['recentItems']) {
+        final int n when recentItemChoices.contains(n) => n,
+        _ => 10,
+      },
     );
   }
 
@@ -60,11 +123,20 @@ class MenubarConfig {
       other.bluetooth == bluetooth &&
       other.battery == battery &&
       other.batteryPercent == batteryPercent &&
-      other.focus == focus;
+      other.focus == focus &&
+      other.clock == clock &&
+      other.recentItems == recentItems;
 
   @override
-  int get hashCode =>
-      Object.hash(sound, bluetooth, battery, batteryPercent, focus);
+  int get hashCode => Object.hash(
+    sound,
+    bluetooth,
+    battery,
+    batteryPercent,
+    focus,
+    clock,
+    recentItems,
+  );
 }
 
 /// The configuration file's path.
