@@ -370,6 +370,7 @@ trait System {
         &self,
         settings: HashMap<&str, zbus::zvariant::Value<'_>>,
     ) -> zbus::Result<()>;
+    fn set_look(&self, settings: HashMap<&str, zbus::zvariant::Value<'_>>) -> zbus::Result<()>;
     #[zbus(signal)]
     fn changed(&self, state: HashMap<String, OwnedValue>) -> zbus::Result<()>;
 }
@@ -438,6 +439,7 @@ fn reads_and_changes_the_system() {
                 wpctl,
                 poll: Duration::from_millis(50),
                 appearance_file: Some(dir.join("appearance.json")),
+                theme_file: Some(dir.join("theme.json")),
                 nightlight_file: Some(dir.join("nightlight.json")),
                 power_file: Some(dir.join("power.json")),
                 focus_file: Some(dir.join("focus.json")),
@@ -596,6 +598,7 @@ fn missing_sources_are_absent_not_errors() {
                 wpctl: dir.join("no-wpctl"),
                 poll: Duration::from_millis(50),
                 appearance_file: Some(dir.join("appearance.json")),
+                theme_file: Some(dir.join("theme.json")),
                 nightlight_file: Some(dir.join("nightlight.json")),
                 power_file: Some(dir.join("power.json")),
                 focus_file: Some(dir.join("focus.json")),
@@ -640,6 +643,34 @@ fn missing_sources_are_absent_not_errors() {
             assert!(!get::<bool>(&state, "input.mouse"));
             assert!(!state.contains_key("evil"));
             assert!(proxy.report_compositor("[1]").await.is_err());
+
+            // The look: the default, then what Settings sets; a bad value changes nothing.
+            let state = proxy.state().await.unwrap();
+            assert_eq!(get::<String>(&state, "look.accent"), "multicolour");
+            assert_eq!(get::<String>(&state, "look.scrollClick"), "page");
+            proxy
+                .set_look(HashMap::from([
+                    ("accent", "green".into()),
+                    ("scrollClick", "spot".into()),
+                    ("glass", 0.25f64.into()),
+                    ("windowTint", true.into()),
+                ]))
+                .await
+                .unwrap();
+            let state = wait_for(&proxy, |s| get::<String>(s, "look.accent") == "green").await;
+            assert_eq!(get::<String>(&state, "look.scrollClick"), "spot");
+            assert_eq!(get::<f64>(&state, "look.glass"), 0.25);
+            assert!(get::<bool>(&state, "look.windowTint"));
+            assert!(
+                proxy
+                    .set_look(HashMap::from([("accent", "mauve".into())]))
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                get::<String>(&proxy.state().await.unwrap(), "look.accent"),
+                "green"
+            );
         };
         run_test(test, service.run()).await;
     });
@@ -690,6 +721,7 @@ fn displays_and_night_light_go_through_ossido() {
                 wpctl: dir.join("no-wpctl"),
                 poll: Duration::from_millis(50),
                 appearance_file: Some(dir.join("appearance.json")),
+                theme_file: Some(dir.join("theme.json")),
                 nightlight_file: Some(dir.join("nightlight.json")),
                 power_file: Some(dir.join("power.json")),
                 focus_file: Some(dir.join("focus.json")),
@@ -796,6 +828,7 @@ fn automatic_appearance_follows_the_sun() {
                 wpctl: dir.join("no-wpctl"),
                 poll: Duration::from_millis(50),
                 appearance_file: Some(dir.join("appearance.json")),
+                theme_file: Some(dir.join("theme.json")),
                 nightlight_file: Some(dir.join("nightlight.json")),
                 power_file: Some(dir.join("power.json")),
                 focus_file: Some(dir.join("focus.json")),
@@ -905,6 +938,7 @@ fn energy_inhibits_idle_sleep_and_suspends_through_logind() {
                 wpctl: dir.join("no-wpctl"),
                 poll: Duration::from_millis(50),
                 appearance_file: Some(dir.join("appearance.json")),
+                theme_file: Some(dir.join("theme.json")),
                 nightlight_file: Some(dir.join("nightlight.json")),
                 power_file: Some(dir.join("power.json")),
                 focus_file: Some(dir.join("focus.json")),

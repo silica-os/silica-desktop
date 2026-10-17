@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use futures_lite::StreamExt;
 use zbus::object_server::SignalEmitter;
-use zbus::zvariant::OwnedValue;
+use zbus::zvariant::{OwnedValue, Value};
 use zbus::{interface, proxy};
 
 #[proxy(
@@ -41,7 +41,13 @@ struct FakeSystem {
 #[interface(name = "dev.frascella.Silica.System1")]
 impl FakeSystem {
     fn state(&self) -> HashMap<String, OwnedValue> {
-        HashMap::from([("appearance.dark".to_owned(), OwnedValue::from(self.dark))])
+        HashMap::from([
+            ("appearance.dark".to_owned(), OwnedValue::from(self.dark)),
+            (
+                "look.accent".to_owned(),
+                Value::from("green").try_to_owned().unwrap(),
+            ),
+        ])
     }
 
     #[zbus(signal)]
@@ -122,6 +128,14 @@ fn color_scheme_follows_the_daemon() {
         assert_eq!(scheme(&settings).await, Some(2));
         let all = settings.read_all(&["org.freedesktop.*"]).await.unwrap();
         assert!(all["org.freedesktop.appearance"].contains_key("color-scheme"));
+        // The accent of the system look, as (ddd) 0-1: Green 62BA46.
+        let accent = settings
+            .read("org.freedesktop.appearance", "accent-color")
+            .await
+            .unwrap();
+        let (r, g, b) = <(f64, f64, f64)>::try_from(accent).unwrap();
+        assert!((r - 98.0 / 255.0).abs() < 1e-9 && (g - 186.0 / 255.0).abs() < 1e-9);
+        assert!((b - 70.0 / 255.0).abs() < 1e-9);
         // The daemon switches to dark: SettingChanged and Read give 1.
         let mut changes = settings.receive_setting_changed().await.unwrap();
         let emitter = SignalEmitter::new(&daemon, "/dev/frascella/Silica/System1").unwrap();

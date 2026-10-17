@@ -172,6 +172,9 @@ fn main() -> ExitCode {
                 silica_portal::settings::appearance_file()
                     .is_some_and(|f| silica_portal::settings::read_file(&f)),
             )),
+            accent: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(
+                silica_portal::settings::NO_ACCENT,
+            )),
         };
         let connection = builder
             .name(BUS_NAME)?
