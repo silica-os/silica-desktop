@@ -96,7 +96,7 @@ class ShellComponent extends StatelessWidget {
           media: MediaPlayers.instance,
         ),
       ),
-      'wallpaper' => Wallpaper(choice: loadWallpaperChoice()),
+      'wallpaper' => const WallpaperLayer(),
       'faro' => _followsEntries(() => Faro(entries: desktopEntries())),
       'notifications' => NotificationsLayer(
         source: DBusNotifications(),

@@ -4,6 +4,7 @@
 // {"wallpaper": "positano-1"} (an id of the set), {"color": "#7a7b80"} or {"image": "/path"}.
 // Without the set installed, the Silica wallpaper rendered in code from its recipe.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -82,19 +83,167 @@ WallpaperChoice parseWallpaperChoice(String? json, {Map<String, String>? env}) {
   return byId(null);
 }
 
-WallpaperChoice loadWallpaperChoice({Map<String, String>? env}) {
-  final home = (env ?? Platform.environment)['HOME'] ?? '';
-  final file = File('$home/.config/silica/wallpaper.json');
-  return parseWallpaperChoice(
-    file.existsSync() ? file.readAsStringSync() : null,
-    env: env,
-  );
+/// How an image fills the screen (wallpaper.json `fit`, Settings › Wallpaper).
+enum WallpaperFit {
+  /// Fills the screen, cropping the excess (the default).
+  fill,
+
+  /// The whole image, with bars where it does not match.
+  fit,
+
+  /// Stretched to the screen, whatever the proportions.
+  stretch,
+
+  /// At its own size in the middle.
+  center,
+
+  /// Repeated at its own size.
+  tile,
+}
+
+/// The fill mode from the JSON configuration; [WallpaperFit.fill] if missing or invalid.
+WallpaperFit parseWallpaperFit(String? json) {
+  if (json == null) return WallpaperFit.fill;
+  try {
+    final value = jsonDecode(json);
+    if (value is Map) {
+      for (final fit in WallpaperFit.values) {
+        if (value['fit'] == fit.name) return fit;
+      }
+    }
+  } on FormatException {
+    // Broken configuration: the default.
+  }
+  return WallpaperFit.fill;
+}
+
+/// `$XDG_CONFIG_HOME/silica/wallpaper.json` (usually `~/.config`).
+File wallpaperFile({Map<String, String>? env}) {
+  final e = env ?? Platform.environment;
+  final home = e['HOME'] ?? '';
+  final xdg = e['XDG_CONFIG_HOME'];
+  final config = xdg != null && xdg.isNotEmpty ? xdg : '$home/.config';
+  return File('$config/silica/wallpaper.json');
+}
+
+String? _readWallpaperFile({Map<String, String>? env}) {
+  try {
+    return wallpaperFile(env: env).readAsStringSync();
+  } on FileSystemException {
+    return null;
+  }
+}
+
+WallpaperChoice loadWallpaperChoice({Map<String, String>? env}) =>
+    parseWallpaperChoice(_readWallpaperFile(env: env), env: env);
+
+WallpaperFit loadWallpaperFit({Map<String, String>? env}) =>
+    parseWallpaperFit(_readWallpaperFile(env: env));
+
+/// The wallpaper layer: the choice in wallpaper.json, drawn again as soon as Settings changes
+/// it (the folder is watched; Settings writes a temporary file and renames it over).
+class WallpaperLayer extends StatefulWidget {
+  const WallpaperLayer({super.key, this.env});
+
+  final Map<String, String>? env;
+
+  @override
+  State<WallpaperLayer> createState() => _WallpaperLayerState();
+}
+
+class _WallpaperLayerState extends State<WallpaperLayer> {
+  late WallpaperChoice _choice = loadWallpaperChoice(env: widget.env);
+  late WallpaperFit _fit = loadWallpaperFit(env: widget.env);
+  StreamSubscription<FileSystemEvent>? _events;
+  Timer? _debounce;
+
+  @override
+  void initState() {
+    super.initState();
+    final dir = wallpaperFile(env: widget.env).parent;
+    try {
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+      _events = dir.watch().listen((event) {
+        if (!event.path.endsWith('wallpaper.json')) return;
+        _debounce?.cancel();
+        _debounce = Timer(const Duration(milliseconds: 50), _reload);
+      });
+    } on FileSystemException {
+      // No configuration folder: the wallpaper read at the start stays.
+    }
+  }
+
+  void _reload() {
+    if (!mounted) return;
+    final choice = loadWallpaperChoice(env: widget.env);
+    final fit = loadWallpaperFit(env: widget.env);
+    if (choice.runtimeType == _choice.runtimeType &&
+        _sameChoice(choice, _choice) &&
+        fit == _fit) {
+      return;
+    }
+    setState(() {
+      _choice = choice;
+      _fit = fit;
+    });
+  }
+
+  static bool _sameChoice(WallpaperChoice a, WallpaperChoice b) =>
+      switch ((a, b)) {
+        (ColorWallpaper(:final color), ColorWallpaper(color: final other)) =>
+          color == other,
+        (AmalfiWallpaper(:final info), AmalfiWallpaper(info: final other)) =>
+          info.id == other.id,
+        (ImageWallpaper(:final path), ImageWallpaper(path: final other)) =>
+          path == other,
+        (GeneratedWallpaper(), GeneratedWallpaper()) => true,
+        _ => false,
+      };
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _events?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Wallpaper(choice: _choice, fit: _fit);
 }
 
 class Wallpaper extends StatelessWidget {
-  const Wallpaper({super.key, required this.choice});
+  const Wallpaper({
+    super.key,
+    required this.choice,
+    this.fit = WallpaperFit.fill,
+  });
 
   final WallpaperChoice choice;
+  final WallpaperFit fit;
+
+  /// An image drawn as [fit] says, on black where it does not cover the screen.
+  Widget _image(ImageProvider image) {
+    final (BoxFit boxFit, ImageRepeat repeat) = switch (fit) {
+      WallpaperFit.fill => (BoxFit.cover, ImageRepeat.noRepeat),
+      WallpaperFit.fit => (BoxFit.contain, ImageRepeat.noRepeat),
+      WallpaperFit.stretch => (BoxFit.fill, ImageRepeat.noRepeat),
+      WallpaperFit.center => (BoxFit.none, ImageRepeat.noRepeat),
+      WallpaperFit.tile => (BoxFit.none, ImageRepeat.repeat),
+    };
+    return ColoredBox(
+      color: const Color(0xFF000000),
+      child: Image(
+        image: image,
+        fit: boxFit,
+        repeat: repeat,
+        alignment: Alignment.center,
+        width: double.infinity,
+        height: double.infinity,
+        gaplessPlayback: true,
+        errorBuilder: (_, _, _) => const ColoredBox(color: Color(0xFF000000)),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) => GestureDetector(
@@ -117,23 +266,18 @@ class Wallpaper extends StatelessWidget {
       ),
     ),
     AmalfiWallpaper(:final info) => Builder(
-      builder: (context) => Image.file(
-        File(
-          info.image(
-            dark: MediaQuery.platformBrightnessOf(context) == Brightness.dark,
+      builder: (context) => _image(
+        FileImage(
+          File(
+            info.image(
+              dark: MediaQuery.platformBrightnessOf(context) == Brightness.dark,
+            ),
           ),
         ),
-        // The square image fills the screen, centred; the excess is cropped.
-        fit: BoxFit.cover,
-        alignment: Alignment.center,
-        width: double.infinity,
-        height: double.infinity,
-        gaplessPlayback: true,
-        errorBuilder: (_, _, _) => const ColoredBox(color: Color(0xFF000000)),
       ),
     ),
     ColorWallpaper(:final color) => ColoredBox(color: color),
-    ImageWallpaper(:final path) => Image.file(File(path), fit: BoxFit.cover),
+    ImageWallpaper(:final path) => _image(FileImage(File(path))),
   };
 }
 
