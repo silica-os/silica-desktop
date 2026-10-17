@@ -783,6 +783,11 @@ const double dockInputAbove = 60;
 /// at ~130 pt above the grab point, fade of the removed item (~250 ms). The pointer counts
 /// as "in the Dock" up to 20 pt above the bottom.
 const Duration gapSlide = Duration(milliseconds: 265);
+
+/// A folder dragged in from another app: the gap opens in ~250 ms and closes in ~265 ms along
+/// cubic-bezier(0.3, 0, 0.7, 1); it does not open over the middle of a folder (dock-stacks.md).
+const Duration folderGapOpen = Duration(milliseconds: 250);
+const Curve folderGapCurve = Cubic(0.3, 0, 0.7, 1);
 const double removeAbove = 130;
 const Duration removeFade = Duration(milliseconds: 250);
 const double dragInsideAbove = 20;
@@ -1133,11 +1138,14 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
   StackView _stackView = StackView.fan;
   bool _stackClosing = false;
 
+  /// Which way the stack moves: the progress follows the open or the close curve.
+  bool _stackOpening = true;
+
   /// Only the stack listens to it (an [AnimatedBuilder] around it): a frame of the opening
   /// rebuilds and repaints the stack, not the whole Dock.
   late final AnimationController _stackAnim = AnimationController(
     vsync: this,
-    duration: stackOpen,
+    duration: fanOpen,
   );
   final FocusNode _stackFocus = FocusNode();
   Timer? _stackOpenTimer;
@@ -1239,7 +1247,13 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
           magnified: _magnified,
         );
         final index = _inside ? itemAt(current, _items, local.dx) : null;
-        final target = index != null && _items[index].acceptsFiles
+        // Over the middle of a folder the drop goes into it; at its edges a gap opens.
+        final target =
+            index != null &&
+                _items[index].acceptsFiles &&
+                (_items[index].folder == null ||
+                    (local.dx - current.center(index)).abs() <=
+                        current.cells[index].$2 / 4)
             ? index
             : null;
         // No item takes the drag: a folder dropped here would be added, so the Dock makes room.
@@ -1752,7 +1766,7 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     if (_stackIndex != null &&
         !(_stackRect?.contains(p) ?? false) &&
         itemAt(l, _items, p.dx) != _stackIndex) {
-      _closeStack();
+      _closeStack(by: StackClose.outside);
       return;
     }
     if (_menuIndex != null) {
@@ -1874,7 +1888,7 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
   /// A press outside the Dock, the menu or the stack ended them (Ossido, #149).
   void _transientDismissed() {
     if (_menuIndex != null) _closeMenu();
-    if (_stackIndex != null) _closeStack();
+    if (_stackIndex != null) _closeStack(by: StackClose.outside);
   }
 
   /// Input region, surface height and keyboard: only when they change.
@@ -2063,9 +2077,10 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
       _stackClosing = false;
     });
     _showLabel(null);
-    _stackAnim.duration = stackOpen;
+    _stackOpening = true;
+    _stackAnim.duration = _stackView == StackView.fan ? fanOpen : gridOpen;
     _stackAnim.value = 0;
-    // The motion starts ~90 ms (fan) or ~70 ms (grid) after the press (dock-stacks.md).
+    // The motion starts ~36 ms (fan) or ~8 ms (grid) after the release (dock-stacks.md).
     _stackOpenTimer?.cancel();
     _stackOpenTimer = Timer(
       _stackView == StackView.fan ? fanOpenDelay : gridOpenDelay,
@@ -2081,27 +2096,27 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     );
   }
 
-  /// `byButton`: released on the close button (~300 ms); otherwise Esc or a click elsewhere.
-  Future<void> _closeStack({
-    bool byButton = false,
-    bool afterFile = false,
-  }) async {
+  /// `by`: what closes the stack, for the timing (dock-stacks.md, Closing).
+  Future<void> _closeStack({StackClose by = StackClose.esc}) async {
     if (_stackIndex == null || _stackClosing) return;
     _stackClosing = true;
     _stackOpenTimer?.cancel();
     _stackOpenTimer = null;
-    // Clicking a file: the stack closes ~13 ms after the release, in ~150 ms.
-    if (afterFile) {
+    // Clicking a file: the stack starts closing ~9 ms after the release.
+    if (by == StackClose.file) {
       await Future<void>.delayed(stackFileCloseDelay);
       if (!mounted) return;
     }
-    _stackAnim.duration = afterFile
-        ? stackFileClose
-        : byButton
-        ? stackCloseByButton
-        : _stackView == StackView.fan
-        ? fanClose
-        : gridClose;
+    final fan = _stackView == StackView.fan;
+    // An opening cut short closes from where it was.
+    final shown = stackProgress(
+      _stackAnim.value,
+      opening: _stackOpening,
+      fan: fan,
+    );
+    _stackOpening = false;
+    _stackAnim.duration = fan ? fanCloseDuration(by) : gridClose;
+    _stackAnim.value = stackCloseStart(shown, fan: fan);
     await _stackAnim.reverse();
     if (mounted) {
       setState(() {
@@ -2114,19 +2129,21 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
   /// A file of the stack: the stack closes at once, then the file opens.
   /// A file dragged out of the open stack: it closes and the drag goes on as a system drag.
   void _dragFromStack(String path) {
-    _closeStack();
+    _closeStack(by: StackClose.outside);
     SilicaDrag.start([path]);
   }
 
   void _openFromStack(String path) {
-    _closeStack(afterFile: true);
+    _closeStack(by: StackClose.file);
     widget.onOpenPath?.call(path);
   }
 
   void _activate(int index) {
     final item = _items[index];
     if (item.folder != null && widget.onOpenPath != null) {
-      _stackIndex == index ? _closeStack(byButton: true) : _openStack(index);
+      _stackIndex == index
+          ? _closeStack(by: StackClose.button)
+          : _openStack(index);
       return;
     }
     if (launchBounceTarget(item, _items) case final target?) {
@@ -2350,7 +2367,11 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
         if (stackIndex != null && stackIndex < l.cells.length) {
           final iconX = l.center(stackIndex);
           final item = _items[stackIndex];
-          double progress() => Curves.easeOut.transform(_stackAnim.value);
+          double progress() => stackProgress(
+            _stackAnim.value,
+            opening: _stackOpening,
+            fan: _stackView == StackView.fan,
+          );
           if (_stackView == StackView.fan) {
             final count = math.min(_stackEntries.length, fanMax) + 1;
             final top = fanSlot(count - 1);
@@ -2750,8 +2771,10 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     final hop = (live?.hopFraction ?? 0) * (launchHopPeak * _m.k);
     return AnimatedPositioned(
       key: ValueKey(_key(item)),
-      duration: sliding ? gapSlide : Duration.zero,
-      curve: Curves.easeInOut,
+      duration: sliding
+          ? (_folderGap != null ? folderGapOpen : gapSlide)
+          : Duration.zero,
+      curve: _drag == null ? folderGapCurve : Curves.easeInOut,
       left: x,
       top: y - math.max(hop, _bounceOf(item)),
       width: side,

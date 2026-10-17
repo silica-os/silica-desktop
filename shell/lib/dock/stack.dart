@@ -3,7 +3,7 @@
 // Automatic view: fan up to 15 files, grid beyond (the real threshold is between 11 and 40,
 // not measured).
 // - Fan (DOCK-FAN): from the bottom, 64 pt icons with their centres 64 pt apart vertically,
-//   each rotated clockwise ~1.22° more than the one below (~1.6° for the first) and shifted
+//   each rotated clockwise ~1.23° more than the one below (~1.6° for the first) and shifted
 //   right by 64 · tan of its angle from the previous centre, so the column bends more and more
 //   to the right; 28 pt label capsules on the left, rotated with their icon, 5.5 pt from its
 //   frame; the first item's frame ends 7 pt above the Dock area; at most 15 files, the
@@ -39,9 +39,9 @@ const double fanIcon = 64;
 /// Vertical distance between consecutive centres.
 const double fanPitch = 64;
 
-/// The first item's rotation and the growth per item (degrees, clockwise).
-const double fanFirstAngle = 1.6;
-const double fanAngleStep = 1.22;
+/// The rotation of item k (1 at the bottom) is 0.4 + 1.23 k degrees clockwise; `i` below is k - 1.
+const double fanFirstAngle = 1.63;
+const double fanAngleStep = 1.23;
 
 /// The first item's frame ends this far above the Dock area.
 const double fanAboveZone = 7;
@@ -101,20 +101,62 @@ const double gridRadius = AmalfiPopoverMetrics.radius;
 const double gridTipHeight = gridTipDepth;
 const double gridTipAboveDock = 8;
 
-const Duration stackOpen = Duration(milliseconds: 240);
+/// The measured stack motion (dock-stacks.md, STK-ANIM). Opening: the fan 205 ms, the grid
+/// 230 ms; each starts after the release (fan 34-39 ms, grid 6-11 ms).
+const Duration fanOpen = Duration(milliseconds: 205);
+const Duration gridOpen = Duration(milliseconds: 230);
+const Duration fanOpenDelay = Duration(milliseconds: 36);
+const Duration gridOpenDelay = Duration(milliseconds: 8);
 
-/// The motion starts this long after the press (dock-stacks.md, Fan and Grid › Opening).
-const Duration fanOpenDelay = Duration(milliseconds: 90);
-const Duration gridOpenDelay = Duration(milliseconds: 70);
+/// Closing, by what closes the fan (the grid always takes [gridClose]): Esc 180 ms from the
+/// key-down, the stack's own Dock tile 187 ms from the release, a press outside 211 ms from the
+/// press, a click on a file ~200 ms starting ~9 ms after the release.
+const Duration fanCloseEsc = Duration(milliseconds: 180);
+const Duration fanCloseByButton = Duration(milliseconds: 187);
+const Duration fanCloseOutside = Duration(milliseconds: 211);
+const Duration fanCloseFile = Duration(milliseconds: 200);
+const Duration gridClose = Duration(milliseconds: 160);
+const Duration stackFileCloseDelay = Duration(milliseconds: 9);
 
-/// Clicking a file: the stack starts closing ~13 ms after the release and lasts ~150 ms.
-const Duration stackFileCloseDelay = Duration(milliseconds: 13);
-const Duration stackFileClose = Duration(milliseconds: 150);
-const Duration fanClose = Duration(milliseconds: 210);
-const Duration gridClose = Duration(milliseconds: 150);
+/// The curves: time to progress. Closing runs the progress back from 1 to 0 along
+/// `1 - curve(1 - t)` ([stackProgress]).
+const Curve fanOpenCurve = Cubic(0.37, 0.24, 0.60, 1.00);
+const Curve fanCloseCurve = Cubic(0.5, 0.3, 0.65, 0.9);
+const Curve gridOpenCurve = Cubic(0.21, 0.22, 0.27, 0.99);
+const Curve gridCloseCurve = Cubic(0.3, 0.3, 0.6, 0.85);
 
-/// Released on the close button, the stack closes in ~300 ms (fan and grid).
-const Duration stackCloseByButton = Duration(milliseconds: 300);
+/// What closes a stack (it sets the fan's duration, [fanCloseDuration]).
+enum StackClose { esc, button, outside, file }
+
+Duration fanCloseDuration(StackClose by) => switch (by) {
+  StackClose.esc => fanCloseEsc,
+  StackClose.button => fanCloseByButton,
+  StackClose.outside => fanCloseOutside,
+  StackClose.file => fanCloseFile,
+};
+
+/// The controller value at which closing shows progress `p` (a close that interrupts an
+/// opening goes on from where the opening was).
+double stackCloseStart(double p, {required bool fan}) {
+  var lo = 0.0, hi = 1.0;
+  for (var i = 0; i < 24; i++) {
+    final mid = (lo + hi) / 2;
+    if (stackProgress(mid, opening: false, fan: fan) < p) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return (lo + hi) / 2;
+}
+
+/// The stack's progress (0 closed, 1 open) at the controller's linear value `t` (0 to 1), going
+/// `opening` or closing, for the fan or the grid.
+double stackProgress(double t, {required bool opening, required bool fan}) {
+  final x = t.clamp(0.0, 1.0);
+  if (opening) return (fan ? fanOpenCurve : gridOpenCurve).transform(x);
+  return 1 - (fan ? fanCloseCurve : gridCloseCurve).transform(1 - x);
+}
 
 bool _dark(BuildContext context) =>
     MediaQuery.maybePlatformBrightnessOf(context) == Brightness.dark;
@@ -390,7 +432,7 @@ class _FanStackState extends State<FanStack> {
     final progress = widget.progress;
     _snapshot.allowSnapshotting = progress < 1;
     final fade = progress.clamp(0.0, 1.0);
-    final labels = fade * ((progress - 0.7) / 0.3).clamp(0.0, 1.0);
+    final labels = fade;
     final children = <Widget>[];
     for (var i = 0; i <= shown && i < items.length; i++) {
       final slot = fanSlot(i);
@@ -427,7 +469,7 @@ class _FanStackState extends State<FanStack> {
                     Opacity(opacity: labels, child: label),
                     // 5.5 pt from the icon's frame, the bounding box of the rotated icon.
                     SizedBox(width: fanLabelGap + (slot.frame - side) / 2),
-                    Opacity(opacity: fade, child: icon),
+                    icon,
                   ],
                 ),
               ),
@@ -766,7 +808,7 @@ class _GridStackState extends State<GridStack> {
     return Positioned.fromRect(
       rect: rect,
       child: Transform.scale(
-        scale: 0.2 + 0.8 * p,
+        scale: math.max(p, 0.001),
         alignment: Alignment(
           (tipX / rect.width) * 2 - 1,
           1 + 2 * gridTipHeight / rect.height,

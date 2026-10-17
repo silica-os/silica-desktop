@@ -43,15 +43,37 @@ void main() {
       expect(s.frame, closeTo(frame, 0.2), reason: 'frame of $i');
       expect(s.side, fanIcon);
     }
-    // ~1.6° for the first, ~1.22° more per item.
-    expect(fanSlot(0).angle * 180 / math.pi, closeTo(1.6, 0.01));
+    // 0.4° + 1.23° · k (k = 1 at the bottom): 1.63° for the first, 12.7° for the tenth.
+    expect(fanSlot(0).angle * 180 / math.pi, closeTo(1.63, 0.01));
+    expect(fanSlot(9).angle * 180 / math.pi, closeTo(12.7, 0.01));
     expect(
       (fanSlot(9).angle - fanSlot(8).angle) * 180 / math.pi,
-      closeTo(1.22, 0.01),
+      closeTo(1.23, 0.01),
     );
     // Centres 64 pt apart vertically.
     expect(fanSlot(4).center.dy - fanSlot(5).center.dy, closeTo(64, 1e-9));
   });
+
+  test(
+    'stack curves: fan opens fast and settles, closes mirrored, grid near-linear',
+    () {
+      double at(double t, {required bool o, required bool f}) =>
+          stackProgress(t, opening: o, fan: f);
+      for (final f in [true, false]) {
+        expect(at(0, o: true, f: f), 0);
+        expect(at(1, o: true, f: f), closeTo(1, 1e-9));
+        expect(at(1, o: false, f: f), closeTo(1, 1e-9));
+        expect(at(0, o: false, f: f), closeTo(0, 1e-9));
+      }
+      // The fan's opening curve is ahead of linear at half time; the grid's close ~60 % done.
+      expect(at(0.5, o: true, f: true), greaterThan(0.5));
+      expect(1 - at(0.5, o: false, f: false), closeTo(0.6, 0.06));
+      // A close that interrupts an opening resumes from the same progress.
+      final p = at(0.3, o: true, f: true);
+      final t = stackCloseStart(p, fan: true);
+      expect(at(t, o: false, f: true), closeTo(p, 5e-3));
+    },
+  );
 
   test('automatic view and grid shape', () {
     expect(automaticView(10), StackView.fan);
@@ -446,7 +468,7 @@ void main() {
   });
 
   testWidgets(
-    'opening starts 90 ms (fan) after the press, the file closes in 150 ms',
+    'opening starts 36 ms (fan) after the release, the file closes in 200 ms',
     (tester) async {
       final dir = Directory.systemTemp.createTempSync('tempi');
       addTearDown(() => dir.deleteSync(recursive: true));
@@ -456,13 +478,16 @@ void main() {
       tester.view.physicalSize = const Size(1280, 1000);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
-      expect(fanOpenDelay, const Duration(milliseconds: 90));
-      expect(gridOpenDelay, const Duration(milliseconds: 70));
-      expect(stackOpen, const Duration(milliseconds: 240));
-      expect(stackFileCloseDelay, const Duration(milliseconds: 13));
-      expect(stackFileClose, const Duration(milliseconds: 150));
-      expect(fanClose, const Duration(milliseconds: 210));
-      expect(gridClose, const Duration(milliseconds: 150));
+      expect(fanOpenDelay, const Duration(milliseconds: 36));
+      expect(gridOpenDelay, const Duration(milliseconds: 8));
+      expect(fanOpen, const Duration(milliseconds: 205));
+      expect(gridOpen, const Duration(milliseconds: 230));
+      expect(stackFileCloseDelay, const Duration(milliseconds: 9));
+      expect(fanCloseEsc, const Duration(milliseconds: 180));
+      expect(fanCloseByButton, const Duration(milliseconds: 187));
+      expect(fanCloseOutside, const Duration(milliseconds: 211));
+      expect(fanCloseFile, const Duration(milliseconds: 200));
+      expect(gridClose, const Duration(milliseconds: 160));
       final opened = <String>[];
       final items = [Item.app('Stack', command: 'x', folder: dir.path)];
       await tester.pumpWidget(
@@ -485,18 +510,17 @@ void main() {
       double progress() => (find.byType(FanStack).evaluate().isEmpty)
           ? -1
           : tester.widget<FanStack>(find.byType(FanStack)).progress;
-      await tester.pump(const Duration(milliseconds: 60));
+      await tester.pump(const Duration(milliseconds: 20));
       expect(progress(), 0);
-      await tester.pump(const Duration(milliseconds: 60));
-      await tester.pump(const Duration(milliseconds: 40));
+      await tester.pump(const Duration(milliseconds: 30));
       await tester.pump(const Duration(milliseconds: 40));
       expect(progress(), greaterThan(0));
       await tester.pump(const Duration(milliseconds: 300));
       expect(progress(), 1);
       expect(anim.mounted, isTrue);
       await tester.tap(find.text('b.txt'));
-      // 13 ms of nothing, then 150 ms to close.
-      await tester.pump(const Duration(milliseconds: 10));
+      // 9 ms of nothing, then 200 ms to close.
+      await tester.pump(const Duration(milliseconds: 5));
       expect(progress(), 1);
       await tester.pump(const Duration(milliseconds: 40));
       await tester.pump(const Duration(milliseconds: 40));
