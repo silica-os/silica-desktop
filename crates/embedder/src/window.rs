@@ -611,7 +611,7 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let compositor = CompositorState::bind(&globals, &qh)?;
     let shm = Shm::bind(&globals, &qh)?;
     let surface = compositor.create_surface(&qh);
-    let mut xdg_shell = None;
+    let xdg_shell: Option<XdgShell>;
     let mut layer_shell = None;
     let mut parent_import = None;
     let surface = match &options.layer {
@@ -639,6 +639,9 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             let shell = LayerShell::bind(&globals, &qh)?;
             let surface = create_layer(&shell, &qh, surface, layer, options.size);
             layer_shell = Some(shell);
+            // The menus and popovers of a shell layer are xdg popups adopted by the layer
+            // (silica-desktop#222): the xdg shell is needed for them, not for a window.
+            xdg_shell = XdgShell::bind(&globals, &qh).ok();
             Shell::Layer(surface)
         }
     };
@@ -1140,12 +1143,12 @@ impl App {
             return crate::text_input::success(serde_json::Value::Null);
         }
         if method == Some("popupsAvailable") {
-            // Menus and popovers as their own surfaces need several views (`--multi-window`)
-            // and windows to hang from: a shell layer or the desktop's layer has none.
+            // Menus and popovers as their own surfaces need several views (`--multi-window`,
+            // or the shell's `--view` layers) and a window or a shell layer to hang from.
             let window = matches!(
                 self.views.get(&MAIN_VIEW),
                 Some(View {
-                    surface: Shell::Window(_),
+                    surface: Shell::Window(_) | Shell::Layer(_),
                     ..
                 })
             );
@@ -1470,21 +1473,28 @@ impl App {
         let Some(xdg_shell) = &self.xdg_shell else {
             return self.refuse_open(reply, "popup: no xdg shell");
         };
-        // The parent: a window or a popup that is open and drawn (the compositor wants it
-        // mapped).
+        // The parent: a window, a shell layer or a popup that is open and drawn (the
+        // compositor wants it mapped). A layer has no xdg_surface: the popup is created
+        // without a parent and adopted with `zwlr_layer_surface_v1.get_popup`.
         let parent = match self.views.get(&spec.parent) {
             Some(View {
                 surface: Shell::Window(window),
                 configured: true,
                 removing: false,
                 ..
-            }) => window.xdg_surface().clone(),
+            }) => Some(window.xdg_surface().clone()),
             Some(View {
                 surface: Shell::Popup(popup),
                 configured: true,
                 removing: false,
                 ..
-            }) => popup.xdg_surface().clone(),
+            }) => Some(popup.xdg_surface().clone()),
+            Some(View {
+                surface: Shell::Layer(_),
+                configured: true,
+                removing: false,
+                ..
+            }) => None,
             _ => return self.refuse_open(reply, "popup: its parent is not an open window"),
         };
         let positioner = match XdgPositioner::new(xdg_shell) {
@@ -1501,10 +1511,18 @@ impl App {
         );
         let surface = self.compositor.create_surface(&self.qh);
         let popup =
-            match Popup::from_surface(Some(&parent), &positioner, &self.qh, surface, xdg_shell) {
+            match Popup::from_surface(parent.as_ref(), &positioner, &self.qh, surface, xdg_shell) {
                 Ok(popup) => popup,
                 Err(err) => return self.refuse_open(reply, &format!("popup: {err}")),
             };
+        if parent.is_none()
+            && let Some(View {
+                surface: Shell::Layer(layer),
+                ..
+            }) = self.views.get(&spec.parent)
+        {
+            layer.get_popup(popup.xdg_popup());
+        }
         if spec.grab
             && let Some(seat) = &self.seat
         {

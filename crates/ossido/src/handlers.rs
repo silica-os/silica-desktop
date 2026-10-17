@@ -148,10 +148,23 @@ impl State {
     ) -> Rectangle<i32, Logical> {
         let unconstrained = (|| {
             let root = smithay::desktop::find_popup_root_surface(popup).ok()?;
-            let location = self.space.element_location(&self.window_for(&root)?)?;
-            let mut target = self.space.output_geometry(&self.output)?;
-            target.loc -= smithay::desktop::get_popup_toplevel_coords(popup);
-            target.loc -= location;
+            let coords = smithay::desktop::get_popup_toplevel_coords(popup);
+            let mut target = if let Some(window) = self.window_for(&root) {
+                let location = self.space.element_location(&window)?;
+                let mut target = self.space.output_geometry(&self.output)?;
+                target.loc -= location;
+                target
+            } else {
+                // A popup of a shell layer (silica-desktop#222): the layer's origin is where
+                // its surface sits in the output.
+                let map = smithay::desktop::layer_map_for_output(&self.output);
+                let layer =
+                    map.layer_for_surface(&root, smithay::desktop::WindowSurfaceType::TOPLEVEL)?;
+                let at = map.layer_geometry(layer)?.loc;
+                let output = self.space.output_geometry(&self.output)?;
+                Rectangle::new(Point::from((-at.x, -at.y)), output.size)
+            };
+            target.loc -= coords;
             Some(positioner.get_unconstrained_geometry(target))
         })();
         unconstrained.unwrap_or_else(|| positioner.get_geometry())

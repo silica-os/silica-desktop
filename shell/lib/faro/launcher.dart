@@ -16,6 +16,7 @@
 // Keyboard (PA-60): in the grid, Down chooses the first icon, the arrows move the blue ring,
 // Return opens it and the field shows "<name> — Open" with the app icon.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -325,8 +326,16 @@ class LauncherState extends State<Launcher>
   /// The layout of the last build, to scroll the keyboard choice into view.
   GridLayout? _layout;
 
-  /// The "…" menu is open.
+  /// The "…" menu is open, drawn in the layer (where the system offers no popups).
   bool _menu = false;
+
+  /// The "…" menu as a popup surface above the layer (silica-desktop#222): Ossido draws the
+  /// glass of a menu below its own surface's pixels, so a menu inside the Faro layer would
+  /// have the panel's icons and text on top of its glass.
+  SilicaPopupController? _popup;
+
+  /// Where the popup is measured and put: the Launcher has no overlay of its own.
+  final GlobalKey<OverlayState> _overlay = GlobalKey<OverlayState>();
 
   /// The category change: the grid disappears at once and fades back in after a gap
   /// (controller value = ms since the change).
@@ -350,10 +359,14 @@ class LauncherState extends State<Launcher>
     );
     _scroll.addListener(() => setState(() {}));
     WidgetsBinding.instance.addPostFrameCallback((_) => _focus.requestFocus());
+    unawaited(SilicaPopups.probe());
   }
 
   @override
   void dispose() {
+    final popup = _popup;
+    _popup = null;
+    if (popup != null) unawaited(popup.close());
     _fade.dispose();
     _query.dispose();
     _focus.dispose();
@@ -376,6 +389,58 @@ class LauncherState extends State<Launcher>
     if (!_menu) return;
     setState(() => _menu = false);
     _focus.requestFocus();
+  }
+
+  List<AmalfiMenuEntry> _menuEntries(bool list) => [
+    AmalfiMenuAction(
+      l10nOf(context).launcherViewGrid,
+      checked: !list,
+      onSelected: () => widget.onListChanged?.call(false),
+    ),
+    AmalfiMenuAction(
+      l10nOf(context).launcherViewList,
+      checked: list,
+      onSelected: () => widget.onListChanged?.call(true),
+    ),
+  ];
+
+  /// The "…" button: the view menu opens as a popup surface when the system offers it, in
+  /// the layer otherwise.
+  Future<void> _toggleMenu() async {
+    if (_menu) return _closeMenu();
+    if (_popup != null) return;
+    final box = context.findRenderObject();
+    if (SilicaPopups.available == true && box is RenderBox && box.hasSize) {
+      // The menu's top right corner at 20 from the right edge, 44 from the top.
+      final corner = box.localToGlobal(Offset(box.size.width - 20, 44));
+      final list = widget.list;
+      final popup = await showAmalfiAsPopup(
+        context: context,
+        overlay: _overlay.currentState,
+        anchor: corner & const Size(1, 1),
+        anchorEdge: SilicaPopupEdge.topRight,
+        gravity: SilicaPopupEdge.bottomLeft,
+        builder: (context, dismiss, placement) => AmalfiMenu(
+          key: const ValueKey('launcher view menu'),
+          autofocus: true,
+          onDismiss: dismiss,
+          entries: _menuEntries(list),
+        ),
+      );
+      if (popup != null) {
+        if (!mounted) return unawaited(popup.close());
+        _popup = popup;
+        unawaited(
+          popup.closed.whenComplete(() {
+            if (_popup != popup) return;
+            _popup = null;
+            if (mounted) _focus.requestFocus();
+          }),
+        );
+        return;
+      }
+    }
+    if (mounted) setState(() => _menu = true);
   }
 
   KeyEventResult _key(FocusNode node, KeyEvent event, List<DesktopEntry> apps) {
@@ -526,6 +591,10 @@ class LauncherState extends State<Launcher>
               height: 1,
               child: ColoredBox(color: _c.separator),
             ),
+          // Where the view menu's popup is measured and put (see `_popup`).
+          Positioned.fill(
+            child: IgnorePointer(child: Overlay(key: _overlay)),
+          ),
           if (_menu) ...[
             Positioned.fill(
               child: GestureDetector(
@@ -543,18 +612,7 @@ class LauncherState extends State<Launcher>
                 // panel's group melts into it (transparent, silica-desktop#209).
                 group: faroMenuGroup,
                 onDismiss: _closeMenu,
-                entries: [
-                  AmalfiMenuAction(
-                    l10nOf(context).launcherViewGrid,
-                    checked: !list,
-                    onSelected: () => widget.onListChanged?.call(false),
-                  ),
-                  AmalfiMenuAction(
-                    l10nOf(context).launcherViewList,
-                    checked: list,
-                    onSelected: () => widget.onListChanged?.call(true),
-                  ),
-                ],
+                entries: _menuEntries(list),
               ),
             ),
           ],
@@ -705,7 +763,7 @@ class LauncherState extends State<Launcher>
             child: GestureDetector(
               key: const ValueKey('launcher more'),
               behavior: HitTestBehavior.opaque,
-              onTap: () => setState(() => _menu = !_menu),
+              onTap: _toggleMenu,
               child: AmalfiSymbol('ellipsis', size: 20, color: _c.subtitle),
             ),
           ),
