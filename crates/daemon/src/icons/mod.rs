@@ -30,7 +30,7 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use silica_assets::{Assets, EntryId, KeySpace};
 
 use self::appicon::{Appearance, Look};
-use self::apps::{AppIcon, Apps, Dirs};
+use self::apps::{AppIcon, Apps, Dirs, DocumentIcon};
 use self::folder::Tint;
 use self::mime::MimeDb;
 use self::rules::{FileLook, FileRules, FolderLook, FolderRules, Glyph};
@@ -195,8 +195,10 @@ impl Icons {
         }
     }
 
-    /// The look of the file at `path`: the glyph is, in order, the document foreground the
-    /// default app ships for its type, the icon of that app, or none (an unknown extension).
+    /// The look of the file at `path`. The glyph is, in order of precedence (after a real
+    /// preview or a thumbnailer, which are not icons): the full icon the default app ships for
+    /// its type, the document foreground of that app, the icon of that app, the foreground of
+    /// the system type (executable, archive...), or none (an unknown extension).
     pub fn file_look(&self, path: &Path, _pt: f32) -> FileLook {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let extension = mime::extension_of(name);
@@ -207,18 +209,51 @@ impl Icons {
         let apps = self.apps();
         let glyph = apps
             .handler_for(&chain)
-            .and_then(|id| {
-                apps.document_icon(id, &chain)
-                    .and_then(|svg| self.document_source(&svg))
-                    .map(Glyph::Document)
+            .and_then(|id| match apps.document_icon(id, &chain)? {
+                DocumentIcon::Full { layers, label } => self.full_glyph(&layers, label),
+                DocumentIcon::Foreground(svg) => self.document_source(&svg).map(Glyph::Document),
             })
             .or_else(|| {
                 apps.icon_for(&chain)
                     .and_then(|icon| self.app_source(&icon))
                     .map(Glyph::App)
             })
+            .or_else(|| {
+                let name = self.file_rules.system_type(extension.as_deref(), &chain)?;
+                compose::system_svg(&self.assets, name).map(|_| Glyph::System(name.to_owned()))
+            })
             .unwrap_or(Glyph::None);
         FileLook { glyph, extension }
+    }
+
+    /// A full icon: every layer within the size limit and drawable, else none.
+    fn full_glyph(&self, layers: &[PathBuf], label: bool) -> Option<Glyph> {
+        let sources = layers
+            .iter()
+            .map(|svg| {
+                let source = self.document_source(svg)?;
+                self.drawable(&source, svg).then_some(source)
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Glyph::Full { sources, label })
+    }
+
+    /// Whether the SVG at `path` parses (remembered by its `source` name).
+    fn drawable(&self, source: &str, path: &Path) -> bool {
+        let key = format!("svg:{source}");
+        if let Some(known) = self.usable.lock().ok().and_then(|m| m.get(&key).copied()) {
+            return known;
+        }
+        let ok = fs::read(path).ok().is_some_and(|bytes| {
+            resvg::usvg::Tree::from_data(&bytes, &resvg::usvg::Options::default()).is_ok()
+        });
+        if let Ok(mut memo) = self.usable.lock() {
+            if memo.len() >= 512 {
+                memo.clear();
+            }
+            memo.insert(key, ok);
+        }
+        ok
     }
 
     /// A stable name for a document foreground: where it is and when it changed.
@@ -303,13 +338,19 @@ impl Icons {
         let document = plan
             .document
             .as_ref()
-            .and_then(|draw| load_document(&draw.source));
+            .and_then(|draw| self.load_document(&draw.source));
+        let full: Vec<Vec<u8>> = plan
+            .full
+            .iter()
+            .filter_map(|draw| load_document(&draw.source))
+            .collect();
         let pixmap = compose::render(
             &self.assets,
             entry,
             &plan,
             app.as_ref(),
             document.as_deref(),
+            &full,
             &fonts,
         )?;
         write_icon(
@@ -319,6 +360,15 @@ impl Icons {
             &compose::straight_rgba(&pixmap),
         )?;
         Some(target)
+    }
+
+    /// The SVG a document source names: an app's file (`doc:`) or a system foreground
+    /// (`system:`).
+    fn load_document(&self, source: &str) -> Option<Vec<u8>> {
+        match source.strip_prefix("system:") {
+            Some(name) => compose::system_svg(&self.assets, name),
+            None => load_document(source),
+        }
     }
 
     /// Decodes the app icon a plan names, `side` pixels wide (`pt` points).

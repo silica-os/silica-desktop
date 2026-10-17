@@ -216,7 +216,8 @@ What the compiler writes:
   `FileLabel` and `FileLabelAlone` (`size` in 1/64 of a canvas unit, since the box metrics are
   fractional; `color` the one grey of the extension label, `[file.label].color` and
   `[file.label_alone].color`, required); for the folder `FolderEmblem` (the symbol box), `FolderEffect`,
-  `FolderTint`, `TintLabel`, `SpecialFolder` (key to symbol name).
+  `FolderTint`, `TintLabel`, `SpecialFolder` (key to symbol name); for the file `SystemType` (21: `format` a pattern, a MIME type, `major/*` or `.ext`, `font` the system type name;
+  the artwork, when the build had `files/system/<name>.svg`, is the entry `file.system.<name>` of `Role` with one `Foreground` SVG variant).
 - No kind, category or type map: the slots `SymbolBand` (on the file), `FallbackKind` (16), `KindStyle` (15)
   and `TypeCategory` (7) are no longer written for the generic file and
   readers must ignore them; the numbers stay reserved. `[file.glyph.symbol]`, `[file.kinds]`,

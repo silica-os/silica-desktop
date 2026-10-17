@@ -205,6 +205,10 @@ byte_enum! {
         TintLabel = 19,
         /// A special folder (`format` the key: `DOCUMENTS`, `HOME`...) and its symbol (`font`).
         SpecialFolder = 20,
+        /// A structural file type with a system foreground (`font` the name, `format` the
+        /// pattern: a MIME type, `major/*` or `.ext`). The artwork is the entry
+        /// `file.system.<name>` of the `Role` key space, when the build had it.
+        SystemType = 21,
     }
 }
 

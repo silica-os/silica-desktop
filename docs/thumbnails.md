@@ -102,17 +102,25 @@ failure (no program, non-zero exit, timeout, not a PNG/image) is recorded in
 
 ### Document icons
 
-An app can give its documents a dedicated icon without a thumbnailer: a **document foreground**
-shipped in its icon folder, composed between `back` and `front` in the glyph box instead of the
-app icon (so the sheet and the label stay the system's). The convention:
+An app can give its documents a dedicated icon without a thumbnailer, in two forms: a **document
+foreground** (the sheet and the label stay the system's) or a **full icon** (it replaces the whole
+sheet). The convention:
 
 1. In the app's desktop entry, `X-Silica-Document-Icons=<mime>=<name>;<mime>=<name>;...`, with
    `<mime>` an exact type (`application/pdf`) or a group (`text/*`), and `<name>` made of
    letters, digits, `.`, `_`, `-` (not starting with a dot).
-2. For each name, an SVG at `<X-Silica-Icon folder>/documents/<name>.svg` (that is, `icon/documents/<name>.svg`
-   in the app's repository, next to `icon.json`/`icon.assets`). Any aspect ratio (it is fitted
-   and centered in the 500 x 500 glyph box; up to 2 MiB), drawn as it is: no recolouring, one
-   appearance (files have no dark form).
+2. For each name, under `<X-Silica-Icon folder>/documents/` (that is, `icon/documents/` in the
+   app's repository, next to `icon.json`/`icon.assets`), one of:
+   - `<name>.svg` or `<name>/foreground.svg`: a foreground, composed between `back` and `front`
+     in the 500 x 500 glyph box; any aspect ratio (fitted and centered).
+   - `<name>/icon.svg`, or `<name>/back.svg` + `<name>/front.svg` (drawn in that order): a full
+     icon, each layer fitted and centered in the whole 1024 canvas (draw the sheet yourself; a
+     square SVG fills the canvas exactly). The extension label is **not** drawn on a full icon,
+     unless the folder also holds a file named `label` (any content, usually empty): then the
+     system label (the one with a glyph, under the glyph box) is drawn over the icon.
+   Every SVG is drawn as it is: no recolouring, one appearance (files have no dark form), up to
+   2 MiB each. A folder wins over a plain `<name>.svg`; in a folder a full icon wins over
+   `foreground.svg`; `back.svg` without `front.svg` (or the opposite) is not a full icon.
 
 ```ini
 X-Silica-Icon=/usr/lib64/silica/apps/notes/icon
@@ -121,9 +129,33 @@ X-Silica-Document-Icons=text/markdown=markdown;application/x-silica-note=note;
 
 The entry must be the file's default handler. The type is looked up through the file's chain
 (type, then parents), exact first and then the group, so `text/markdown` also covers its
-subtypes. A name whose SVG is missing or cannot be parsed gives no foreground and the file falls
-back to the app icon. The source is part of the cache key with the SVG's mtime and size, so
-replacing the file regenerates the icon.
+subtypes. A name whose SVG is missing, too big or cannot be parsed gives nothing (for a full icon
+this is checked before drawing) and the file falls to the next step of the precedence. The
+source is part of the cache key with each SVG's mtime and size, so replacing a file regenerates
+the icon.
+
+### System types
+
+Structural types with no app (executable, archive, disk image, link, package, generic data) get a
+**system foreground** in the glyph box of the generic sheet. They are listed in `[file.system]` of
+`crates/silica-assets/data/compose.toml` (compiled into `silica.assets`): per name, `mime` (a type
+or `major/*`, matched against the file's chain) and `ext` (an extension without the dot, matched
+first). The artwork is `files/system/<name>.svg` of silica-icons, embedded when the build has it
+(`file.system.<name>` in the `Role` key space); a name without artwork is skipped silently and the
+file stays an unknown extension. Used only when no app icon applies (no handler, or a handler
+without a Silica icon).
+
+### Precedence
+
+What the service answers for a file, first match wins:
+
+1. a real preview (images, PDF: built-in generators);
+2. a thumbnailer of an app (the two are skipped by `Icon` with `NO_PREVIEW`);
+3. the full icon of the default app (`documents/<name>/icon.svg` or `back.svg` + `front.svg`);
+4. the document foreground of the default app (`documents/<name>.svg`, `<name>/foreground.svg`);
+5. the app icon on the generic sheet, with the label;
+6. the system type foreground on the generic sheet, with the label;
+7. the generic sheet with the extension label alone (unknown extension).
 
 ## Folders
 

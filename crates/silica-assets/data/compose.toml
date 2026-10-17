@@ -84,3 +84,15 @@ APPLICATIONS = "square-grid-2x2"
 LIBRARY = "books-vertical"
 SHARED = "person-2"
 NETWORK = "network"
+
+# Structural file types that get a system document foreground (silica-icons `files/system/<name>.svg`,
+# drawn in the glyph box) when no app handles the type, before the unknown-extension sheet.
+# `mime`: a MIME type or `major/*`, matched against the file's type and its parents; `ext`: an
+# extension without the dot. A name without artwork in silica-icons is skipped.
+[file.system]
+executable = { mime = ["application/x-executable", "application/x-pie-executable", "application/x-sharedlib", "application/x-shellscript", "application/vnd.appimage", "application/x-msdos-program", "application/x-ms-dos-executable"], ext = ["appimage", "run", "exe"] }
+archive = { mime = ["application/zip", "application/x-tar", "application/gzip", "application/x-bzip2", "application/x-xz", "application/zstd", "application/x-7z-compressed", "application/vnd.rar", "application/x-compressed-tar", "application/x-archive"], ext = ["zip", "tar", "gz", "bz2", "xz", "zst", "7z", "rar"] }
+disk-image = { mime = ["application/x-iso9660-image", "application/x-raw-disk-image", "application/x-qemu-disk", "application/x-cd-image"], ext = ["iso", "img", "qcow2", "vmdk", "vdi"] }
+link = { mime = ["application/x-desktop", "inode/symlink", "application/x-shortcut"], ext = ["desktop", "lnk"] }
+package = { mime = ["application/x-rpm", "application/vnd.debian.binary-package", "application/vnd.flatpak", "application/vnd.flatpak.ref", "application/vnd.snap"], ext = ["rpm", "deb", "flatpak", "snap"] }
+data = { mime = ["application/octet-stream"], ext = ["bin", "dat"] }

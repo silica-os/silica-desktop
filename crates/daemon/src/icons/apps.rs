@@ -250,9 +250,9 @@ impl Apps {
         icon_of(self.entry(self.handler_for(chain)?)?)
     }
 
-    /// The document foreground the app `id` declares for the first type of `chain` it lists
-    /// (exact type, then `major/*`): `<icon folder>/documents/<name>.svg`, if the file is there.
-    pub fn document_icon(&self, id: &str, chain: &[String]) -> Option<PathBuf> {
+    /// The document icon the app `id` declares for the first type of `chain` it lists (exact
+    /// type, then `major/*`), if what it names is there: see [`DocumentIcon`].
+    pub fn document_icon(&self, id: &str, chain: &[String]) -> Option<DocumentIcon> {
         let entry = self.entry(id)?;
         let dir = self.silica_icon_dir(id)?;
         let find = |key: &str| {
@@ -268,9 +268,42 @@ impl Apps {
                 find(&format!("{major}/*"))
             })
         })?;
-        let path = dir.join("documents").join(format!("{name}.svg"));
-        path.is_file().then_some(path)
+        document_icon_at(&dir.join("documents"), name)
     }
+}
+
+/// What an app ships under `<icon folder>/documents/` for a document icon name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DocumentIcon {
+    /// A foreground drawn in the glyph box of the system sheet: `<name>.svg`, or
+    /// `<name>/foreground.svg`.
+    Foreground(PathBuf),
+    /// A whole icon that replaces the sheet: `<name>/icon.svg`, or `<name>/back.svg` under
+    /// `<name>/front.svg` (bottom first). `label`: the folder holds a file named `label`, which
+    /// asks for the extension label to be drawn on the icon (it is not otherwise).
+    Full { layers: Vec<PathBuf>, label: bool },
+}
+
+/// Resolves `name` in `documents`: a folder wins over a plain SVG, and in a folder a full icon
+/// (`icon.svg`, then `back.svg` + `front.svg`) over `foreground.svg`.
+fn document_icon_at(documents: &Path, name: &str) -> Option<DocumentIcon> {
+    let folder = documents.join(name);
+    if folder.is_dir() {
+        let file = |n: &str| Some(folder.join(n)).filter(|p| p.is_file());
+        let full = file("icon.svg").map(|icon| vec![icon]).or_else(|| {
+            let (back, front) = (file("back.svg")?, file("front.svg")?);
+            Some(vec![back, front])
+        });
+        return match full {
+            Some(layers) => Some(DocumentIcon::Full {
+                layers,
+                label: folder.join("label").is_file(),
+            }),
+            None => file("foreground.svg").map(DocumentIcon::Foreground),
+        };
+    }
+    let path = documents.join(format!("{name}.svg"));
+    path.is_file().then_some(DocumentIcon::Foreground(path))
 }
 
 fn collect(root: &Path, dir: &Path, out: &mut HashMap<String, Entry>) {
@@ -417,6 +450,64 @@ mod tests {
     }
 
     #[test]
+    fn a_document_icon_folder_is_a_foreground_or_a_full_icon() {
+        let root = tmp("docfolders");
+        let docs = root.join("documents");
+        let touch = |rel: &str| {
+            let path = docs.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "<svg/>").unwrap();
+        };
+        touch("plain.svg");
+        touch("fg/foreground.svg");
+        touch("one/icon.svg");
+        touch("one/foreground.svg");
+        touch("two/back.svg");
+        touch("two/front.svg");
+        touch("lab/icon.svg");
+        touch("lab/label");
+        touch("half/back.svg");
+        touch("both.svg");
+        touch("both/foreground.svg");
+        let at = |n: &str| document_icon_at(&docs, n);
+        assert_eq!(
+            at("plain"),
+            Some(DocumentIcon::Foreground(docs.join("plain.svg")))
+        );
+        assert_eq!(
+            at("fg"),
+            Some(DocumentIcon::Foreground(docs.join("fg/foreground.svg")))
+        );
+        // A full icon wins over the foreground of the same folder.
+        assert_eq!(
+            at("one"),
+            Some(DocumentIcon::Full {
+                layers: vec![docs.join("one/icon.svg")],
+                label: false
+            })
+        );
+        assert_eq!(
+            at("two"),
+            Some(DocumentIcon::Full {
+                layers: vec![docs.join("two/back.svg"), docs.join("two/front.svg")],
+                label: false
+            })
+        );
+        assert!(matches!(
+            at("lab"),
+            Some(DocumentIcon::Full { label: true, .. })
+        ));
+        // Only one of back/front: nothing usable. A folder wins over a plain file.
+        assert_eq!(at("half"), None);
+        assert_eq!(
+            at("both"),
+            Some(DocumentIcon::Foreground(docs.join("both/foreground.svg")))
+        );
+        assert_eq!(at("none"), None);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn document_icons_are_parsed_and_matched_by_type_then_wildcard() {
         let e = parse_entry(
             "[Desktop Entry]\nX-Silica-Document-Icons=application/pdf=pdf;text/*=text;bad=x;text/y=../up;image/png=;\n",
@@ -453,12 +544,12 @@ mod tests {
         let chain = |m: &str| vec![m.to_owned()];
         assert_eq!(
             apps.document_icon("p.desktop", &chain("application/pdf")),
-            Some(icon.join("documents/pdf.svg"))
+            Some(DocumentIcon::Foreground(icon.join("documents/pdf.svg")))
         );
         // The wildcard matches the types of its group.
         assert_eq!(
             apps.document_icon("p.desktop", &chain("text/markdown")),
-            Some(icon.join("documents/text.svg"))
+            Some(DocumentIcon::Foreground(icon.join("documents/text.svg")))
         );
         // A parent in the chain counts; a name whose file is missing, or no entry, gives none.
         let md = vec!["x/y".to_owned(), "application/pdf".to_owned()];

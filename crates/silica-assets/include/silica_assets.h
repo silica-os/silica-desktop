@@ -142,7 +142,8 @@ enum {
                                      rect = (opacity, highlight opacity, 0, 0), tracking offset */
   SILICA_SLOT_FOLDER_TINT = 18,   /* rect = (luminance low, high, shade, glow) */
   SILICA_SLOT_TINT_LABEL = 19,    /* format name, color[0] */
-  SILICA_SLOT_SPECIAL_FOLDER = 20 /* format key (DOCUMENTS), font symbol name */
+  SILICA_SLOT_SPECIAL_FOLDER = 20, /* format key (DOCUMENTS), font symbol name */
+  SILICA_SLOT_SYSTEM_TYPE = 21 /* format pattern (MIME, major/star, .ext), font system type name */
 };
 
 typedef struct silica_entry_info {

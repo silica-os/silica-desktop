@@ -891,7 +891,75 @@ fn generic_file(
     if let Some(label) = dynamic.get("label_alone") {
         label_slot(ctx, entry, SlotKind::FileLabelAlone, label, "label_alone")?;
     }
+    system_types(ctx, dir, dynamic, entry)
+}
 
+/// `[file.system]`: structural types (`executable`, `archive`...) with the patterns that select
+/// them (`mime` entries: a type or `major/*`; `ext` entries: an extension without the dot) and
+/// the foreground `files/system/<name>.svg` of silica-icons. A type whose artwork is not there
+/// yet gets its slots but no entry: the reader then skips it.
+fn system_types(
+    ctx: &mut Ctx<'_>,
+    dir: &Path,
+    dynamic: &Value,
+    entry: u32,
+) -> Result<(), CompileError> {
+    let Some(types) = dynamic.get("system").and_then(Value::as_object) else {
+        return Ok(());
+    };
+    let patterns = |value: Option<&Value>, prefix: &str| -> Vec<String> {
+        value
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(|p| format!("{prefix}{p}"))
+            .collect()
+    };
+    for (name, spec) in types {
+        let mut all = patterns(spec.get("mime"), "");
+        all.extend(patterns(spec.get("ext"), "."));
+        for pattern in all {
+            ctx.builder.add_slot(
+                entry,
+                SlotSpec {
+                    kind: Some(SlotKind::SystemType),
+                    format: Some(pattern),
+                    font: Some(name.clone()),
+                    ..SlotSpec::default()
+                },
+            )?;
+        }
+    }
+    let Some(system) = dir.parent().map(|p| p.join("system")) else {
+        return Ok(());
+    };
+    for name in types.keys() {
+        let file = format!("{name}.svg");
+        if !system.join(&file).is_file() {
+            continue;
+        }
+        let bytes = ctx.reader.read(&system, &file)?;
+        raster::image_from_svg(&bytes)
+            .map_err(|e| CompileError::new(format!("files/system/{file}: {e}")))?;
+        let id = ctx
+            .builder
+            .add_entry(&format!("file.system.{name}"), EntryKind::File, 0);
+        ctx.builder.register(KeySpace::Role, id)?;
+        ctx.builder.add_variant(
+            id,
+            VariantSpec {
+                theme: Theme::Default,
+                layer: Layer::Foreground,
+                encoding: Encoding::Svg,
+                state: State::Normal,
+                size_px: 0,
+                width: 0,
+                height: 0,
+                data: bytes,
+            },
+        )?;
+    }
     Ok(())
 }
 

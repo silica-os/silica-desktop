@@ -95,6 +95,12 @@ fn assets(root: &Path) -> Assets {
         svg(&rect(34, 293, 956, 599, "#82c4fd")),
     );
 
+    // The artwork of one system type; the others (executable...) are missing on purpose.
+    write(
+        &icons.join("files/system/archive.svg"),
+        svg(&rect(0, 0, 1024, 1024, "#c80000")),
+    );
+
     let rules: toml::Table = silica_assets::compile::DEFAULT_COMPOSE.parse().unwrap();
     let mut glyphs = Vec::new();
     for symbol in rules["folder"]["folders"].as_table().unwrap().values() {
@@ -145,7 +151,7 @@ fn setup(name: &str) -> Setup {
     write(
         &home.join(".local/share/mime/globs2"),
         "50:application/pdf:*.pdf\n50:text/plain:*.txt\n50:text/csv:*.csv\n50:application/x-blender:*.blend\n\
-         50:application/json:*.json\n",
+         50:application/json:*.json\n50:application/zip:*.zip\n",
     );
     write(
         &home.join(".local/share/mime/subclasses"),
@@ -216,6 +222,7 @@ fn the_tint_reaches_back_front_and_symbol_but_not_the_middle() {
         &plan,
         None,
         None,
+        &[],
         &fonts,
     )
     .unwrap();
@@ -234,6 +241,7 @@ fn the_tint_reaches_back_front_and_symbol_but_not_the_middle() {
         &plain,
         None,
         None,
+        &[],
         &fonts,
     )
     .unwrap();
@@ -691,5 +699,190 @@ fn a_file_with_a_preview_answers_with_it_unless_the_icon_is_asked_for() {
         Some(false)
     );
     assert!(crate::thumbnails::icon_job(&root, None, &folder, 64, 1.0, 0).is_none());
+    let _ = fs::remove_dir_all(&s.root);
+}
+
+const ONE_SVG: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" \
+     viewBox=\"0 0 100 100\"><rect width=\"100\" height=\"100\" fill=\"#0000c8\"/></svg>";
+
+/// An app with a Silica icon folder for `types`, and an optional document icons line.
+fn editor_for(s: &Setup, types: &str, extra: &str) -> PathBuf {
+    let app_dir = s.root.join("editor-icon");
+    write(&app_dir.join("icon.png"), png(1024, [0, 200, 0, 255]));
+    write(
+        &s.root.join("home/.local/share/applications/editor.desktop"),
+        format!(
+            "[Desktop Entry]\nName=Editor\nX-Silica-Icon={}\nMimeType={types}\n{extra}",
+            app_dir.display()
+        ),
+    );
+    app_dir
+}
+
+#[test]
+fn the_glyph_follows_the_precedence_from_the_full_icon_down_to_the_unknown_extension() {
+    let s = setup("precedence");
+    let txt = s.root.join("note.txt");
+    let zip = s.root.join("a.zip");
+    let run = s.root.join("a.run");
+    for file in [&txt, &zip, &run] {
+        fs::write(file, "x").unwrap();
+    }
+    let look = |icons: &Icons, file: &Path| icons.file_look(file, 256.0).glyph;
+    // Nobody handles the types: the system type if its artwork exists, else the unknown sheet.
+    assert_eq!(look(&s.icons, &txt), Glyph::None);
+    assert_eq!(look(&s.icons, &zip), Glyph::System("archive".to_owned()));
+    // The executable type is listed but its artwork is missing: skipped silently.
+    assert_eq!(look(&s.icons, &run), Glyph::None);
+    let out = s.icons.icon(&zip, 512, 256.0).unwrap();
+    assert!(near(pixel(&out, 256, 256), [200, 0, 0, 255], 2));
+    assert!(near(pixel(&out, 120, 120), SHEET, 1));
+    let out = s.icons.icon(&run, 512, 256.0).unwrap();
+    assert!(near(pixel(&out, 256, 256), SHEET, 1));
+
+    // The app icon beats the system type.
+    let app = editor_for(&s, "text/plain;application/zip;", "");
+    let icons = reload(&s, "app");
+    assert!(matches!(look(&icons, &txt), Glyph::App(_)));
+    assert!(matches!(look(&icons, &zip), Glyph::App(_)));
+
+    // A handler without a Silica icon is not an app of ours: the system type stays.
+    fs::remove_file(s.root.join("home/.local/share/applications/editor.desktop")).unwrap();
+    write(
+        &s.root.join("home/.local/share/applications/other.desktop"),
+        "[Desktop Entry]\nName=Other\nIcon=other\nMimeType=application/zip;\n",
+    );
+    let icons = reload(&s, "third");
+    assert_eq!(look(&icons, &zip), Glyph::System("archive".to_owned()));
+    fs::remove_file(s.root.join("home/.local/share/applications/other.desktop")).unwrap();
+
+    // The app foreground beats the app icon.
+    editor_for(
+        &s,
+        "text/plain;application/zip;",
+        "X-Silica-Document-Icons=text/plain=notes;application/zip=pack;\n",
+    );
+    write(&app.join("documents/notes.svg"), ONE_SVG);
+    write(&app.join("documents/pack/foreground.svg"), ONE_SVG);
+    let icons = reload(&s, "fg");
+    assert!(matches!(look(&icons, &txt), Glyph::Document(_)));
+    assert!(matches!(look(&icons, &zip), Glyph::Document(_)));
+
+    // The app full icon beats the foreground (a folder with icon.svg and a foreground).
+    write(
+        &app.join("documents/notes/icon.svg"),
+        svg(&rect(0, 0, 1024, 1024, "#8000c0")),
+    );
+    write(&app.join("documents/notes/foreground.svg"), ONE_SVG);
+    let icons = reload(&s, "full");
+    assert!(matches!(
+        look(&icons, &txt),
+        Glyph::Full { label: false, .. }
+    ));
+    assert!(matches!(look(&icons, &zip), Glyph::Document(_)));
+
+    // A full icon that cannot be drawn is skipped: the app icon comes next.
+    write(&app.join("documents/notes/icon.svg"), "not an svg");
+    let icons = reload(&s, "broken");
+    assert!(matches!(look(&icons, &txt), Glyph::App(_)));
+    let _ = fs::remove_dir_all(&s.root);
+}
+
+#[test]
+fn a_full_icon_replaces_the_whole_sheet_in_both_forms() {
+    let s = setup("full");
+    let app = editor_for(
+        &s,
+        "text/plain;",
+        "X-Silica-Document-Icons=text/plain=notes;\n",
+    );
+    let txt = s.root.join("note.txt");
+    fs::write(&txt, "x").unwrap();
+    // One file: icon.svg covers the canvas, the sheet is gone (the corner is the icon's), no
+    // label.
+    write(
+        &app.join("documents/notes/icon.svg"),
+        svg(&rect(0, 0, 1024, 1024, "#8000c0")),
+    );
+    let icons = reload(&s, "one");
+    let out = icons.icon(&txt, 512, 256.0).unwrap();
+    assert!(near(pixel(&out, 3, 3), [0x80, 0, 0xc0, 255], 1));
+    assert!(near(pixel(&out, 256, 256), [0x80, 0, 0xc0, 255], 1));
+    if Path::new(DEJAVU).is_file() {
+        assert_eq!(count_color(&out, 386..500, GREY, 8).0, 0);
+    }
+    // Two layers, back then front.
+    fs::remove_file(app.join("documents/notes/icon.svg")).unwrap();
+    write(
+        &app.join("documents/notes/back.svg"),
+        svg(&rect(0, 0, 1024, 1024, "#00c000")),
+    );
+    write(
+        &app.join("documents/notes/front.svg"),
+        svg(&rect(400, 400, 224, 224, "#c0c000")),
+    );
+    let icons = reload(&s, "two");
+    let out = icons.icon(&txt, 512, 256.0).unwrap();
+    assert!(near(pixel(&out, 10, 10), [0, 0xc0, 0, 255], 1));
+    assert!(near(pixel(&out, 256, 256), [0xc0, 0xc0, 0, 255], 1));
+    // The `label` key in the folder asks for the extension label on the icon.
+    write(&app.join("documents/notes/label"), "");
+    let icons = reload(&s, "label");
+    let out = icons.icon(&txt, 512, 256.0).unwrap();
+    if Path::new(DEJAVU).is_file() {
+        assert!(count_color(&out, 386..500, GREY, 8).0 > 200);
+    }
+    // Both forms are bounded: a layer above the size limit gives no full icon.
+    let big = format!("{}{}", svg(""), " ".repeat(2 * 1024 * 1024 + 1));
+    write(&app.join("documents/notes/back.svg"), big);
+    let icons = reload(&s, "big");
+    assert!(matches!(icons.file_look(&txt, 256.0).glyph, Glyph::App(_)));
+    let _ = fs::remove_dir_all(&s.root);
+}
+
+#[test]
+fn a_preview_and_a_thumbnailer_beat_every_icon() {
+    let s = setup("preview-over-icons");
+    let app = s.root.join("editor-icon");
+    write(&app.join("icon.png"), png(1024, [0, 200, 0, 255]));
+    write(
+        &s.root.join("home/.local/share/applications/editor.desktop"),
+        format!(
+            "[Desktop Entry]\nName=Editor\nX-Silica-Icon={}\nMimeType=application/x-sdoc;\n\
+             X-Silica-Document-Icons=application/x-sdoc=doc;\n",
+            app.display()
+        ),
+    );
+    write(
+        &app.join("documents/doc/icon.svg"),
+        svg(&rect(0, 0, 1024, 1024, "#8000c0")),
+    );
+    let ready = s.root.join("ready.png");
+    image::RgbaImage::from_pixel(32, 32, image::Rgba([200, 10, 10, 255]))
+        .save(&ready)
+        .unwrap();
+    let icons = with_thumbnailer(&s, &format!("cp {} \"$2\"", ready.display()));
+    let doc = s.root.join("a.sdoc");
+    fs::write(&doc, "x").unwrap();
+    assert!(matches!(
+        icons.file_look(&doc, 128.0).glyph,
+        Glyph::Full { .. }
+    ));
+    let root = s.root.join("thumbs");
+    let uri = format!("file://{}", doc.display());
+    let (path, preview) =
+        crate::thumbnails::icon_job(&root, Some(&icons), &uri, 128, 2.0, 0).unwrap();
+    assert!(preview && near(pixel(&path, 10, 10), [200, 10, 10, 255], 1));
+    // Asked for the icon: the app's full icon.
+    let (path, preview) = crate::thumbnails::icon_job(
+        &root,
+        Some(&icons),
+        &uri,
+        128,
+        2.0,
+        crate::thumbnails::ICON_NO_PREVIEW,
+    )
+    .unwrap();
+    assert!(!preview && near(pixel(&path, 10, 10), [0x80, 0, 0xc0, 255], 1));
     let _ = fs::remove_dir_all(&s.root);
 }

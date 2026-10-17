@@ -66,6 +66,31 @@ pub struct FileRules {
     pub app_body: Option<[f32; 4]>,
     pub label: Option<LabelSpec>,
     pub label_alone: Option<LabelSpec>,
+    /// Structural types with a system foreground: (pattern, name). A pattern is a MIME type,
+    /// `major/*` or `.ext`.
+    pub system: Vec<(String, String)>,
+}
+
+impl FileRules {
+    /// The system type of a file with extension `extension` and type chain `chain` (the type
+    /// and its parents, nearest first): the extension first, then the nearest type, exact
+    /// before `major/*`.
+    pub fn system_type(&self, extension: Option<&str>, chain: &[String]) -> Option<&str> {
+        let find = |pattern: &str| {
+            self.system
+                .iter()
+                .find(|(p, _)| p == pattern)
+                .map(|(_, n)| n.as_str())
+        };
+        extension.and_then(|e| find(&format!(".{e}"))).or_else(|| {
+            chain.iter().find_map(|mime| {
+                find(mime).or_else(|| {
+                    let (major, _) = mime.split_once('/')?;
+                    find(&format!("{major}/*"))
+                })
+            })
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -133,6 +158,11 @@ impl FileRules {
                 SlotKind::AppIconBody => rules.app_body = Some(slot.rect),
                 SlotKind::FileLabel => rules.label = Some(label_of(&slot)),
                 SlotKind::FileLabelAlone => rules.label_alone = Some(label_of(&slot)),
+                SlotKind::SystemType => {
+                    if let (Some(pattern), Some(name)) = (slot.format, slot.font) {
+                        rules.system.push((pattern.to_owned(), name.to_owned()));
+                    }
+                }
                 _ => {}
             }
         }
@@ -368,6 +398,9 @@ pub struct Plan {
     pub symbol: Option<SymbolDraw>,
     pub app: Option<AppDraw>,
     pub document: Option<DocDraw>,
+    /// The layers of an app's full file icon, bottom first, each fitted in the whole canvas.
+    /// When there are any, the plan has no sheet layers and no glyph.
+    pub full: Vec<DocDraw>,
     pub label: Option<LabelDraw>,
 }
 
@@ -436,6 +469,7 @@ pub fn plan_folder(rules: &FolderRules, side: u32, pt: f32, look: &FolderLook) -
         symbol,
         app: None,
         document: None,
+        full: Vec::new(),
         label: None,
     }
 }
@@ -449,6 +483,15 @@ pub enum Glyph {
     App(String),
     /// A document foreground the app ships for the file's type, identified by `source`.
     Document(String),
+    /// The whole icon the app ships for the file's type: the layers (bottom first), each by
+    /// `source`. It replaces the generic sheet; the label is drawn only when `label`.
+    Full {
+        sources: Vec<String>,
+        label: bool,
+    },
+    /// The foreground of a structural system type (`system:<name>` in the assets), used when no
+    /// app handles the type.
+    System(String),
 }
 
 /// What a file is, once resolved.
@@ -486,6 +529,8 @@ pub fn plan_file(
     }
     let mut app = None;
     let mut document = None;
+    let mut full = Vec::new();
+    let mut show_label = true;
     let has_glyph = match &look.glyph {
         Glyph::App(source) => rules.app_body.is_some_and(|body| {
             let [x, y, s] = app_canvas(body);
@@ -503,6 +548,26 @@ pub fn plan_file(
             });
             true
         }
+        Glyph::System(name) => {
+            document = Some(DocDraw {
+                source: format!("system:{name}"),
+                rect: to_px(rules.glyph_box, side_f),
+            });
+            true
+        }
+        Glyph::Full { sources, label } => {
+            layers.clear();
+            glyph_at = 0;
+            full = sources
+                .iter()
+                .map(|source| DocDraw {
+                    source: source.clone(),
+                    rect: [0.0, 0.0, side_f, side_f],
+                })
+                .collect();
+            show_label = *label;
+            true
+        }
         Glyph::None => false,
     };
     let text = look.extension.as_deref().unwrap_or("");
@@ -511,7 +576,7 @@ pub fn plan_file(
     } else {
         rules.label_alone.as_ref()
     };
-    let label = spec.and_then(|spec| {
+    let label = spec.filter(|_| show_label).and_then(|spec| {
         let text = label_text(spec, text, pt)?;
         let weight = spec.weight;
         let plan = place_label(spec, text, |t, size| advance(t, size, weight));
@@ -527,6 +592,7 @@ pub fn plan_file(
         symbol: None,
         app,
         document,
+        full,
         label,
     }
 }
@@ -580,6 +646,7 @@ mod tests {
             app_body: Some([303.67, 303.67, 416.67, 416.67]),
             label: Some(label()),
             label_alone: Some(alone()),
+            system: Vec::new(),
         }
     }
 

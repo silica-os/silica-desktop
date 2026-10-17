@@ -29,6 +29,13 @@ fn layer_svg(assets: &Assets, entry: EntryId, layer: Layer) -> Option<&[u8]> {
         .map(|v| v.data)
 }
 
+/// The SVG of the foreground of the system type `name` (`file.system.<name>`), if the build had
+/// its artwork.
+pub fn system_svg(assets: &Assets, name: &str) -> Option<Vec<u8>> {
+    let entry = assets.lookup(KeySpace::Role, &format!("file.system.{name}"))?;
+    layer_svg(assets, entry, Layer::Foreground).map(<[u8]>::to_vec)
+}
+
 /// Renders an SVG scaled so its width is `width` pixels, with its top-left at `(x, y)`, on a
 /// transparent pixmap `side` x `side`.
 fn render_svg(data: &[u8], side: u32, x: f32, y: f32, width: f32) -> Option<Pixmap> {
@@ -345,7 +352,8 @@ impl<'a> Fonts<'a> {
 }
 
 /// Renders a plan. `entry` holds the layer SVGs; `app` is the decoded app icon and `document`
-/// the SVG of the document foreground when the plan has them. None when a layer cannot be drawn
+/// the SVG of the document foreground and `full` those of the layers of a full icon, when the
+/// plan has them. None when a layer cannot be drawn
 /// or the size is out of range.
 pub fn render(
     assets: &Assets,
@@ -353,6 +361,7 @@ pub fn render(
     plan: &Plan,
     app: Option<&Bitmap>,
     document: Option<&[u8]>,
+    full: &[Vec<u8>],
     fonts: &Fonts<'_>,
 ) -> Option<Pixmap> {
     if plan.side == 0 || plan.side > MAX_SIDE {
@@ -368,6 +377,9 @@ pub fn render(
             let _ = draw_app(canvas, draw, bitmap);
         }
         if let (Some(draw), Some(svg)) = (&plan.document, document) {
+            let _ = draw_document(canvas, draw, svg);
+        }
+        for (draw, svg) in plan.full.iter().zip(full) {
             let _ = draw_document(canvas, draw, svg);
         }
     };
