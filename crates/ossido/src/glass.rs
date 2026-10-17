@@ -508,6 +508,22 @@ impl State {
             let Some(drawn) = crate::layers::drawn_layer(&map, layer, output) else {
                 continue;
             };
+            // The layer's menus and popovers (silica-desktop#222), drawn above it.
+            for (popup, offset) in
+                smithay::desktop::PopupManager::popups_for_surface(layer.wl_surface())
+            {
+                let regions = current_regions(popup.wl_surface());
+                if regions.is_empty() {
+                    continue;
+                }
+                let at = drawn.loc + offset - popup.geometry().loc;
+                list.push(GlassSurface {
+                    surface: format!("popup of layer {}", layer.namespace()),
+                    x: at.x,
+                    y: at.y,
+                    regions,
+                });
+            }
             let regions = drawn
                 .glass
                 .unwrap_or_else(|| current_regions(layer.wl_surface()));

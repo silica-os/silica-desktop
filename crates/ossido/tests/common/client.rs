@@ -814,11 +814,22 @@ impl TestWindow {
         );
         let surface = compositor.create_surface(&qh, ());
         let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
-        let parent = match &self.popup {
-            Some((_, parent, _, _)) if spec.nested => parent,
-            _ => self.xdg_surface.as_ref().expect("an xdg window"),
+        let popup = match (&self.popup, &self._layer) {
+            (Some((_, parent, _, _)), _) if spec.nested => {
+                xdg_surface.get_popup(Some(parent), &positioner, &qh, ())
+            }
+            // The popup of a layer surface (silica-desktop#222): no xdg parent, the layer
+            // adopts it.
+            (_, Some(layer)) => {
+                let popup = xdg_surface.get_popup(None, &positioner, &qh, ());
+                layer.get_popup(&popup);
+                popup
+            }
+            _ => {
+                let parent = self.xdg_surface.as_ref().expect("an xdg window");
+                xdg_surface.get_popup(Some(parent), &positioner, &qh, ())
+            }
         };
-        let popup = xdg_surface.get_popup(Some(parent), &positioner, &qh, ());
         if spec.grab {
             let serial = self.app.press_serial.expect("no press on the window");
             popup.grab(&seat, serial);

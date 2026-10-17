@@ -224,6 +224,21 @@ impl WlrLayerShellHandler for State {
         }
     }
 
+    /// A menu or popover of a shell layer (silica-desktop#222): its parent is known only now
+    /// (`xdg_surface.get_popup` came without one), so it is placed and tracked here.
+    fn new_popup(
+        &mut self,
+        _parent: WlrLayerSurface,
+        popup: smithay::wayland::shell::xdg::PopupSurface,
+    ) {
+        let positioner = popup.with_pending_state(|state| state.positioner);
+        let kind = smithay::desktop::PopupKind::from(popup.clone());
+        let geometry = self.popup_geometry(&kind, positioner);
+        popup.with_pending_state(|state| {
+            state.geometry = geometry;
+        });
+    }
+
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
         let mut map = layer_map_for_output(&self.output);
         let layer = map

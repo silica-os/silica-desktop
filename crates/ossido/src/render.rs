@@ -622,16 +622,34 @@ fn popup_layers(
     let Some(toplevel) = window.toplevel() else {
         return Vec::new();
     };
+    surface_popup_layers(
+        renderer,
+        toplevel.wl_surface(),
+        window.geometry().loc,
+        render_location,
+        scale,
+    )
+}
+
+/// The popups hanging from `root` (a window's or a layer's surface), the front one first.
+/// `inner` is the offset of the root's geometry in its surface (a window's), `render_location`
+/// where the root's surface goes.
+fn surface_popup_layers(
+    renderer: &mut GlesRenderer,
+    root: &WlSurface,
+    inner: Point<i32, Logical>,
+    render_location: Point<i32, Physical>,
+    scale: f64,
+) -> Vec<PopupLayer> {
     let depth = |popup: &smithay::desktop::PopupKind| {
         let mut depth = 0;
         let mut current = popup.wl_surface().clone();
-        while let Some(parent) =
-            smithay::desktop::PopupManager::popups_for_surface(toplevel.wl_surface())
-                .find(|(p, _)| p.wl_surface() == &current)
-                .and_then(|(p, _)| match p {
-                    smithay::desktop::PopupKind::Xdg(xdg) => xdg.get_parent_surface(),
-                    _ => None,
-                })
+        while let Some(parent) = smithay::desktop::PopupManager::popups_for_surface(root)
+            .find(|(p, _)| p.wl_surface() == &current)
+            .and_then(|(p, _)| match p {
+                smithay::desktop::PopupKind::Xdg(xdg) => xdg.get_parent_surface(),
+                _ => None,
+            })
         {
             depth += 1;
             current = parent;
@@ -641,16 +659,15 @@ fn popup_layers(
         }
         depth
     };
-    let mut popups: Vec<_> =
-        smithay::desktop::PopupManager::popups_for_surface(toplevel.wl_surface())
-            .map(|(popup, offset)| (depth(&popup), popup, offset))
-            .collect();
+    let mut popups: Vec<_> = smithay::desktop::PopupManager::popups_for_surface(root)
+        .map(|(popup, offset)| (depth(&popup), popup, offset))
+        .collect();
     popups.sort_by_key(|(depth, _, _)| std::cmp::Reverse(*depth));
     popups
         .into_iter()
         .map(|(_, popup, popup_offset)| {
-            let offset = (window.geometry().loc + popup_offset - popup.geometry().loc)
-                .to_physical_precise_round(scale);
+            let offset =
+                (inner + popup_offset - popup.geometry().loc).to_physical_precise_round(scale);
             let origin = render_location + offset;
             let elements = render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<_>>(
                 renderer,
@@ -1016,6 +1033,25 @@ pub fn output_elements(
             for offset in offsets {
                 let location = (drawn.loc.to_f64() + Point::from((offset, 0.0)))
                     .to_physical_precise_round(scale);
+                // The layer's menus and popovers (silica-desktop#222) are in front of it,
+                // each with the glass it declares behind it.
+                for popup in surface_popup_layers(
+                    renderer,
+                    layer.wl_surface(),
+                    Point::default(),
+                    location,
+                    scale,
+                ) {
+                    elements.extend(popup.elements);
+                    anchors.push(GlassAnchor {
+                        index: elements.len(),
+                        surface: popup.surface,
+                        origin: popup.origin,
+                        opacity: alpha,
+                        glass: None,
+                        dark_from: Some(layer.wl_surface().clone()),
+                    });
+                }
                 elements.extend(
                     AsRenderElements::<GlesRenderer>::render_elements::<
                         WaylandSurfaceRenderElement<GlesRenderer>,
