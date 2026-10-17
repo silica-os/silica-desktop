@@ -28,6 +28,7 @@ class DockOptions {
     this.indicators = true,
     this.tileSize = defaultCanvas,
     this.magnifiedSize = defaultMagnifiedCanvas,
+    this.launchAnimation = true,
   });
 
   /// Magnification (separator menu, Settings): off by default.
@@ -40,6 +41,9 @@ class DockOptions {
   /// The canvas of the icon under the pointer with magnification on, from [tileSize] up to
   /// 128 (`magnifiedSize`).
   final double magnifiedSize;
+
+  /// The icon bounces while an app opens (`launchAnimation`: `bounce`, the default, or `none`).
+  final bool launchAnimation;
 
   /// The recent and suggested apps section (D-08).
   final bool recents;
@@ -75,6 +79,7 @@ class DockOptions {
         MinimizeEffect.genie,
       ),
       indicators: flag('indicators', true),
+      launchAnimation: c['launchAnimation'] != 'none',
     );
   }
 
@@ -88,7 +93,8 @@ class DockOptions {
       other.minimizeEffect == minimizeEffect &&
       other.indicators == indicators &&
       other.tileSize == tileSize &&
-      other.magnifiedSize == magnifiedSize;
+      other.magnifiedSize == magnifiedSize &&
+      other.launchAnimation == launchAnimation;
 
   @override
   int get hashCode => Object.hash(
@@ -100,6 +106,7 @@ class DockOptions {
     indicators,
     tileSize,
     magnifiedSize,
+    launchAnimation,
   );
 }
 

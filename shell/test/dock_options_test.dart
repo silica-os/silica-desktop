@@ -71,4 +71,17 @@ void main() {
       expect(glassTop(), greaterThanOrEqualTo(300));
     },
   );
+
+  test('dock.json launchAnimation: bounce by default, none turns it off', () {
+    final dir = Directory.systemTemp.createTempSync('dock-launch');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final env = {'XDG_CONFIG_HOME': dir.path};
+    expect(DockOptions.read(env: env).launchAnimation, isTrue);
+    saveDockOption('launchAnimation', 'none', env: env);
+    expect(DockOptions.read(env: env).launchAnimation, isFalse);
+    saveDockOption('launchAnimation', 'bounce', env: env);
+    expect(DockOptions.read(env: env).launchAnimation, isTrue);
+    saveDockOption('launchAnimation', 7, env: env);
+    expect(DockOptions.read(env: env).launchAnimation, isTrue);
+  });
 }
