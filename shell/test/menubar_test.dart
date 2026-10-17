@@ -8,6 +8,7 @@ import 'package:silica_shell/l10n/l10n.dart';
 import 'package:silica_shell/menubar/desktop_menu.dart';
 import 'package:silica_shell/menubar/logo_menu.dart';
 import 'package:silica_shell/menubar/menubar.dart';
+import 'package:silica_shell/menubar/menubar_config.dart';
 import 'package:silica_shell/system/desktop_entries.dart';
 import 'package:silica_shell/menubar/status_icons.dart';
 import 'package:silica_shell/menubar/window_menu.dart';
@@ -28,6 +29,65 @@ void main() {
     );
     expect(clockText(DateTime(2026, 1, 4, 9, 5), 'it'), 'Dom 4 gen  09:05');
   });
+
+  test('the clock options of Settings: 12 hours, seconds, weekday, date', () {
+    final t = DateTime(2026, 10, 12, 22, 34, 7);
+    String text(ClockStyle style, [String locale = 'en']) =>
+        clockText(t, locale, style);
+    expect(text(const ClockStyle(hour24: false)), 'Mon 12 Oct  10:34 PM');
+    expect(
+      clockText(
+        DateTime(2026, 10, 12, 0, 5),
+        'en',
+        const ClockStyle(hour24: false),
+      ),
+      'Mon 12 Oct  12:05 AM',
+    );
+    expect(text(const ClockStyle(seconds: true)), 'Mon 12 Oct  22:34:07');
+    expect(text(const ClockStyle(weekday: false)), '12 Oct  22:34');
+    expect(text(const ClockStyle(date: ClockDate.never)), 'Mon 22:34');
+    expect(
+      text(const ClockStyle(date: ClockDate.never, weekday: false)),
+      '22:34',
+    );
+    expect(text(const ClockStyle(date: ClockDate.always)), 'Mon 12 Oct  22:34');
+    expect(
+      text(const ClockStyle(hour24: true, seconds: true), 'it'),
+      'Lun 12 ott  22:34:07',
+    );
+  });
+
+  test(
+    'menubar.json clock and recentItems: valid values, defaults otherwise',
+    () {
+      final config = MenubarConfig.fromJson({
+        'clock': {
+          'hour24': false,
+          'seconds': true,
+          'weekday': false,
+          'date': 'never',
+        },
+        'recentItems': 20,
+      });
+      expect(
+        config.clock,
+        const ClockStyle(
+          hour24: false,
+          seconds: true,
+          weekday: false,
+          date: ClockDate.never,
+        ),
+      );
+      expect(config.recentItems, 20);
+      final odd = MenubarConfig.fromJson({
+        'clock': {'hour24': 'yes', 'date': 'sometimes'},
+        'recentItems': 7,
+      });
+      expect(odd.clock, const ClockStyle());
+      expect(odd.recentItems, 10);
+      expect(MenubarConfig.fromJson({'clock': 3}).clock, const ClockStyle());
+    },
+  );
 
   testWidgets(
     'the name of the focused app, in bold, from the .desktop entries',

@@ -11,6 +11,7 @@ mod backends;
 mod details;
 pub mod display;
 pub mod focus;
+pub mod look;
 
 pub use details::{Network, Output, parse_outputs};
 pub use display::NightLight;
@@ -42,6 +43,9 @@ pub struct SystemConfig {
     pub poll: Duration,
     /// Where the appearance (light or dark) is saved; `None`: only in memory.
     pub appearance_file: Option<PathBuf>,
+    /// `theme.json`, the look Settings saved (read at start; Settings tells the daemon with
+    /// `SetLook`).
+    pub theme_file: Option<PathBuf>,
     /// Where the night light is saved (`nightlight.json`); `None`: only in memory.
     pub nightlight_file: Option<PathBuf>,
     /// The Focus modes (`focus.json`).
@@ -108,6 +112,7 @@ impl Default for SystemConfig {
             wpctl: PathBuf::from("wpctl"),
             poll: Duration::from_secs(1),
             appearance_file: default_appearance_file(),
+            theme_file: display::config_file("theme.json"),
             nightlight_file: display::config_file("nightlight.json"),
             power_file: display::config_file("power.json"),
             focus_file: display::config_file("focus.json"),
@@ -207,6 +212,8 @@ pub struct SystemState {
     pub dark: bool,
     /// `light`, `dark` or `auto` (follows the sun).
     pub appearance_mode: String,
+    /// The Appearance choices apps follow live (accent, scroll bars, icon style…).
+    pub look: look::Look,
     /// The apps recording now or recently, the ones in use first (the privacy pill).
     pub privacy: Vec<PrivacyUse>,
     /// The keyboard backlight, 0–1; `None` without a backlit keyboard.
@@ -267,6 +274,7 @@ impl SystemState {
         put("focus.allowedPeople", Value::from(mode.allowed_people));
         put("appearance.dark", Value::Bool(self.dark));
         put("appearance.mode", Value::from(self.appearance_mode.clone()));
+        self.look.put(&mut put);
         // "app<US>kind<US>1|0" per app: a flat list the shell splits.
         let privacy: Vec<String> = self
             .privacy
@@ -352,6 +360,10 @@ impl SystemService {
                     .appearance_file
                     .as_deref()
                     .map_or_else(|| "light".to_owned(), read_appearance_mode),
+                look: config
+                    .theme_file
+                    .as_deref()
+                    .map_or_else(look::Look::default, look::Look::read),
                 ..SystemState::default()
             })),
             changed: Arc::new(Event::new()),
@@ -685,6 +697,24 @@ impl System {
             state.dark = dark;
             state.appearance_mode = mode.to_owned();
         });
+        Ok(())
+    }
+
+    /// The system look: any of `accent`, `highlight`, `sidebarIconSize`, `scrollBars`,
+    /// `scrollClick`, `iconStyle`, `folderColour` (strings), `glass` (d, 0–1), `windowTint` (b).
+    /// Apps follow it live through `State`; Settings keeps it in `theme.json`.
+    fn set_look(&self, settings: HashMap<String, OwnedValue>) -> zbus::fdo::Result<()> {
+        let mut next = self.shared.state().look.clone();
+        if !next.merge(&look::settings_json(&settings)) {
+            return Err(zbus::fdo::Error::InvalidArgs(
+                "look: accent and folderColour/highlight (an accent name, or automatic), \
+                 sidebarIconSize small|medium|large, scrollBars automatic|whenScrolling|always, \
+                 scrollClick page|spot, iconStyle default|dark|clear|tinted, glass 0–1, \
+                 windowTint bool"
+                    .into(),
+            ));
+        }
+        self.shared.update(|state| state.look = next);
         Ok(())
     }
 

@@ -151,6 +151,20 @@ handled yet.
   does not suspend either; a sleep the user asks for still happens. State keys
   `power.preventSleep` and `power.inhibited` (the inhibitor is held).
 
+### System look
+
+- `SetLook(a{sv})`: the Appearance choices every app follows live, any of `accent`
+  (`multicolour|blue|purple|pink|red|orange|yellow|green|graphite`), `highlight` and
+  `folderColour` (an accent name, or `automatic`), `sidebarIconSize` (`small|medium|large`),
+  `scrollBars` (`automatic|whenScrolling|always`), `scrollClick` (`page|spot`), `iconStyle`
+  (`default|dark|clear|tinted`) as strings, `glass` (d, 0–1) and `windowTint` (b). An invalid value
+  is `InvalidArgs` and changes nothing. Not saved by the daemon: Settings keeps them in
+  `$XDG_CONFIG_HOME/silica/theme.json` (its own persistence, read at start; Ossido watches it for
+  `glass` and `windowTint`).
+- State keys `look.accent`, `look.highlight`, `look.sidebarIconSize`, `look.scrollBars`,
+  `look.scrollClick`, `look.iconStyle`, `look.folderColour`, `look.glass`, `look.windowTint`.
+  silica_ui's `SilicaSystemLook` reads them (typed; no app parses JSON).
+
 ### Displays and night light
 
 - `Outputs() → s`: the displays as JSON (Ossido's `output.list`, `docs/control.md`).

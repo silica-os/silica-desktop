@@ -147,6 +147,8 @@ pub struct RenderContext<'a> {
     pub genies: &'a [Genie],
     pub now: Instant,
     pub glass_quality: GlassQuality,
+    /// How tinted the glass is (Settings › Appearance › Glass, 0–1).
+    pub glass_level: f32,
     /// Space switch in progress: wallpaper and menu bar scroll with the windows.
     pub space_shift: Option<crate::workspaces::SpaceShift>,
     /// Panorama open or closing: arranged windows, spaces bar.
@@ -1609,7 +1611,11 @@ pub fn output_elements(
                     // The kind's settings; its shadow only where the client asked Ossido to
                     // draw it (it draws its own otherwise).
                     profile: {
-                        let profile = region.kind().kind().profile(dark);
+                        let profile = region
+                            .kind()
+                            .kind()
+                            .profile(dark)
+                            .with_glass_level(context.glass_level);
                         if region.shadow {
                             profile
                         } else {

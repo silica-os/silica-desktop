@@ -123,4 +123,60 @@ void main() {
       }
     });
   });
+
+  test(
+    'wallpaper.json fit: fill by default, the five modes, junk falls back',
+    () {
+      expect(parseWallpaperFit(null), WallpaperFit.fill);
+      expect(parseWallpaperFit('non json'), WallpaperFit.fill);
+      for (final fit in WallpaperFit.values) {
+        expect(parseWallpaperFit('{"fit": "${fit.name}"}'), fit);
+      }
+      expect(parseWallpaperFit('{"fit": "zoom"}'), WallpaperFit.fill);
+    },
+  );
+
+  testWidgets('an image is drawn as the fit says', (tester) async {
+    Future<Image> pumpFit(WallpaperFit fit) async {
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: Wallpaper(choice: const ImageWallpaper('/none.png'), fit: fit),
+        ),
+      );
+      return tester.widget<Image>(find.byType(Image));
+    }
+
+    expect((await pumpFit(WallpaperFit.fill)).fit, BoxFit.cover);
+    expect((await pumpFit(WallpaperFit.fit)).fit, BoxFit.contain);
+    expect((await pumpFit(WallpaperFit.stretch)).fit, BoxFit.fill);
+    expect((await pumpFit(WallpaperFit.center)).fit, BoxFit.none);
+    final tiled = await pumpFit(WallpaperFit.tile);
+    expect(tiled.repeat, ImageRepeat.repeat);
+  });
+
+  testWidgets('the layer draws again when Settings rewrites wallpaper.json', (
+    tester,
+  ) async {
+    final dir = Directory.systemTemp.createTempSync('wallpaper-layer');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final env = {...noSet, 'XDG_CONFIG_HOME': dir.path};
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: WallpaperLayer(env: env),
+        ),
+      );
+      expect(find.byType(CustomPaint), findsWidgets);
+      File('${dir.path}/silica/wallpaper.json')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('{"color": "#102030", "fit": "tile"}');
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await tester.pump();
+    });
+    final box = tester.widget<ColoredBox>(find.byType(ColoredBox).first);
+    expect(box.color, const Color(0xFF102030));
+    await tester.pumpWidget(const SizedBox());
+  });
 }

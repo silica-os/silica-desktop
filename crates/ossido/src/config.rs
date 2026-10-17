@@ -261,6 +261,35 @@ impl InputConfig {
     }
 }
 
+// --- theme.json ----------------------------------------------------------------------------
+
+pub const THEME_FILE: &str = "theme.json";
+
+/// `theme.json` (Settings › Appearance): the part Ossido applies, the glass level. The rest of
+/// the file is the look the apps follow (silica-daemon `SetLook`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ThemeConfig {
+    /// 0 clear to 1 tinted; 0.5, the measured material, by default.
+    pub glass: f32,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        Self {
+            glass: ossido_render::glass_profile::GLASS_LEVEL_DEFAULT,
+        }
+    }
+}
+
+impl ThemeConfig {
+    pub fn parse(map: Option<&serde_json::Map<String, Value>>) -> Self {
+        let glass = map
+            .and_then(|map| number_in(map, "glass", (0.0, 1.0)))
+            .map_or(Self::default().glass, |g| g as f32);
+        Self { glass }
+    }
+}
+
 // --- power.json ----------------------------------------------------------------------------
 
 pub const POWER_FILE: &str = "power.json";
@@ -295,6 +324,7 @@ impl State {
             KEYBOARD_FILE => self.apply_keyboard_config(),
             INPUT_FILE => self.apply_input_config(),
             POWER_FILE => self.apply_power_config(),
+            THEME_FILE => self.apply_theme_config(),
             crate::displays::DISPLAYS_FILE => self.apply_displays_config(),
             _ => {}
         }
@@ -313,11 +343,24 @@ impl State {
         }
     }
 
+    /// `theme.json`: the glass level, drawn from the next frame.
+    pub fn apply_theme_config(&mut self) {
+        let Some(dir) = self.config_dir.clone() else {
+            return;
+        };
+        let config = ThemeConfig::parse(read_json(&dir, THEME_FILE).as_ref());
+        if config != self.theme_config {
+            self.theme_config = config;
+            self.wake();
+        }
+    }
+
     /// Reads and applies every settings file (at start).
     pub fn apply_all_config(&mut self) {
         self.apply_keyboard_config();
         self.apply_input_config();
         self.apply_power_config();
+        self.apply_theme_config();
         self.apply_displays_config();
     }
 
@@ -478,6 +521,21 @@ pub fn watch(handle: &LoopHandle<'static, Ossido>, dir: &Path) -> Result<(), Str
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn theme_glass_level_is_read_and_checked() {
+        let parse = |json: &str| match serde_json::from_str::<Value>(json) {
+            Ok(Value::Object(map)) => ThemeConfig::parse(Some(&map)),
+            _ => ThemeConfig::parse(None),
+        };
+        assert_eq!(parse(r#"{"glass": 0.8}"#).glass, 0.8);
+        assert_eq!(parse(r#"{"glass": 3}"#), ThemeConfig::default());
+        assert_eq!(
+            parse(r#"{"glass": "x", "accent": "red"}"#),
+            ThemeConfig::default()
+        );
+        assert_eq!(ThemeConfig::parse(None).glass, 0.5);
+    }
+
     use super::*;
 
     fn map(text: &str) -> serde_json::Map<String, Value> {

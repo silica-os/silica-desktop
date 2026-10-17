@@ -228,6 +228,9 @@ const SHADOW_2_DARK: GlassShadow = drop_shadow(0x00000052, 4.0, 12.0);
 const SHADOW_3_LIGHT: GlassShadow = drop_shadow(0x0000002E, 12.0, 32.0);
 const SHADOW_3_DARK: GlassShadow = drop_shadow(0x0000005C, 12.0, 32.0);
 
+/// The glass level that leaves the measured materials as they are.
+pub const GLASS_LEVEL_DEFAULT: f32 = 0.5;
+
 /// The inside rim of every material: 1 pt of `Glass/Rim Dark`.
 const INSIDE_RIM_LIGHT: InsideRim = InsideRim {
     color: token(0x0000001F),
@@ -457,6 +460,30 @@ impl GlassProfile {
         }
     }
 
+    /// The profile for the user's glass level (Settings › Appearance › Glass, 0 clearest to 1
+    /// most tinted; [`GLASS_LEVEL_DEFAULT`] leaves the measured material untouched): the tint
+    /// fill's strength goes from nothing to fully covering the blurred backdrop. A profile
+    /// without a tint (clear glass) stays as it is.
+    pub fn with_glass_level(self, level: f32) -> Self {
+        let level = if level.is_finite() {
+            level.clamp(0.0, 1.0)
+        } else {
+            GLASS_LEVEL_DEFAULT
+        };
+        let base = self.tint[3];
+        if base <= 0.0 || level == GLASS_LEVEL_DEFAULT {
+            return self;
+        }
+        let amount = if level < GLASS_LEVEL_DEFAULT {
+            base * (level / GLASS_LEVEL_DEFAULT)
+        } else {
+            base + (1.0 - base) * ((level - GLASS_LEVEL_DEFAULT) / (1.0 - GLASS_LEVEL_DEFAULT))
+        };
+        let mut tint = self.tint;
+        tint[3] = amount.clamp(0.0, 1.0);
+        Self { tint, ..self }
+    }
+
     /// Without the shadow (the client draws its own).
     pub fn without_shadow(self) -> Self {
         Self {
@@ -599,6 +626,22 @@ pub fn lens_width(thickness: f32, reach: f32, falloff: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_glass_level_moves_the_tint_and_the_default_changes_nothing() {
+        for dark in [false, true] {
+            let regular = GlassKind::Panel.profile(dark);
+            assert!(regular.tint[3] > 0.0);
+            assert_eq!(regular.with_glass_level(GLASS_LEVEL_DEFAULT), regular);
+            assert_eq!(regular.with_glass_level(f32::NAN), regular);
+            assert_eq!(regular.with_glass_level(0.0).tint[3], 0.0);
+            assert_eq!(regular.with_glass_level(1.0).tint[3], 1.0);
+            let mid = regular.with_glass_level(0.75).tint[3];
+            assert!(mid > regular.tint[3] && mid < 1.0);
+            // Only the tint's strength changes.
+            assert_eq!(regular.with_glass_level(1.0).tint[..3], regular.tint[..3]);
+        }
+    }
+
     use super::*;
     use crate::glass::{REFERENCE_GRAY, fallback_color, profile_color};
 

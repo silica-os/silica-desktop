@@ -822,6 +822,7 @@ impl State {
             genies: &self.genies,
             now,
             glass_quality,
+            glass_level: self.theme_config.glass,
             space_shift,
             panorama,
             spaces,

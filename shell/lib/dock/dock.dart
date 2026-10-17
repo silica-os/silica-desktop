@@ -706,6 +706,7 @@ class _LiveDockState extends State<LiveDock> {
     onResize: _resized,
     autohide: _o.autohide,
     indicators: _o.indicators,
+    launchAnimation: _o.launchAnimation,
     revealAtStart: true,
     launcher: _launcher.value.value,
     onActivate: _activate,
@@ -980,6 +981,7 @@ class Dock extends StatefulWidget {
     this.onResize,
     this.autohide = false,
     this.indicators = true,
+    this.launchAnimation = true,
     this.launcher = const {},
     this.onAddFolders,
     this.onSpringLoad,
@@ -1016,6 +1018,9 @@ class Dock extends StatefulWidget {
 
   /// The dots under the open apps (SH-DK-12).
   final bool indicators;
+
+  /// The icon bounces while an app opens (Settings › Desktop & Dock).
+  final bool launchAnimation;
 
   /// What the apps ask of their icons (badge, progress, attention), by item id.
   final Map<String, LauncherState> launcher;
@@ -2129,7 +2134,10 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
       _stackIndex == index ? _closeStack(byButton: true) : _openStack(index);
       return;
     }
-    if (launchBounceTarget(item, _items) case final target?) {
+    final target = widget.launchAnimation
+        ? launchBounceTarget(item, _items)
+        : null;
+    if (target != null) {
       _bounces.putIfAbsent(_key(target), DateTime.now);
       if (!_bounceTicker.isActive) _bounceTicker.start();
     }
