@@ -6,7 +6,7 @@ use resvg::tiny_skia::{self, Pixmap, PixmapPaint, Transform};
 use resvg::usvg;
 use silica_assets::{Assets, Encoding, EntryId, KeySpace, Layer, LayerRole, Query, Theme};
 
-use super::rules::{AppDraw, LabelDraw, LayerDraw, Plan, SymbolDraw, tint_color};
+use super::rules::{AppDraw, DocDraw, LabelDraw, LayerDraw, Plan, SymbolDraw, tint_color};
 
 /// An icon bigger than this is refused.
 pub const MAX_SIDE: u32 = 4096;
@@ -162,7 +162,7 @@ pub fn assets_app_icon(assets: &Assets, name: &str, side: u32) -> Option<Bitmap>
     })
 }
 
-/// Decodes a PNG file.
+/// Decodes a PNG file (a plain `Icon=` of a desktop entry, or the `icon.png` of an icon folder).
 pub fn file_app_icon(path: &std::path::Path) -> Option<Bitmap> {
     let img = image::open(path).ok()?.to_rgba8();
     Some(Bitmap {
@@ -193,6 +193,33 @@ fn draw_app(canvas: &mut Pixmap, app: &AppDraw, bitmap: &Bitmap) -> Option<()> {
     canvas.draw_pixmap(
         app.rect[0].round() as i32,
         app.rect[1].round() as i32,
+        pixmap.as_ref(),
+        &PixmapPaint::default(),
+        Transform::identity(),
+        None,
+    );
+    Some(())
+}
+
+/// Draws the SVG of a document foreground fitted (aspect kept, centered) in its box.
+fn draw_document(canvas: &mut Pixmap, draw: &DocDraw, svg: &[u8]) -> Option<()> {
+    let tree = usvg::Tree::from_data(svg, &usvg::Options::default()).ok()?;
+    let (w, h) = (tree.size().width(), tree.size().height());
+    if w <= 0.0 || h <= 0.0 {
+        return None;
+    }
+    let [x, y, bw, bh] = draw.rect;
+    let k = (bw / w).min(bh / h);
+    let (dx, dy) = (x + (bw - w * k) / 2.0, y + (bh - h * k) / 2.0);
+    let mut pixmap = Pixmap::new(canvas.width(), canvas.height())?;
+    resvg::render(
+        &tree,
+        Transform::from_scale(k, k).post_translate(dx, dy),
+        &mut pixmap.as_mut(),
+    );
+    canvas.draw_pixmap(
+        0,
+        0,
         pixmap.as_ref(),
         &PixmapPaint::default(),
         Transform::identity(),
@@ -317,26 +344,31 @@ impl<'a> Fonts<'a> {
     }
 }
 
-/// Renders a plan. `entry` holds the layer SVGs; `app` is the decoded app icon when the plan
-/// has one. None when a layer cannot be drawn or the size is out of range.
+/// Renders a plan. `entry` holds the layer SVGs; `app` is the decoded app icon and `document`
+/// the SVG of the document foreground when the plan has them. None when a layer cannot be drawn
+/// or the size is out of range.
 pub fn render(
     assets: &Assets,
     entry: EntryId,
     plan: &Plan,
     app: Option<&Bitmap>,
+    document: Option<&[u8]>,
     fonts: &Fonts<'_>,
 ) -> Option<Pixmap> {
     if plan.side == 0 || plan.side > MAX_SIDE {
         return None;
     }
     let mut canvas = Pixmap::new(plan.side, plan.side)?;
-    // A symbol or app icon that cannot be drawn leaves the sheet without it.
+    // A symbol, app icon or document foreground that cannot be drawn leaves the sheet without it.
     let glyph = |canvas: &mut Pixmap| {
         if let Some(symbol) = &plan.symbol {
             let _ = draw_symbol(canvas, assets, symbol, plan.side);
         }
         if let (Some(draw), Some(bitmap)) = (&plan.app, app) {
             let _ = draw_app(canvas, draw, bitmap);
+        }
+        if let (Some(draw), Some(svg)) = (&plan.document, document) {
+            let _ = draw_document(canvas, draw, svg);
         }
     };
     for (i, layer) in plan.layers.iter().enumerate() {

@@ -10,12 +10,13 @@ run time). Numbers are on the 1024 canvas and scale with the side; the numbers w
 silica-icons a8b2a27 (`files/file-generic/icon.json` and `docs/icon-format.md`).
 
 The code is `crates/daemon/src/icons/`: `rules.rs` (rules read from the assets and the geometry,
-pure functions), `mime.rs`, `apps.rs`, `folder.rs` (what a path is), `compose.rs` (drawing).
+pure functions), `mime.rs`, `apps.rs`, `folder.rs` (what a path is), `thumbnailer.rs` (freedesktop thumbnailers),
+`compose.rs` (drawing).
 
 ## Pipeline
 
 1. **Resolve** what the path is: a folder (its colour, symbol, whether it has items), or a file
-   (kind or category, handling app, extension).
+   (its extension and the app that opens it).
 2. **Plan**: all decisions for one icon at one size (layers with their tint, symbol with its
    box and weight, app icon box, label text, size and baseline) as plain data.
 3. **Cache**: the file is `$XDG_CACHE_HOME/silica/icons/<size_px>/<md5(plan)>.png`, the MD5 of
@@ -28,53 +29,101 @@ The icon side in points is `size_px / scale`; the symbol weight and the label de
 
 ## Files
 
+A file has **no symbol of its own type**. Its icon is decided by the app that opens it, as on the
+reference desktop; a file nobody opens is an unknown extension.
+
 Order: `back`, glyph, `front`, label. The front is the folded corner; nothing drawn reaches it.
 Colors are the same in every theme (no dark layers).
 
 | Element | Box (x, y, w, h) | Details |
 | --- | --- | --- |
-| Glyph | 262, 262, 500, 500 | the symbol's 24 u canvas fills it |
-| App icon | body on 303.67, 303.67, 416.67, 416.67 | scale 0.50566: the 1024 app canvas becomes 517.8 at (253.10, 253.10); drawn as it is, not recolored |
-| Label with a glyph | 270.64, 763.7, 482.72, 136.04 | Inter 500, size 111.67 |
+| Glyph (document foreground) | 262, 262, 500, 500 | an SVG of the app, fitted (aspect kept) and centered |
+| App icon | body on 303.67, 303.67, 416.67, 416.67 | scale 0.50566: the 1024 app canvas becomes 517.8 at (253.10, 253.10); composed, not recolored |
+| Label with a glyph | 219.08, 744.5, 585.84, 170.05 | Inter 500, size 139.59 (25 % over the former 111.67) |
 | Label alone | 219.08, 362.8, 585.84, 212.83 | Inter 900, size 175.53 |
 
-- **Symbol** weight by icon side in points: Light from 128, Regular from 64, Semibold from 16;
-  below 16 no glyph. Flat, opacity 1, `currentColor` replaced by the kind's color.
+- **Choice**, in order: (1) a **real preview** (image, PDF) from the built-in generators; (2) the
+  **preview an app's thumbnailer draws** ("Thumbnailers" below); (3) the glyph of the **default
+  app**: its **document foreground** for the file's type if it declares one ("Document icons"
+  below), else its **app icon**; (4) with no handler, or a handler without a usable icon (a
+  third-party app), the **unknown extension**: the generic sheet and the extension label alone.
+  A file with no extension, or one of more than 5 characters, is the bare sheet.
 - **Label**: the extension without the dot, uppercase, at most 5 characters (a `.tar.gz` is
-  `GZ`), never truncated; wider than the box it shrinks proportionally (`XHTML`, `QCOW2` fit at
-  full size); centered horizontally, baseline at `y + h/2 - 0.605 size + 0.96875 size`
-  (872.34 with a glyph, 533.06 alone); not drawn below 32 pt. No extension or more than 5
-  characters: no label, and when there is no glyph either, the `fallback` kind's symbol.
-- **Choice**: a real preview (image, PDF) first, from the `Thumbnail` generators. Else the glyph
-  is, in order: the Silica icon of the app that opens the file (below); the symbol of the file's
-  kind; none (label alone). The label is the kind's color next to its symbol, the category's color
-  next to an app icon or alone.
+  `GZ`), never truncated; wider than the box it shrinks proportionally (`XHTML`, `QCOW2` fit
+  at full size); centered horizontally, baseline at `y + h/2 - 0.605 size + 0.96875 size`
+  (880.30 with a glyph, 533.06 alone); not drawn below 32 pt. The box sits under the glyph box
+  (which ends at 762) and inside the sheet. **One colour for every file**: `Text/Secondary`
+  (light) of `docs/design/amalfi/tokens.json`, `#5f636b` (`[file.label].color` and
+  `[file.label_alone].color` of `compose.toml`; files have no dark variant).
 - **Default app**: for the file's type and then its parents (shared-mime-info `subclasses`), the
   first desktop id of `[Default Applications]` in the `mimeapps.list` files (XDG order), else
   `[Added Associations]`, else the first desktop entry by file name whose `MimeType=` lists it.
-  Only that app counts: its icon is `X-Silica-Icon=` (an absolute icon folder, whose `icon.png`
-  is drawn; or a plain name of `silica.assets`), else an absolute `Icon=` PNG. An app without a
-  Silica icon (any third-party app) gives none, and the file shows its kind's symbol.
-  Desktop entries are re-read every 60 s.
-- **Type resolution** (the map in `silica.assets`, `[file.types]` of `compose.toml`): the type
-  from shared-mime-info `globs2` by name (heaviest glob, then longest; `*.tar.gz` before `*.gz`)
-  or, with no match, a few magic numbers (PDF, ELF, `#!`); aliases are canonicalized; then the
-  type and its parents in order, each exact then `major/*`; then the lowercase extension; then no
-  kind. A MIME entry may give a kind or only a category (`application/json` is data, so it does
-  not become code through its parents). The category of a file with no kind: the extension
-  override, the MIME entry's category, else by type (`text/*` and office documents document,
-  data formats data, sources and scripts code, archives, media, other). Known gap: the
-  ambiguous names (`.ts`) are not disambiguated by content.
-- **Kinds** (symbol, color): pdf `doc-text` #e2332b, text `text-align-left` #8e8e93, document
-  `doc-text` #2f7cf6, spreadsheet `chart-bar` #1f9d55, presentation `chart-pie` #f2780c, font
-  `text-size` #ff2d55, disk-image `disc` #8e8e93, executable `terminal` #ff6a00, web `globe`
-  #2f7cf6, code `code` #7a5af8, archive `archive` #8e8e93, image `photo` #2f7cf6, audio
-  `music-note` #ff2d55, video `film` #8e8e93, unknown `question` #8e8e93. **Categories**:
-  document #2f7cf6, data #1f9d55, code #ff6a00, archive #8e8e93, media #e8336d, other #636366.
-  The complete map (about 150 MIME types, 170 extensions) is `[file.types]` in `compose.toml`.
+  Only that app counts. Its **app icon** is composed with the `AppIcon` composition (below), light
+  appearance, from the `icon.assets` of its `X-Silica-Icon=` folder, at the size of the body box
+  (so `min_size` layers follow the size in points); a folder whose `icon.assets` is missing or
+  damaged gives its `icon.png`; a plain name of `silica.assets` (the shell's own apps) gives
+  that embedded icon; else an absolute `Icon=` PNG. An app without any of these (any third-party
+  app) gives none and the file is an unknown extension. Desktop entries and thumbnailers are
+  re-read every 60 s.
+- **Type resolution** only finds the handler and the label text: the type from shared-mime-info
+  `globs2` by name (heaviest glob, then longest; `*.tar.gz` before `*.gz`) or, with no match, a
+  few magic numbers (PDF, ELF, `#!`); aliases are canonicalized; the chain is the type and its
+  parents. Nothing maps a type to a kind, category, symbol or colour. Known gap: the ambiguous
+  names (`.ts`) are not disambiguated by content.
 - **Fonts**: Inter from `silica.assets` (`Inter-Regular|Medium|SemiBold|Bold|Black`); the face
   closest to the asked weight is used. silica-ui ships `Inter-Black.ttf` since the composed-icons change
   (until that silica_ui is in the image the label alone is Bold).
+
+### Thumbnailers
+
+An app that opens a type can draw the preview of its documents with a freedesktop thumbnailer
+(Thumbnail Managing Standard): a file `thumbnailers/<name>.thumbnailer` in `$XDG_DATA_HOME` or
+`$XDG_DATA_DIRS` (the first with a given file name wins):
+
+```ini
+[Thumbnailer Entry]
+TryExec=/usr/libexec/silica-notes/thumbnail
+Exec=/usr/libexec/silica-notes/thumbnail -s %s %i %o
+MimeType=application/x-silica-note;text/markdown;
+```
+
+`Exec` words are split on spaces (double quotes group) and run **without a shell**: `%i` the input
+path, `%u` its URI, `%o` the output PNG path, `%s` the edge in pixels, `%%` a percent; `%o` is
+required. `TryExec` (or the program of `Exec`) must exist, as an absolute path or in `PATH`. The
+type is matched against the file's chain (type, then parents), the nearest type first.
+
+Bounded: the program gets no stdin, its output is discarded, it runs in a fresh temporary folder,
+is **killed after 15 s**, and its picture is refused above 64 MiB. Order: the built-in generators
+(images, PDF) always win; the thumbnailers run only for what they cannot draw. The result is
+cached like any other preview (`$XDG_CACHE_HOME/thumbnails/<bucket>/`, `Thumb::MTime`), and a
+failure (no program, non-zero exit, timeout, not a PNG/image) is recorded in
+`fail/silica-daemon/` so the program does not run again until the file changes. It is used by
+`Thumbnail` and `Icon` alike; `Icon` with `NO_PREVIEW` never runs one.
+
+### Document icons
+
+An app can give its documents a dedicated icon without a thumbnailer: a **document foreground**
+shipped in its icon folder, composed between `back` and `front` in the glyph box instead of the
+app icon (so the sheet and the label stay the system's). The convention:
+
+1. In the app's desktop entry, `X-Silica-Document-Icons=<mime>=<name>;<mime>=<name>;...`, with
+   `<mime>` an exact type (`application/pdf`) or a group (`text/*`), and `<name>` made of
+   letters, digits, `.`, `_`, `-` (not starting with a dot).
+2. For each name, an SVG at `<X-Silica-Icon folder>/documents/<name>.svg` (that is, `icon/documents/<name>.svg`
+   in the app's repository, next to `icon.json`/`icon.assets`). Any aspect ratio (it is fitted
+   and centered in the 500 x 500 glyph box; up to 2 MiB), drawn as it is: no recolouring, one
+   appearance (files have no dark form).
+
+```ini
+X-Silica-Icon=/usr/lib64/silica/apps/notes/icon
+X-Silica-Document-Icons=text/markdown=markdown;application/x-silica-note=note;
+```
+
+The entry must be the file's default handler. The type is looked up through the file's chain
+(type, then parents), exact first and then the group, so `text/markdown` also covers its
+subtypes. A name whose SVG is missing or cannot be parsed gives no foreground and the file falls
+back to the app icon. The source is part of the cache key with the SVG's mtime and size, so
+replacing the file regenerates the icon.
 
 ## Folders
 
@@ -88,7 +137,8 @@ Order: `back`, `middle`, `front`, then the symbol.
   Affine, so tinting the layers equals tinting the composed folder. No tint: the blue drawing.
   A tint is `#rrggbb` or a label: red #f2382e, orange #f98a17, yellow #f5c400, green #2fb350,
   blue #2f7cf6, purple #a052e0, gray #8e8e93.
-- **Symbol** box 354, 434, 316, 316 (center 512, 592), bands by points: Light from 128, Regular
+- **Symbol** box 335.04, 415.04, 353.92, 353.92 (center 512, 592: the former 354, 434, 316, 316
+  enlarged by 12 % around the same centre), bands by points: Light from 128, Regular
   from 64, Semibold from 32 (no highlight), Semibold from 16 (no highlight, scale 1.272 around the
   center); below 16 none.
 - **Engraving**: first the symbol in white at 0.5 shifted down 4 canvas units (at least half a
@@ -138,7 +188,7 @@ an app from its `icon/icon.assets` (docs/assets-format.md, "App icon file"), the
 - `resolveFolderIcon` stops reading the special-folder map and the tint from `folder-generic`:
   the service does it; for a path that is not a local folder (a network share) the widget keeps
   its drawn fallback or requests the symbol by a custom style.
-- `SilicaAssets` slots changed (kinds 9 to 20, `silica_assets.h`); the `type-label`/`type-category`
-  slots of the generic file are gone, kinds and categories are `file-kind` entries
-  (`kind.pdf`, `category.data`), TYPE/MIME/EXT keys point to them.
+- `SilicaAssets` slots changed (kinds 9 to 20, `silica_assets.h`); the file kinds, categories and
+  the MIME/UTI/extension map no longer exist (a file's icon is its app's, so there is nothing to
+  resolve on the client); the `type-label`/`type-category` slots of the generic file are gone.
 - Mustache and the Dock use `Icon`; `silica_ui` composes nothing itself.

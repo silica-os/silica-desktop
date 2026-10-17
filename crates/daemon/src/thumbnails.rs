@@ -157,7 +157,7 @@ fn write_png(
     result
 }
 
-fn ensure_dir(dir: &Path) -> Option<()> {
+pub(crate) fn ensure_dir(dir: &Path) -> Option<()> {
     use std::os::unix::fs::DirBuilderExt;
     fs::DirBuilder::new()
         .recursive(true)
@@ -236,6 +236,21 @@ fn render_pdf(path: &Path, edge: u32) -> Option<image::DynamicImage> {
 /// The cached thumbnail of `uri` in the bucket for `size_px`, generating it if it is missing or
 /// stale. None when the file has no thumbnail (unsupported, unreadable, or a recorded failure).
 pub fn thumbnail(root: &Path, uri: &str, size_px: u32) -> Option<PathBuf> {
+    thumbnail_with(root, uri, size_px, None)
+}
+
+/// A preview drawn by something other than the built-in generators: the file and the edge in
+/// pixels.
+pub type Custom<'a> = &'a dyn Fn(&Path, u32) -> Option<image::DynamicImage>;
+
+/// [`thumbnail`] that, when no built-in generator can draw the file, asks `custom` (the
+/// freedesktop thumbnailers of the apps, `Icons::thumbnailer_preview`).
+pub fn thumbnail_with(
+    root: &Path,
+    uri: &str,
+    size_px: u32,
+    custom: Option<Custom<'_>>,
+) -> Option<PathBuf> {
     let source = uri_to_path(uri)?;
     let meta = fs::metadata(&source).ok()?;
     if !meta.is_file() || meta.len() > MAX_SOURCE_BYTES {
@@ -255,7 +270,8 @@ pub fn thumbnail(root: &Path, uri: &str, size_px: u32) -> Option<PathBuf> {
         render_pdf(&source, edge)
     } else {
         decode_raster(&source)
-    };
+    }
+    .or_else(|| custom.and_then(|draw| draw(&source, edge)));
     let Some(img) = img else {
         record_failure(root, uri, mtime);
         return None;
@@ -315,6 +331,19 @@ struct Job {
     reply: async_channel::Sender<Answer>,
 }
 
+/// The preview of `uri` through the built-in generators, then the apps' thumbnailers.
+fn preview(root: &Path, icons: Option<&Icons>, uri: &str, size_px: u32) -> Option<PathBuf> {
+    match icons {
+        Some(icons) => thumbnail_with(
+            root,
+            uri,
+            size_px,
+            Some(&|path, edge| icons.thumbnailer_preview(path, edge)),
+        ),
+        None => thumbnail(root, uri, size_px),
+    }
+}
+
 /// The icon of `uri`: a preview when the file has one (and it is wanted), else the composed
 /// icon. The flag says which.
 pub(crate) fn icon_job(
@@ -329,7 +358,7 @@ pub(crate) fn icon_job(
     let meta = fs::metadata(&path).ok()?;
     if meta.is_file()
         && flags & ICON_NO_PREVIEW == 0
-        && let Some(preview) = thumbnail(root, uri, size_px)
+        && let Some(preview) = preview(root, icons, uri, size_px)
     {
         return Some((preview, true));
     }
@@ -366,7 +395,7 @@ impl Pool {
                         let Ok(job) = job else { return };
                         let out = match &job.request {
                             Request::Thumbnail { uri, size_px } => {
-                                thumbnail(&root, uri, *size_px).map(|p| (p, true))
+                                preview(&root, icons.as_deref(), uri, *size_px).map(|p| (p, true))
                             }
                             Request::Icon {
                                 uri,

@@ -302,8 +302,11 @@ xx-large 1024}/<md5 of the URI>.png`, `Thumb::URI` and `Thumb::MTime` text chunk
 - Signal `Ready(s uri, u size_px, s path)` after a successful `Thumbnail` or `Icon`.
 
 Generators: PNG, JPEG, GIF (first frame), WebP, BMP, TIFF (EXIF orientation applied), and the first
-page of a PDF through `pdftoppm` when poppler is installed. Not yet: SVG, video, text previews. The composed
-icons (folders, and files without a preview) are in [`thumbnails.md`](thumbnails.md).
+page of a PDF through `pdftoppm` when poppler is installed; then, for other types, the freedesktop
+thumbnailers (`$XDG_DATA_DIRS/thumbnailers/*.thumbnailer`) of the installed apps, each run in a
+subprocess killed after 15 s. Not yet: SVG, video, text previews. The composed icons (folders, and
+files without a preview: the icon of the app that opens them, its document icons, or the unknown
+extension) are in [`thumbnails.md`](thumbnails.md).
 
 ## Authentication (polkit agent)
 

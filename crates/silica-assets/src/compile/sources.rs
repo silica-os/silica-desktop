@@ -201,7 +201,6 @@ pub(super) fn compile(options: &Options) -> Result<(Vec<u8>, Report), CompileErr
         report: &mut report,
     };
 
-    let mut type_ids: BTreeMap<String, u32> = BTreeMap::new();
     let mut app_ids: BTreeMap<String, u32> = BTreeMap::new();
     let shell_apps = shell_apps(&types)?;
     apps(
@@ -210,12 +209,7 @@ pub(super) fn compile(options: &Options) -> Result<(Vec<u8>, Report), CompileErr
         shell_apps.as_deref(),
         &mut app_ids,
     )?;
-    files(
-        &mut ctx,
-        &options.icons.join("files"),
-        &compose,
-        &mut type_ids,
-    )?;
+    files(&mut ctx, &options.icons.join("files"), &compose)?;
     badges(&mut ctx, &options.icons.join("badges"))?;
     symbols(&mut ctx, &options.icons.join("symbols"))?;
     check_symbol_refs(&ctx)?;
@@ -235,7 +229,7 @@ pub(super) fn compile(options: &Options) -> Result<(Vec<u8>, Report), CompileErr
     if let Some(dir) = &options.wallpapers {
         wallpaper_sets(&mut ctx, dir)?;
     }
-    aliases(&mut ctx, &types, &type_ids, &app_ids)?;
+    aliases(&mut ctx, &types, &app_ids)?;
 
     let hash = reader.digest();
     let mut bytes = builder.finish()?;
@@ -548,12 +542,7 @@ fn file_role(id: &str) -> (KeySpace, String, EntryKind) {
     (KeySpace::Role, name, kind)
 }
 
-fn files(
-    ctx: &mut Ctx<'_>,
-    dir: &Path,
-    compose: &Value,
-    type_ids: &mut BTreeMap<String, u32>,
-) -> Result<(), CompileError> {
+fn files(ctx: &mut Ctx<'_>, dir: &Path, compose: &Value) -> Result<(), CompileError> {
     for name in list(dir)? {
         let icon_dir = dir.join(&name);
         if !icon_dir.join("icon.json").is_file() {
@@ -568,12 +557,9 @@ fn files(
         let dynamic = manifest.get("dynamic").filter(|d| !d.is_null());
         let entry = ctx.builder.add_entry(&entry_name, kind, 0);
         ctx.builder.register(space, entry)?;
-        if space == KeySpace::Type {
-            type_ids.insert(entry_name.clone(), entry);
-        }
         match id.as_str() {
             "file-generic" => {
-                generic_file(ctx, &icon_dir, &manifest, compose, entry, type_ids)?;
+                generic_file(ctx, &icon_dir, &manifest, compose, entry)?;
                 ctx.report.files += 1;
                 continue;
             }
@@ -652,17 +638,6 @@ fn check_symbol_refs(ctx: &Ctx<'_>) -> Result<(), CompileError> {
 
 fn text_of<'a>(value: &'a Value, key: &str, what: &str) -> Result<&'a str, CompileError> {
     str_of(value, key).ok_or_else(|| CompileError::new(format!("{what}: no \"{key}\"")))
-}
-
-fn object_of<'a>(
-    value: &'a Value,
-    key: &str,
-    what: &str,
-) -> Result<&'a serde_json::Map<String, Value>, CompileError> {
-    value
-        .get(key)
-        .and_then(Value::as_object)
-        .ok_or_else(|| CompileError::new(format!("{what}: no \"{key}\" object")))
 }
 
 fn rect_strict(value: Option<&Value>, what: &str) -> Result<[f32; 4], CompileError> {
@@ -856,10 +831,12 @@ fn label_slot(
             "{what}: only overflow \"shrink\" exists"
         )));
     }
+    let color = color_of(Some(text_of(label, "color", what)?));
     ctx.builder.add_slot(
         entry,
         SlotSpec {
             kind: Some(kind),
+            color: [color, color],
             unit: num(label.get("max_chars"), 0.0) as u8,
             min_size: num(label.get("min_size"), 0.0) as u16,
             rect: rect_strict(label.get("box"), &format!("{what}.box"))?,
@@ -869,42 +846,18 @@ fn label_slot(
             format: Some(str_of(label, "case").unwrap_or("upper").to_owned()),
             tracking: num(label.get("tracking"), 0.0) as f32,
             max_width: num(label.get("max_width"), 0.0) as f32,
-            ..SlotSpec::default()
         },
     )
 }
 
-fn kind_target(
-    value: &Value,
-    what: &str,
-    ids: &BTreeMap<String, u32>,
-) -> Result<u32, CompileError> {
-    let name = match (
-        value.as_str(),
-        value.get("category").and_then(Value::as_str),
-    ) {
-        (Some(kind), _) => format!("kind.{kind}"),
-        (None, Some(category)) => format!("category.{category}"),
-        _ => {
-            return Err(CompileError::new(format!(
-                "{what}: a kind or {{\"category\"}}"
-            )));
-        }
-    };
-    ids.get(&name)
-        .copied()
-        .ok_or_else(|| CompileError::new(format!("{what}: no kind or category {name:?}")))
-}
-
-/// `file-generic`: back and front layers, the glyph box, the label, the kinds, the categories
-/// and the type map (MIME, extension, override) of silica-icons `files/file-generic/icon.json`.
+/// `file-generic`: back and front layers, the glyph box, the app icon body and the two labels
+/// (size, box and the one colour of the extension label).
 fn generic_file(
     ctx: &mut Ctx<'_>,
     dir: &Path,
     manifest: &Value,
     compose: &Value,
     entry: u32,
-    type_ids: &mut BTreeMap<String, u32>,
 ) -> Result<(), CompileError> {
     let dynamic = compose
         .get("file")
@@ -922,14 +875,6 @@ fn generic_file(
             ..SlotSpec::default()
         },
     )?;
-    if let Some(symbol) = glyph.get("symbol") {
-        symbol_bands(
-            ctx,
-            entry,
-            symbol.get("sizes").unwrap_or(&Value::Null),
-            "glyph.symbol",
-        )?;
-    }
     if let Some(app) = glyph.get("app_icon") {
         ctx.builder.add_slot(
             entry,
@@ -947,103 +892,6 @@ fn generic_file(
         label_slot(ctx, entry, SlotKind::FileLabelAlone, label, "label_alone")?;
     }
 
-    // Kinds and categories are entries of their own, in the TYPE key space.
-    let mut files_ids: BTreeMap<String, u32> = BTreeMap::new();
-    for (name, kind) in object_of(dynamic, "kinds", "file-generic")? {
-        let id = ctx.builder.add_entry(
-            &format!("kind.{name}"),
-            EntryKind::FileKind,
-            FLAG_HAS_DYNAMIC,
-        );
-        ctx.builder.register(KeySpace::Type, id)?;
-        let color = color_of(str_of(kind, "color"));
-        ctx.builder.add_slot(
-            id,
-            SlotSpec {
-                kind: Some(SlotKind::KindStyle),
-                font: Some(text_of(kind, "glyph", &format!("kind {name}"))?.to_owned()),
-                color: [color, color],
-                format: Some(name.clone()),
-                ..SlotSpec::default()
-            },
-        )?;
-        ctx.symbol_refs.push((
-            format!("kind {name}"),
-            str_of(kind, "glyph").unwrap_or("").to_owned(),
-        ));
-        files_ids.insert(format!("kind.{name}"), id);
-    }
-    for (name, category) in object_of(dynamic, "colors", "file-generic")? {
-        let id = ctx.builder.add_entry(
-            &format!("category.{name}"),
-            EntryKind::FileKind,
-            FLAG_HAS_DYNAMIC,
-        );
-        ctx.builder.register(KeySpace::Type, id)?;
-        let color = color_of(str_of(category, "color"));
-        ctx.builder.add_slot(
-            id,
-            SlotSpec {
-                kind: Some(SlotKind::TypeCategory),
-                color: [color, color],
-                format: Some(name.clone()),
-                ..SlotSpec::default()
-            },
-        )?;
-        files_ids.insert(format!("category.{name}"), id);
-    }
-    if let Some(fallback) = str_of(dynamic, "fallback") {
-        if !files_ids.contains_key(&format!("kind.{fallback}")) {
-            return Err(CompileError::new(format!(
-                "fallback kind {fallback:?} does not exist"
-            )));
-        }
-        ctx.builder.add_slot(
-            entry,
-            SlotSpec {
-                kind: Some(SlotKind::FallbackKind),
-                format: Some(fallback.to_owned()),
-                ..SlotSpec::default()
-            },
-        )?;
-    }
-
-    let types = object_of(dynamic, "types", "file-generic")?;
-    if let Some(mime) = types.get("mime").and_then(Value::as_object) {
-        for (key, value) in mime {
-            let target = kind_target(value, &format!("types.mime {key}"), &files_ids)?;
-            ctx.builder.add_alias(KeySpace::Mime, key, target)?;
-            ctx.report.aliases += 1;
-        }
-    }
-    if let Some(extensions) = types.get("extensions").and_then(Value::as_object) {
-        for (key, value) in extensions {
-            let target = kind_target(value, &format!("types.extensions {key}"), &files_ids)?;
-            ctx.builder.add_alias(KeySpace::Ext, key, target)?;
-            ctx.report.aliases += 1;
-        }
-    }
-    // An override gives the category of an extension that has no kind.
-    if let Some(overrides) = dynamic.get("overrides").and_then(Value::as_object) {
-        for (key, value) in overrides {
-            let name = value.as_str().ok_or_else(|| {
-                CompileError::new(format!("overrides {key}: not a category name"))
-            })?;
-            let target = files_ids
-                .get(&format!("category.{name}"))
-                .copied()
-                .ok_or_else(|| {
-                    CompileError::new(format!("overrides {key}: no category {name:?}"))
-                })?;
-            ctx.builder
-                .add_alias(KeySpace::Ext, key, target)
-                .map_err(|e| {
-                    CompileError::new(format!("overrides {key}: also a kind extension ({e})"))
-                })?;
-            ctx.report.aliases += 1;
-        }
-    }
-    type_ids.extend(files_ids);
     Ok(())
 }
 
@@ -1485,13 +1333,9 @@ fn wallpaper_sets(ctx: &mut Ctx<'_>, dir: &Path) -> Result<(), CompileError> {
 fn aliases(
     ctx: &mut Ctx<'_>,
     types: &toml::Table,
-    type_ids: &BTreeMap<String, u32>,
     app_ids: &BTreeMap<String, u32>,
 ) -> Result<(), CompileError> {
-    for (table, space, targets) in [
-        ("app", KeySpace::App, app_ids),
-        ("uti", KeySpace::Uti, type_ids),
-    ] {
+    for (table, space, targets) in [("app", KeySpace::App, app_ids)] {
         let Some(map) = types.get(table).and_then(toml::Value::as_table) else {
             continue;
         };

@@ -3,9 +3,10 @@
 //! The default handler is the first desktop id of `[Default Applications]` for the type in the
 //! `mimeapps.list` files (XDG order), else of `[Added Associations]`, else the first desktop
 //! entry (by file name) whose `MimeType=` lists the type. Only an app with a Silica icon gives
-//! one: `X-Silica-Icon=` (an absolute icon folder, whose `icon.png` is the rendered icon, or a
-//! plain name of `silica.assets`), else an absolute `Icon=` PNG. Any other handler gives none
-//! and the file keeps the symbol of its kind.
+//! one: `X-Silica-Icon=` (an absolute icon folder, whose `icon.assets` is composed, or a plain
+//! name of `silica.assets`), else an absolute `Icon=` PNG. Any other handler gives none and the
+//! file is an unknown extension. An app may also draw its own documents: `X-Silica-Document-Icons=`
+//! maps MIME types to `documents/<name>.svg` in its icon folder (docs/thumbnails.md).
 
 use std::collections::HashMap;
 use std::fs;
@@ -14,6 +15,8 @@ use std::path::{Path, PathBuf};
 /// Where an app icon comes from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AppIcon {
+    /// An icon folder (`icon.assets`, else `icon.png`).
+    Folder(PathBuf),
     /// A PNG file.
     File(PathBuf),
     /// An app icon of `silica.assets`.
@@ -93,6 +96,8 @@ pub fn listed(text: &str, section: &str, mime: &str) -> Vec<String> {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Entry {
     pub silica_icon: Option<String>,
+    /// `X-Silica-Document-Icons=`: (MIME type or `major/*`, document icon name).
+    pub document_icons: Vec<(String, String)>,
     pub icon: Option<String>,
     pub mime_types: Vec<String>,
 }
@@ -107,6 +112,7 @@ pub fn parse_entry(text: &str) -> Entry {
         } else if inside && let Some((key, value)) = line.split_once('=') {
             match key.trim() {
                 "X-Silica-Icon" => entry.silica_icon = Some(value.trim().to_owned()),
+                "X-Silica-Document-Icons" => entry.document_icons = document_icons(value),
                 "Icon" => entry.icon = Some(value.trim().to_owned()),
                 "MimeType" => {
                     entry.mime_types = value
@@ -123,11 +129,34 @@ pub fn parse_entry(text: &str) -> Entry {
     entry
 }
 
+/// The names of a document icon: letters, digits, `.`, `_`, `-`, not starting with a dot.
+pub fn valid_document_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('.')
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// Parses `mime/type=name;major/*=name;`. Invalid items are dropped.
+fn document_icons(value: &str) -> Vec<(String, String)> {
+    value
+        .split(';')
+        .filter_map(|item| {
+            let (mime, name) = item.split_once('=')?;
+            let (mime, name) = (mime.trim(), name.trim());
+            (mime.contains('/') && valid_document_name(name))
+                .then(|| (mime.to_owned(), name.to_owned()))
+        })
+        .collect()
+}
+
 /// The Silica icon an entry declares, if any.
 pub fn icon_of(entry: &Entry) -> Option<AppIcon> {
     if let Some(value) = &entry.silica_icon {
         return if value.starts_with('/') {
-            Some(AppIcon::File(Path::new(value).join("icon.png")))
+            Some(AppIcon::Folder(PathBuf::from(value)))
         } else if value.is_empty() {
             None
         } else {
@@ -209,11 +238,38 @@ impl Apps {
             .map(|(id, _)| id.as_str())
     }
 
+    /// The desktop id of the app that opens the first type of `chain` (the type and its
+    /// parents) that has a handler.
+    pub fn handler_for(&self, chain: &[String]) -> Option<&str> {
+        chain.iter().find_map(|m| self.handler(m))
+    }
+
     /// The Silica icon of the app that opens `mime`: the first type of `chain` (the type and
     /// its parents) that has a handler decides, and the handler needs a Silica icon.
     pub fn icon_for(&self, chain: &[String]) -> Option<AppIcon> {
-        let id = chain.iter().find_map(|m| self.handler(m))?;
-        icon_of(self.entry(id)?)
+        icon_of(self.entry(self.handler_for(chain)?)?)
+    }
+
+    /// The document foreground the app `id` declares for the first type of `chain` it lists
+    /// (exact type, then `major/*`): `<icon folder>/documents/<name>.svg`, if the file is there.
+    pub fn document_icon(&self, id: &str, chain: &[String]) -> Option<PathBuf> {
+        let entry = self.entry(id)?;
+        let dir = self.silica_icon_dir(id)?;
+        let find = |key: &str| {
+            entry
+                .document_icons
+                .iter()
+                .find(|(m, _)| m == key)
+                .map(|(_, n)| n.as_str())
+        };
+        let name = chain.iter().find_map(|mime| {
+            find(mime).or_else(|| {
+                let (major, _) = mime.split_once('/')?;
+                find(&format!("{major}/*"))
+            })
+        })?;
+        let path = dir.join("documents").join(format!("{name}.svg"));
+        path.is_file().then_some(path)
     }
 }
 
@@ -265,8 +321,8 @@ mod tests {
         assert_eq!(e.mime_types, ["a/b", "c/d"]);
         assert_eq!(
             icon_of(&e),
-            Some(AppIcon::File(PathBuf::from(
-                "/usr/lib64/silica/apps/p/icon/icon.png"
+            Some(AppIcon::Folder(PathBuf::from(
+                "/usr/lib64/silica/apps/p/icon"
             )))
         );
         let named = parse_entry("[Desktop Entry]\nX-Silica-Icon=mission-control\n");
@@ -347,16 +403,72 @@ mod tests {
         // Without mimeapps.list the desktop entries decide.
         assert_eq!(
             apps.icon_for(&chain("text/plain")),
-            Some(AppIcon::File(PathBuf::from("/apps/editor/icon/icon.png")))
+            Some(AppIcon::Folder(PathBuf::from("/apps/editor/icon")))
         );
         assert_eq!(
             apps.icon_for(&chain("video/mp4")),
-            Some(AppIcon::File(PathBuf::from("/apps/mpv/icon/icon.png")))
+            Some(AppIcon::Folder(PathBuf::from("/apps/mpv/icon")))
         );
         // The parents are tried in order.
         let chain = vec!["text/x-notes".to_owned(), "text/plain".to_owned()];
         assert!(apps.icon_for(&chain).is_some());
         assert_eq!(apps.icon_for(&["image/png".to_owned()]), None);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn document_icons_are_parsed_and_matched_by_type_then_wildcard() {
+        let e = parse_entry(
+            "[Desktop Entry]\nX-Silica-Document-Icons=application/pdf=pdf;text/*=text;bad=x;text/y=../up;image/png=;\n",
+        );
+        assert_eq!(
+            e.document_icons,
+            [
+                ("application/pdf".to_owned(), "pdf".to_owned()),
+                ("text/*".to_owned(), "text".to_owned())
+            ]
+        );
+        let root = tmp("docicons");
+        let apps_dir = root.join("data/applications");
+        let icon = root.join("app/icon");
+        fs::create_dir_all(&apps_dir).unwrap();
+        fs::create_dir_all(icon.join("documents")).unwrap();
+        fs::write(icon.join("documents/pdf.svg"), "<svg/>").unwrap();
+        fs::write(icon.join("documents/text.svg"), "<svg/>").unwrap();
+        fs::write(
+            apps_dir.join("p.desktop"),
+            format!(
+                "[Desktop Entry]\nX-Silica-Icon={}\nMimeType=application/pdf;text/plain;\n\
+                 X-Silica-Document-Icons=application/pdf=pdf;text/*=text;image/png=missing;\n",
+                icon.display()
+            ),
+        )
+        .unwrap();
+        let apps = Apps::load(Dirs {
+            config_home: root.join("config"),
+            config_dirs: vec![],
+            data_home: root.join("data"),
+            data_dirs: vec![],
+        });
+        let chain = |m: &str| vec![m.to_owned()];
+        assert_eq!(
+            apps.document_icon("p.desktop", &chain("application/pdf")),
+            Some(icon.join("documents/pdf.svg"))
+        );
+        // The wildcard matches the types of its group.
+        assert_eq!(
+            apps.document_icon("p.desktop", &chain("text/markdown")),
+            Some(icon.join("documents/text.svg"))
+        );
+        // A parent in the chain counts; a name whose file is missing, or no entry, gives none.
+        let md = vec!["x/y".to_owned(), "application/pdf".to_owned()];
+        assert!(apps.document_icon("p.desktop", &md).is_some());
+        assert_eq!(apps.document_icon("p.desktop", &chain("image/png")), None);
+        assert_eq!(apps.document_icon("p.desktop", &chain("audio/mp3")), None);
+        assert_eq!(
+            apps.document_icon("none.desktop", &chain("text/plain")),
+            None
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
