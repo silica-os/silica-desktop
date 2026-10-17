@@ -21,7 +21,7 @@ fn layer_of(role: LayerRole) -> Option<Layer> {
 }
 
 /// The SVG bytes of a stored layer of an entry.
-fn layer_svg<'a>(assets: &'a Assets, entry: EntryId, layer: Layer) -> Option<&'a [u8]> {
+fn layer_svg(assets: &Assets, entry: EntryId, layer: Layer) -> Option<&[u8]> {
     assets
         .entry(entry)?
         .variants()
@@ -144,7 +144,7 @@ pub fn assets_app_icon(assets: &Assets, name: &str, side: u32) -> Option<Bitmap>
         return None;
     }
     // Stored premultiplied: back to straight for the resampling.
-    for p in rgba.chunks_exact_mut(4) {
+    for p in rgba.as_chunks_mut::<4>().0 {
         if let [r, g, b, a] = p
             && *a != 0
             && *a != 255

@@ -252,14 +252,16 @@ impl Icons {
                 fonts.advance(t, s, w)
             });
             // No glyph and no label to say what it is: the fallback kind.
-            if plan.symbol.is_none() && plan.app.is_none() && plan.label.is_none() {
-                if let Some((glyph, color)) = self.kind_style(&self.file_rules.fallback) {
-                    look.glyph = Glyph::Symbol(glyph, color);
-                    look.label_color = color;
-                    plan = rules::plan_file(&self.file_rules, size_px, pt, &look, |t, s, w| {
-                        fonts.advance(t, s, w)
-                    });
-                }
+            if plan.symbol.is_none()
+                && plan.app.is_none()
+                && plan.label.is_none()
+                && let Some((glyph, color)) = self.kind_style(&self.file_rules.fallback)
+            {
+                look.glyph = Glyph::Symbol(glyph, color);
+                look.label_color = color;
+                plan = rules::plan_file(&self.file_rules, size_px, pt, &look, |t, s, w| {
+                    fonts.advance(t, s, w)
+                });
             }
             (self.file_entry, plan)
         };
