@@ -1,5 +1,5 @@
-//! App icons composed from `icon.assets` ([`silica_assets::appicon`]) in light, dark, clear and
-//! tinted (docs/thumbnails.md, "App icons"). A port of `tools/compose.py` of silica-icons
+//! App icons composed from `icon.assets` ([`silica_assets::appicon`]) in light, dark, clear (light
+//! only) and tinted (docs/thumbnails.md, "App icons"). A port of `tools/compose.py` of silica-icons
 //! (docs/icon-format.md, Format 2): SVG layers rasterized with resvg, the per-appearance colour
 //! transforms in OKLab, glass, blends, the dark forms, `min_size`, the clip to the body.
 //! Dynamic layers are not drawn: the host draws them live on top. Cast shadows and the rim
@@ -12,11 +12,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use resvg::tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Transform};
+use resvg::tiny_skia::{Pixmap, Transform};
 use resvg::usvg;
 use silica_assets::appicon::{AppIcon, Background, Blend, Form, Mode};
 
 use super::apps::{Apps, Dirs};
+use super::svgfix;
 
 /// A request bigger than this is refused.
 pub const MAX_SIDE: u32 = 2048;
@@ -30,6 +31,7 @@ type Px = [f32; 4];
 type Rgb = [f32; 3];
 
 /// The appearance word of the D-Bus method: the low two bits pick the look, bit 2 the dark form.
+/// Clear exists only in light: clear with the dark bit is clear.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Look {
     Light,
@@ -44,7 +46,7 @@ pub struct Appearance {
 }
 
 impl Appearance {
-    /// 0 light, 1 clear, 2 tinted; add 4 for the dark form (4 dark, 5 clear dark, 6 tinted dark).
+    /// 0 light, 1 clear, 2 tinted; add 4 for the dark form (4 dark, 6 tinted dark; 5 is clear).
     pub fn from_u32(v: u32) -> Option<Appearance> {
         let look = match v & 3 {
             0 => Look::Light,
@@ -54,7 +56,7 @@ impl Appearance {
         };
         (v < 8).then_some(Appearance {
             look,
-            dark: v & 4 != 0,
+            dark: v & 4 != 0 && look != Look::Clear,
         })
     }
 
@@ -62,8 +64,7 @@ impl Appearance {
         match (self.look, self.dark) {
             (Look::Light, false) => "light",
             (Look::Light, true) => "dark",
-            (Look::Clear, false) => "clear",
-            (Look::Clear, true) => "clear-dark",
+            (Look::Clear, _) => "clear",
             (Look::Tinted, false) => "tinted",
             (Look::Tinted, true) => "tinted-dark",
         }
@@ -205,17 +206,36 @@ impl Img {
         img
     }
 
-    fn from_pixmap(pixmap: &Pixmap) -> Img {
-        let side = pixmap.width() as usize;
-        let px = pixmap
-            .pixels()
-            .iter()
-            .map(|p| {
-                let c = p.demultiply();
-                [c.red(), c.green(), c.blue(), c.alpha()].map(|v| f32::from(v) / 255.0)
-            })
-            .collect();
-        Img { side, px }
+    /// The pixmap (premultiplied) box-averaged by `k` per side, as straight alpha.
+    fn averaged(pixmap: &Pixmap, k: usize) -> Img {
+        let big = pixmap.width() as usize;
+        let side = big / k.max(1);
+        let n = (k * k) as f32 * 255.0;
+        let src = pixmap.pixels();
+        let mut img = Img::blank(side);
+        for (y, row) in img.px.chunks_exact_mut(side.max(1)).enumerate() {
+            for (x, dst) in row.iter_mut().enumerate() {
+                let mut sum = [0.0_f32; 4];
+                for dy in 0..k {
+                    let start = (y * k + dy) * big + x * k;
+                    for p in src.get(start..start + k).unwrap_or(&[]) {
+                        for (s, v) in sum
+                            .iter_mut()
+                            .zip([p.red(), p.green(), p.blue(), p.alpha()])
+                        {
+                            *s += f32::from(v);
+                        }
+                    }
+                }
+                let [r, g, b, a] = sum.map(|v| v / n);
+                *dst = if a > 0.0 {
+                    [r / a, g / a, b / a, a]
+                } else {
+                    [0.0; 4]
+                };
+            }
+        }
+        img
     }
 
     fn rgba8(&self) -> Vec<u8> {
@@ -227,12 +247,25 @@ impl Img {
     }
 }
 
+/// Samples per pixel side of the layer renders; the render is capped at 4096 px.
+const SUPERSAMPLE: u32 = 4;
+
+/// An SVG of the 1024 canvas rendered at `side`: drawn at `SUPERSAMPLE` times the side (with the
+/// filter regions widened, see `svgfix`) and box-averaged in premultiplied float, which is plain
+/// anti-aliasing and removes the hairline where Sketch's shadows are knocked out under a shape.
 fn render_svg(data: &[u8], side: u32) -> Option<Img> {
-    let tree = usvg::Tree::from_data(data, &usvg::Options::default()).ok()?;
-    let k = side as f32 / tree.size().width().max(f32::EPSILON);
-    let mut pixmap = Pixmap::new(side, side)?;
-    resvg::render(&tree, Transform::from_scale(k, k), &mut pixmap.as_mut());
-    Some(Img::from_pixmap(&pixmap))
+    let k = SUPERSAMPLE.min(4096 / side.max(1)).max(1);
+    let data = svgfix::widen_filters(data);
+    let tree = usvg::Tree::from_data(&data, &usvg::Options::default()).ok()?;
+    let big = side.checked_mul(k)?;
+    let scale = big as f32 / tree.size().width().max(f32::EPSILON);
+    let mut pixmap = Pixmap::new(big, big)?;
+    resvg::render(
+        &tree,
+        Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    Some(Img::averaged(&pixmap, k as usize))
 }
 
 /// `src` over `dst` (straight alpha), with the blend applied against the destination colour.
@@ -260,7 +293,6 @@ fn over(dst: Px, src: Px, blend: Blend) -> Px {
 fn background(icon: &AppIcon, side: u32, ap: Appearance, accent: Rgb) -> Option<Img> {
     let s = side as usize;
     let g = |c: [u8; 3]| c.map(|v| f32::from(v) / 255.0);
-    let graphite = (g([0x3a, 0x3a, 0x3c]), g([0x14, 0x14, 0x16]));
     Some(match (ap.look, ap.dark) {
         (Look::Light, dark) => {
             let b = icon.background.get(usize::from(dark))?;
@@ -271,8 +303,7 @@ fn background(icon: &AppIcon, side: u32, ap: Appearance, accent: Rgb) -> Option<
                 Background::Svg(i) => render_svg(icon.blob(*i)?, side)?,
             }
         }
-        (Look::Clear, true) => Img::vertical(s, graphite.0, BLACK, 0.50, 0.55),
-        (Look::Clear, false) => Img::vertical(s, WHITE, WHITE, 0.50, 0.25),
+        (Look::Clear, _) => Img::vertical(s, WHITE, WHITE, 0.50, 0.25),
         (Look::Tinted, true) => Img::vertical(
             s,
             mix(accent, BLACK, 0.62),
@@ -322,11 +353,7 @@ fn transform(
             let (lo, hi) = if mode == Mode::Light {
                 (200.0, 255.0)
             } else {
-                luma.map(|l| (l[0], l[1])).unwrap_or(if dark {
-                    (150.0, 255.0)
-                } else {
-                    (105.0, 255.0)
-                })
+                luma.map_or((105.0, 255.0), |l| (l[0], l[1]))
             };
             [(lo + (hi - lo) * lum) / 255.0; 3]
         } else if mode == Mode::Accent {
@@ -431,35 +458,13 @@ fn glass(below: &mut Img, layer: &Img, opacity: f32, tune: [f32; 3]) {
     }
 }
 
-/// The body: 824 square at (100, 100), radius 215 (the approximation of `compose.py`).
+/// The body: the Sketch `Icon / Background` Body path (824 square at (100, 100), radius 214,
+/// smoothing 0.6; `tools/body.svg` of silica-icons), as an alpha mask at `side`.
 fn body_mask(side: u32) -> Option<Vec<f32>> {
-    let k = side as f32 / 1024.0;
-    let (x0, y0, x1, y1, r) = (100.0 * k, 100.0 * k, 924.0 * k, 924.0 * k, 215.0 * k);
-    // Circular corners as cubics (kappa 0.5523).
-    let c = r * 0.552_284_8;
-    let mut pb = PathBuilder::new();
-    pb.move_to(x0 + r, y0);
-    pb.line_to(x1 - r, y0);
-    pb.cubic_to(x1 - r + c, y0, x1, y0 + r - c, x1, y0 + r);
-    pb.line_to(x1, y1 - r);
-    pb.cubic_to(x1, y1 - r + c, x1 - r + c, y1, x1 - r, y1);
-    pb.line_to(x0 + r, y1);
-    pb.cubic_to(x0 + r - c, y1, x0, y1 - r + c, x0, y1 - r);
-    pb.line_to(x0, y0 + r);
-    pb.cubic_to(x0, y0 + r - c, x0 + r - c, y0, x0 + r, y0);
-    pb.close();
-    let path = pb.finish()?;
+    let tree = usvg::Tree::from_data(BODY_SVG.as_bytes(), &usvg::Options::default()).ok()?;
+    let k = side as f32 / tree.size().width().max(f32::EPSILON);
     let mut pixmap = Pixmap::new(side, side)?;
-    let mut paint = Paint::default();
-    paint.set_color_rgba8(0, 0, 0, 255);
-    paint.anti_alias = true;
-    pixmap.fill_path(
-        &path,
-        &paint,
-        FillRule::Winding,
-        Transform::identity(),
-        None,
-    );
+    resvg::render(&tree, Transform::from_scale(k, k), &mut pixmap.as_mut());
     Some(
         pixmap
             .pixels()
@@ -468,6 +473,8 @@ fn body_mask(side: u32) -> Option<Vec<f32>> {
             .collect(),
     )
 }
+
+const BODY_SVG: &str = include_str!("body.svg");
 
 /// Composes `icon` at `side` pixels (`pt` points wide) in `ap`, `accent` as 0xRRGGBB for the
 /// tinted looks. None when an SVG does not parse or the size is not usable.

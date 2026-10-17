@@ -15,11 +15,10 @@ use silica_assets::appicon::AppIcon;
 use silica_daemon::icons::appicon::{Appearance, compose};
 
 const ACCENT: u32 = 0xd6_33_6c;
-const LOOKS: [(&str, u32); 6] = [
+const LOOKS: [(&str, u32); 5] = [
     ("light", 0),
     ("dark", 4),
     ("clear", 1),
-    ("clear-dark", 5),
     ("tinted", 2),
     ("tinted-dark", 6),
 ];
@@ -42,8 +41,7 @@ fn golden(name: &str) -> Vec<u8> {
     buf
 }
 
-/// Returns (share of pixels whose alpha differs by more than 12 (the body edge: the reference
-/// mask has no anti-aliasing), share of the others off by more than 12 in a colour channel as
+/// Returns (share of pixels whose alpha differs by more than 12 (the body edge), share of the others off by more than 12 in a colour channel as
 /// shown on white, their mean absolute difference).
 fn distance(a: &[u8], b: &[u8]) -> (f64, f64, f64) {
     assert_eq!(a.len(), b.len());
@@ -83,11 +81,11 @@ fn check(dir: &Path, name: &str, size: u32, looks: &[(&str, u32)]) {
         let (edge, off, mean) = distance(&got, &want);
         eprintln!("{name} {size} {look}: edge {edge:.4} off {off:.4} mean {mean:.3}");
         assert!(
-            edge < 0.08,
+            edge < 0.01,
             "{name} {look}: {edge:.4} of the pixels differ in alpha"
         );
-        assert!(off < 0.01, "{name} {look}: {off:.4} of the pixels differ");
-        assert!(mean < 1.5, "{name} {look}: mean difference {mean:.3}");
+        assert!(off < 0.002, "{name} {look}: {off:.4} of the pixels differ");
+        assert!(mean < 0.3, "{name} {look}: mean difference {mean:.3}");
     }
 }
 
@@ -112,6 +110,16 @@ fn the_pilot_icons_match_compose_py_without_their_dynamic_layers() {
         }
         check(&dir, app, 128, &LOOKS);
     }
+}
+
+#[test]
+fn clear_has_no_dark_form() {
+    use silica_daemon::icons::appicon::Look;
+    let clear = Appearance::from_u32(1).unwrap();
+    assert_eq!(Appearance::from_u32(5).unwrap(), clear);
+    assert_eq!((clear.look, clear.dark), (Look::Clear, false));
+    assert!(Appearance::from_u32(4).unwrap().dark);
+    assert!(Appearance::from_u32(6).unwrap().dark);
 }
 
 #[test]

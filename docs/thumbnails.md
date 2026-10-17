@@ -113,16 +113,18 @@ an app from its `icon/icon.assets` (docs/assets-format.md, "App icon file"), the
 
 - `app`: a desktop id (`dev.frascella.Clock`, with or without `.desktop`; its entry's
   `X-Silica-Icon=` folder) or an absolute icon folder.
-- `appearance`: 0 light, 1 clear, 2 tinted; add 4 for the dark form (4 dark, 5 clear dark,
-  6 tinted dark). Any other value gives "".
+- `appearance`: 0 light, 1 clear, 2 tinted; add 4 for the dark form (4 dark, 6 tinted dark;
+  clear exists only in light, so 5 is composed as clear). Any other value gives "".
 - `accent_rgb`: 0xRRGGBB, used by the tinted looks only (0 is `Accent/Amalfi`, `#0e77e6`).
 - Result: the path of a PNG of exactly `size_px` (at most 2048) pixels, `scale` giving the side
   in points for `min_size`; "" when the app has no `icon.assets`, it is damaged or the request
   is invalid, and the client then shows the bundled `icon.png` / `icon-dark.png`.
 - Not in the PNG: layers with `dynamic` data (Clock hands and cap, Calendar date: the host draws
   them live on top, from the layer data of the same `icon.assets`), the cast shadows of the
-  layers and the rim (the host draws them, as in the reference). The clip is the 824 body with
-  radius 215 (the reference's approximation).
+  layers and the rim (the host draws them, as in the reference). The clip is the Sketch body outline
+  (`tools/body.svg` of silica-icons: 824 at (100, 100), radius 214, smoothing 0.6). Layers are
+  rendered at 4 x 4 samples per pixel in premultiplied float, with the filter regions widened to the
+  reach of their shadows (the Sketch export cuts some), as `compose.py` does.
 - Cache: `$XDG_CACHE_HOME/silica/icons/app/<digest>-<appearance>-<px>-<pt*10>[-<accent>].png`;
   the digest is the icon's, so an updated app regenerates, and the accent is part of the key only
   for the tinted looks. `Ready(app, size_px, path)` follows a success.

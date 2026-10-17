@@ -490,7 +490,7 @@ impl Thumbnails {
     /// The icon of an app, composed from its `icon.assets` at `size_px` pixels on a display of
     /// `scale`. `app` is a desktop id (`dev.frascella.Clock` or `...desktop`, whose entry has
     /// `X-Silica-Icon=`) or an absolute icon folder. `appearance`: 0 light, 1 clear, 2 tinted;
-    /// add 4 for the dark form (so 4 is dark, 5 clear dark, 6 tinted dark). `accent_rgb` is
+    /// add 4 for the dark form (so 4 is dark, 6 tinted dark; clear has no dark form, 5 is clear). `accent_rgb` is
     /// 0xRRGGBB for the tinted looks (0: Accent/Amalfi). Returns the path of a PNG of exactly
     /// `size_px`, without the layers that move (the host draws Clock hands and Calendar date
     /// on top) and without shadow and rim; "" when the app has no compiled icon or the request

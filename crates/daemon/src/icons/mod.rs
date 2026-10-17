@@ -12,6 +12,7 @@ pub mod compose;
 pub mod folder;
 pub mod mime;
 pub mod rules;
+mod svgfix;
 
 use std::fs::{self, File};
 use std::io::BufWriter;
