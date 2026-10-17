@@ -940,3 +940,56 @@ fn a_popup_extends_past_its_window_in_software() {
 fn a_popup_extends_past_its_window_with_gl() {
     popup_extends_past_its_window("popup-gl", &["--renderer", "gl"]);
 }
+
+/// A menu of a shell layer as its own surface (silica-desktop#222): the demo as a layer
+/// (with a second `--view` layer, like the shell) opens an `xdg_popup` adopted by the layer
+/// (`zwlr_layer_surface_v1.get_popup`), drawn past the layer's edge; a tap in it closes it from
+/// the app, and a press outside it makes Ossido dismiss it.
+#[test]
+fn a_popup_of_a_shell_layer_extends_past_its_layer() {
+    let args: Vec<String> = [
+        "--layer",
+        "top",
+        "--anchor",
+        "top,left",
+        "--size",
+        "300x200",
+        "--keyboard",
+        "exclusive",
+        "--namespace",
+        "popup-layer",
+        "--view",
+        "--layer",
+        "bottom",
+        "--anchor",
+        "bottom,left",
+        "--size",
+        "50x20",
+        "--namespace",
+        "popup-layer-2",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    let session = Session::start_with("popup-layer", (800, 600), 1, &args);
+    let layer = session.layer("popup-layer");
+    let mut client = session.client();
+    // Hangs from (width - 20, height / 2): past the layer's right edge.
+    let past = (layer.x as u32 + 300 + 40, layer.y as u32 + 100 + 40);
+    open_popup(&session, &mut client, past);
+    session.expect_pixel(layer.x as u32 + 290, layer.y as u32 + 100 + 40, POPUP);
+    client
+        .call(INPUT_CLICK, json!({"x": past.0, "y": past.1}))
+        .unwrap();
+    assert!(
+        wait_until(|| session.pixel(past.0, past.1) != POPUP),
+        "the popup was not closed by the app"
+    );
+    open_popup(&session, &mut client, past);
+    client
+        .call(INPUT_CLICK, json!({"x": 700, "y": 550}))
+        .unwrap();
+    assert!(
+        wait_until(|| session.pixel(past.0, past.1) != POPUP),
+        "the popup stayed after a press outside it"
+    );
+}

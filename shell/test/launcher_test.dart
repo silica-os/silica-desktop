@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:silica_ui/silica_ui.dart';
 import 'package:silica_shell/faro/faro.dart' show backProgress;
 import 'package:silica_shell/faro/launcher.dart';
 import 'package:silica_shell/system/desktop_entries.dart';
@@ -27,6 +28,21 @@ final entries = {
   ])
     e.id: e,
 };
+
+/// A second view of the test engine, which has only one: it has its own id.
+class _PopupView extends TestFlutterView {
+  _PopupView(TestFlutterView base, this.id)
+    : super(
+        view: base,
+        platformDispatcher: base.platformDispatcher,
+        display: base.display,
+      );
+
+  final int id;
+
+  @override
+  int get viewId => id;
+}
 
 void main() {
   test('freedesktop categories end up in the seven of the launcher', () {
@@ -240,6 +256,75 @@ void main() {
     expect(tester.getSize(find.byType(Launcher)), const Size(640, 560));
     expect(find.byKey(const ValueKey('launcher view menu')), findsNothing);
   });
+
+  testWidgets(
+    'the view menu is a popup surface above the layer when the system offers it',
+    (tester) async {
+      // Ossido draws the glass of a menu below its own surface's pixels: in the Faro layer
+      // the panel would cover it (silica-desktop#222).
+      final calls = <MethodCall>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        GlassRegistry.channel,
+        (_) async => true,
+      );
+      messenger.setMockMethodCallHandler(SilicaWindow.channel, (call) async {
+        calls.add(call);
+        return switch (call.method) {
+          'popupsAvailable' => true,
+          'openPopup' => {
+            'viewId': 7,
+            'x': 700.0,
+            'y': 44.0,
+            'width': 180.0,
+            'height': 60.0,
+          },
+          _ => null,
+        };
+      });
+      SilicaWindows.reset();
+      SilicaPopups.debugViewResolver = (id) => _PopupView(tester.view, id);
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(SilicaWindow.channel, null);
+        messenger.setMockMethodCallHandler(GlassRegistry.channel, null);
+        SilicaWindows.reset();
+      });
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: Launcher(
+              entries: entries,
+              recents: const [],
+              onListChanged: (_) {},
+              onLaunch: (_) {},
+              onBack: () {},
+            ),
+          ),
+        ),
+      );
+      await SilicaPopups.probe();
+      await tester.tap(find.byKey(const ValueKey('launcher more')));
+      for (var i = 0; i < 5; i++) {
+        await tester.pump();
+      }
+      final opened = calls.where((call) => call.method == 'openPopup').toList();
+      expect(opened, hasLength(1));
+      final args = opened.single.arguments as Map;
+      // Hanging from the menu's top right corner: 20 from the right edge, 44 from the top.
+      expect(args['anchorRect'], [824.0, 44.0, 1.0, 1.0]);
+      expect(args['anchor'], 'top-right');
+      expect(args['gravity'], 'bottom-left');
+      expect(args['parent'], 0);
+      // Built in the popup's view, not in the layer.
+      expect(find.byKey(const ValueKey('launcher view menu')), findsOneWidget);
+    },
+  );
 
   test('inline completion: only if the first result starts with the text', () {
     final results = launcherApps(entries.values, query: 'cal');
