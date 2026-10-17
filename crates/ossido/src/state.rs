@@ -130,6 +130,8 @@ pub struct State {
     /// Energy (`power.json`, `idle.rs`): the last input, whether the display is off, whether
     /// this idle period already asked for sleep.
     pub power_config: crate::config::PowerConfig,
+    /// `theme.json`: the glass level.
+    pub theme_config: crate::config::ThemeConfig,
     pub last_activity: Instant,
     pub display_off: bool,
     /// Something happened that may change the screen (a client request, input, a command):
@@ -416,6 +418,7 @@ impl State {
             keyboard_config: crate::config::KeyboardConfig::parse(None, key_repeat()),
             input_config: crate::config::InputConfig::default(),
             power_config: crate::config::PowerConfig::default(),
+            theme_config: crate::config::ThemeConfig::default(),
             last_activity: Instant::now(),
             display_off: false,
             redraw: true,

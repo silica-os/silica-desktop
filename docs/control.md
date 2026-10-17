@@ -168,6 +168,15 @@ drawn until the next input); nested and headless only keep the state (`idle.stat
 no `ext-idle-notify-v1` for clients yet (Smithay's implementation needs the event loop's data
 to be the compositor state).
 
+### theme.json
+
+Settings' Appearance choices. Ossido reads one key; the rest is the look the apps follow
+(silica-daemon `SetLook`, `docs/daemon.md`) and is ignored here.
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `glass` | number 0–1 | how tinted the glass is: 0 clearest, 1 most tinted; 0.5 (default) is the measured material. Only the tint's strength changes (`GlassProfile::with_glass_level`); clear glass has no tint and stays. A value out of range is the default. |
+
 ### input.json
 
 ```json
