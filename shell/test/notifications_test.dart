@@ -575,6 +575,65 @@ void main() {
       expect(source.items, contains(4));
     },
   );
+  test('previews off hide the text, per app and for all', () {
+    final all = NotificationSettings.parse('{"previews": "never"}');
+    expect(all.present(note(1)).body, isEmpty);
+    expect(all.present(note(1)).summary, 'Titolo 1');
+    final perApp = NotificationSettings.parse(
+      '{"previews": "never", "apps": {"Mail": {"previews": "always"}, '
+      '"Chat": {"previews": "never"}}}',
+    );
+    expect(perApp.present(note(1)).body, isNotEmpty);
+    expect(perApp.present(note(2, app: 'Chat')).body, isEmpty);
+    expect(perApp.present(note(3, app: 'Other')).body, isEmpty);
+    // No lock screen: unlocked previews are always shown.
+    final unlocked = NotificationSettings.parse('{"previews": "unlocked"}');
+    expect(unlocked.present(note(1)).body, isNotEmpty);
+    expect(const NotificationSettings().present(note(1)).body, isNotEmpty);
+  });
+
+  test('showInCenter and grouping per app', () {
+    final settings = NotificationSettings.parse(
+      '{"grouping": "off", "apps": {"Mail": {"showInCenter": false, '
+      '"grouping": "app"}, "Chat": {"showInCenter": true}}}',
+    );
+    expect(settings.inCenter(note(1)), isFalse);
+    expect(settings.inCenter(note(2, app: 'Chat')), isTrue);
+    expect(settings.groupingOf(note(1)), GroupingMode.app);
+    expect(settings.groupingOf(note(2, app: 'Chat')), GroupingMode.off);
+    final groups = groupNotifications([
+      note(1, minute: 1),
+      note(2, minute: 2),
+    ], ungrouped: (_) => true);
+    expect(groups.length, 2);
+  });
+
+  testWidgets('the banner has no text when previews are off; the Center skips '
+      'the apps that opt out and lists each notification when not grouping', (
+    tester,
+  ) async {
+    final source = FakeSource()
+      ..items[1] = note(1, app: 'Chat', minute: 1)
+      ..items[2] = note(2, app: 'Chat', minute: 2)
+      ..items[3] = note(3, app: 'Mail', minute: 3);
+    await pumpLayer(
+      tester,
+      source,
+      settings: NotificationSettings.parse(
+        '{"previews": "never", "apps": {"Mail": {"showInCenter": false}, '
+        '"Chat": {"grouping": "off"}}}',
+      ),
+    );
+    source.post(note(4, app: 'Chat', minute: 4));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Titolo 4'), findsOneWidget);
+    expect(find.text('Corpo della notifica 4'), findsNothing);
+    await sendCommand(tester, 'notifications.toggle');
+    await tester.pumpAndSettle();
+    expect(find.text('Titolo 3'), findsNothing);
+    expect(find.text('Titolo 2'), findsOneWidget);
+    expect(find.text('Titolo 1'), findsOneWidget);
+  });
 }
 
 class _Dnd extends ValueNotifier<SystemSnapshot> implements SystemSource {

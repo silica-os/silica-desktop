@@ -47,6 +47,21 @@ class ShellNotification {
 
   bool get critical => urgency >= 2;
 
+  /// The same notification without its text (Settings › Notifications › previews off).
+  ShellNotification withoutBody() => ShellNotification(
+    id: id,
+    appName: appName,
+    appIcon: appIcon,
+    summary: summary,
+    actions: actions,
+    urgency: urgency,
+    desktopEntry: desktopEntry,
+    imagePath: imagePath,
+    transient: transient,
+    resident: resident,
+    timestamp: timestamp,
+  );
+
   /// The actions to show as buttons: `default` is the click on the notification, and
   /// `inline-reply` is the reply field.
   List<(String, String)> get buttons => [
@@ -109,7 +124,10 @@ class NotificationGroup {
 
 /// The Center groups: non-transient notifications, by app, groups ordered by the most
 /// recent notification.
-List<NotificationGroup> groupNotifications(Iterable<ShellNotification> all) {
+List<NotificationGroup> groupNotifications(
+  Iterable<ShellNotification> all, {
+  bool Function(ShellNotification)? ungrouped,
+}) {
   final sorted =
       [
         for (final n in all)
@@ -121,7 +139,9 @@ List<NotificationGroup> groupNotifications(Iterable<ShellNotification> all) {
       );
   final groups = <String, List<ShellNotification>>{};
   for (final n in sorted) {
-    groups.putIfAbsent(n.group, () => []).add(n);
+    // An app that does not group (Settings › Notifications): one group per notification.
+    final key = ungrouped?.call(n) ?? false ? '${n.group}#${n.id}' : n.group;
+    groups.putIfAbsent(key, () => []).add(n);
   }
   return [for (final e in groups.entries) NotificationGroup(e.key, e.value)];
 }

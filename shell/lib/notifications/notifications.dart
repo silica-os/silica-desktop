@@ -220,8 +220,10 @@ class _NotificationsLayerState extends State<NotificationsLayer>
     // With a Focus (Do Not Disturb) on the notification is delivered silently, without a
     // banner, and waits in the Centre (SH-NC-07, measured).
     if (_centerOpen || (widget.system?.value.doNotDisturb ?? false)) return;
-    final style = widget.settings().styleOf(n);
+    final settings = widget.settings();
+    final style = settings.styleOf(n);
     if (style == NotificationStyle.none) return;
+    n = settings.present(n);
     setState(() {
       final same = _banners.where(
         (b) => !b.leaving && b.notification.id == n.id,
@@ -406,7 +408,11 @@ class _NotificationsLayerState extends State<NotificationsLayer>
   }
 
   Widget _centerView(double left) {
-    final groups = groupNotifications(widget.source.notifications.values);
+    final settings = widget.settings();
+    final groups = groupNotifications([
+      for (final n in widget.source.notifications.values)
+        if (settings.inCenter(n)) settings.present(n),
+    ], ungrouped: (n) => settings.groupingOf(n) == GroupingMode.off);
     return Focus(
       focusNode: _focus,
       onKeyEvent: (node, event) {
