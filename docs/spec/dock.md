@@ -373,7 +373,8 @@ The menu opens on a secondary click, a control-click, or a **long press of about
       no scaling, and the Dock closes up;
     - a running app goes back to its place, unpinned, and disappears when it quits.
 - **Folder dragged in from Mustache:** to the right of the separator it opens a gap and is
-  inserted.
+  inserted. The gap's size and timing are in
+  [dock-stacks.md](dock-stacks.md#adding-a-folder-by-dragging-mu-40-stk-anim).
   - Hovering it over another folder in the Dock highlights that folder instead.
 - **File held over an app:**
   - The app's icon darkens, as when pressed, and its label shows. No gap opens.

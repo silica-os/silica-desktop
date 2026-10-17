@@ -2,7 +2,7 @@
 
 A folder kept in the Dock, right of the separator. Clicking it shows the folder's files in
 one of three views: fan, grid or list. Measured with test folders of 3, 10, 14 and 40 text
-files, sorted by name, on the grey wallpaper (D-06, K-06).
+files, sorted by name, on the grey wallpaper (D-06, K-06, DOCK-FAN, STK-ANIM).
 
 ## Defaults
 
@@ -43,15 +43,22 @@ The threshold lies somewhere between 15 and 40 files. It has not been searched f
   slot opens the folder in Mustache:
   - its label is "open in Mustache" when the folder has 15 files or fewer;
   - otherwise it reads "N more in Mustache", with N the files not shown.
-- **Pitch:** a constant **64.6 pt** between items, vertically.
-- **Size:** the icons grow by about 1.2 pt per step going up, from **65.8 to 82.3 pt**.
-- **Curve:** the column curves to the **right** as it rises. The horizontal offset from the
-  first item grows by these amounts, step by step:
-
-  `+1.4, +3.3, +4.4, +6.4, +7.4, +8.4, +10.4, +12.5, +12.4, +14.5, +16.5, +17.5, +19.5, +20.6, +22.6 pt`
-- **Start:** the first item's bottom edge is 7 pt above the top of the Dock zone.
-- **Rotation:** icons and labels tilt clockwise more and more towards the top. The angle has
-  not been measured (*provisional*).
+- **Items (DOCK-FAN, STK-ANIM):** every icon is **64 pt**, the same size as in the Dock. The
+  accessibility boxes grow from 65.8 to 82.3 pt only because the icons are rotated.
+- **Rotation:** item k (1 at the bottom) is turned clockwise by **θₖ ≈ 0.4° + 1.23° · k**,
+  from 1.6° for the first to 12.7° for the tenth. Its label capsule turns by the same angle,
+  around the icon.
+- **Placement:**
+  - The centres are **64 pt apart vertically**.
+  - Each centre is shifted right of the one below by **64 · tan θₖ**, so the column bends
+    more and more to the **right**. With 10 files the steps are 2, 4, 5, 7, 8, 9, 11, 13, 13
+    and 15 pt.
+  - The first centre is about 2 pt right of the Dock icon's centre and about 80 pt above
+    it. Its box ends 12 pt above the top of the Dock.
+- **Equivalent arc:** the centres lie within 0.6 pt of a circle of radius **≈ 2950 pt**. The
+  circle's centre is level with the Dock icon's centre, about 2950 pt to its right. Each
+  icon's rotation is the angle of its radius, so the fan can also be laid out by turning
+  64 pt steps (about 1.24° each) around that far pivot.
 - **Labels:** capsules to the **left** of each icon, made of the same material as the Dock's
   hover label.
 
@@ -61,17 +68,32 @@ The threshold lies somewhere between 15 and 40 files. It has not been searched f
   | Border (1 pt) | `#424347` | `#434347` |
   | Text | `#212122` | `#f4f4f5` |
 - **Hover:** no visible highlight.
-- **Clicking a file:**
-  1. The item darkens slightly on press.
-  2. On release the stack closes at once, starting about 13 ms later and lasting about
-     150 ms.
-  3. Then the app opens the file.
-- **Opening:**
-  - It starts about **90 ms after the press** and lasts about **240 ms**.
-  - The items leave the icon as a squeezed column that stretches upwards while it bends into
-    the arc.
-  - The labels fade in last.
-- **Closing with Esc:** about **210 ms**, the same motion in reverse.
+- **Opening (STK-ANIM):**
+  - It starts on the **release**, not on the press: the column moves about **35 ms after
+    the mouse-up**, however long the button was held.
+  - It lasts **205 ms** (201–207 ms in four runs), along **cubic-bezier(0.37, 0.24, 0.60,
+    1.00)**.
+  - The icons keep their full size and opacity throughout. One progress value p drives the
+    whole fan: the vertical pitch is p · 64 pt and every rotation is p · θₖ. The column
+    therefore starts as an upright stack over the icon, stretches upwards, and bends into the
+    arc as it rises.
+  - The labels move with their icons and fade in over the same motion.
+- **Closing (STK-ANIM):** the same motion in reverse, about **180–210 ms**, along about
+  **cubic-bezier(0.5, 0.3, 0.65, 0.9)**. When it starts depends on what closes it:
+
+  | Trigger | Starts | Duration |
+  |---|---|---|
+  | Esc | on key-down | 180 ms |
+  | Click on the stack's own Dock button | on the **release** | 187 ms |
+  | Press outside the stack | on the **press** | 211 ms |
+  | Click on a file | on the release | about 200 ms |
+- **Clicking a file (STK-ANIM):**
+  1. On press the item darkens slightly. Nothing else happens until the release.
+  2. On release the fan closes at once, as above.
+  3. The app shows the file's window when it is ready, with no relation to the close. A
+     running app showed it about **150 ms after the release**, while the fan was about 75 %
+     closed. An app that had to launch showed it after about **410 ms**, some 200 ms after
+     the fan had gone. The window appeared whole, in a single frame.
 
 ## Grid
 
@@ -90,10 +112,20 @@ The threshold lies somewhere between 15 and 40 files. It has not been searched f
 - **Behaviour:**
   - Hovering a cell shows no highlight.
   - A click outside the panel closes it.
-- **Opening:**
-  - It starts about 70 ms after the press and lasts about **240 ms**.
-  - The panel grows in scale from the icon while fading in.
-- **Closing with Esc:** about **150 ms**, scaling back towards the icon while fading.
+- **Opening (STK-ANIM):**
+  - It starts on the **release**, about 10 ms after the mouse-up.
+  - It lasts **230 ms** (224–234 ms in three runs), decelerating along
+    **cubic-bezier(0.21, 0.22, 0.27, 0.99)**.
+  - The panel scales **from 0 to 1** around its **tip**, the bottom edge's centre above the
+    Dock icon, uniformly in width and height. The tip stays fixed while the panel grows
+    upwards and outwards.
+  - Its opacity rises with the same progress as the scale.
+  - Files whose thumbnail is not ready yet show a dashed rounded square, which is replaced
+    when the thumbnail arrives.
+- **Closing (STK-ANIM):** the reverse, scaling down towards the tip while fading, in
+  **160 ms**. The curve is close to linear with a mild deceleration: about 60 % done at half
+  time. Esc closes it on key-down, a click on its Dock button on the release, and a press
+  outside on the press, as for the fan.
 
 | | Light | Dark |
 |---|---|---|
@@ -117,6 +149,26 @@ The threshold lies somewhere between 15 and 40 files. It has not been searched f
 | Fill | `#c7c8cd` | `#6f7075` |
 | Text | `#1e1e1f` | `#e9e9ea` |
 
+## Adding a folder by dragging (MU-40, STK-ANIM)
+
+A folder dragged from Mustache over the Dock, to the right of the separator:
+
+- **Gap:** where the folder would be inserted, the Dock opens a gap one cell wide, 63 pt at
+  the default size. The Dock stays centred, so each end moves out by **31.5 pt** (measured
+  30.5–32 pt).
+- **Timing:** the gap opens in **250 ms** (248–256 ms) along about **cubic-bezier(0.3, 0,
+  0.7, 1)**. It starts as soon as the pointer reaches an insertion point, within about 50 ms.
+- **Leaving:** if the pointer leaves the Dock upwards, the gap closes the same way in about
+  **265 ms**, starting about 30 ms after the pointer leaves. It opens again when the pointer
+  comes back.
+- **Magnification:** while the pointer is over the Dock, the Dock is also magnified, about
+  +10 pt per end with the default magnification. The two effects add up. After the pointer
+  leaves upwards, the magnified width stays until the drag ends.
+- **Insertion points versus folders:** over the middle of a folder already in the Dock, no
+  gap opens and the drop goes **into** that folder. A gap opens only at the edges between
+  cells.
+- **Drop:** the new tile grows in the gap.
+
 ## Not measured yet
 
 - Sorting by date or kind.
@@ -124,3 +176,5 @@ The threshold lies somewhere between 15 and 40 files. It has not been searched f
 - Scrolling a full grid with the wheel.
 - The list view with subfolders.
 - The exact threshold between fan and grid in the automatic view.
+- Where the grid scales from when the panel is pushed away from a screen edge.
+- The drag gap with magnification off or at other Dock sizes.
