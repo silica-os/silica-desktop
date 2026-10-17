@@ -30,20 +30,7 @@ fn every_key_is_found_and_misses_are_rejected() {
         (KeySpace::App, "clock", "clock"),
         (KeySpace::App, "calendar", "calendar"),
         (KeySpace::App, "dev.frascella.Mail", "mail"),
-        (KeySpace::Type, "kind.pdf", "kind.pdf"),
-        (KeySpace::Type, "category.data", "category.data"),
         (KeySpace::Type, "file-generic", "file-generic"),
-        (KeySpace::Mime, "application/pdf", "kind.pdf"),
-        (KeySpace::Mime, "text/markdown", "kind.text"),
-        (KeySpace::Mime, "image/*", "kind.image"),
-        (KeySpace::Mime, "application/json", "category.data"),
-        (KeySpace::Uti, "com.adobe.pdf", "kind.pdf"),
-        (KeySpace::Uti, "public.plain-text", "kind.text"),
-        (KeySpace::Uti, "public.json", "category.data"),
-        (KeySpace::Ext, "pdf", "kind.pdf"),
-        (KeySpace::Ext, "json", "category.data"),
-        (KeySpace::Ext, "sketch", "category.media"),
-        (KeySpace::Ext, "md", "kind.text"),
         (KeySpace::Role, "folder", "folder.generic"),
         (KeySpace::Role, "folder.generic", "folder.generic"),
         (KeySpace::Role, "trash.empty", "trash.empty"),
@@ -75,14 +62,11 @@ fn every_key_is_found_and_misses_are_rejected() {
         (KeySpace::App, ""),
         (KeySpace::Type, "mail"),
         (KeySpace::Type, "file-pd"),
-        (KeySpace::Mime, "application/PDF"),
-        (KeySpace::Mime, "image/png"),
-        (KeySpace::Uti, "application/pdf"),
-        (KeySpace::Ext, ".pdf"),
-        (KeySpace::Ext, "PDF"),
         (KeySpace::Role, "trash.full"),
-        (KeySpace::Type, "kind.nothing"),
-        (KeySpace::Ext, "docx"),
+        (KeySpace::Type, "kind.pdf"),
+        (KeySpace::Mime, "application/pdf"),
+        (KeySpace::Ext, "pdf"),
+        (KeySpace::Uti, "com.adobe.pdf"),
         (KeySpace::Symbol, "bold/key"),
         (KeySpace::Symbol, "key"),
         (KeySpace::Font, "Inter"),
@@ -108,17 +92,19 @@ fn every_key_is_found_and_misses_are_rejected() {
 fn aliases_and_entries_describe_themselves() {
     let fixture = fixture();
     let (assets, _) = open(&fixture);
-    let pdf = assets.lookup(KeySpace::Type, "kind.pdf").unwrap();
-    assert_eq!(assets.lookup(KeySpace::Mime, "application/pdf"), Some(pdf));
-    assert_eq!(assets.lookup(KeySpace::Ext, "pdf"), Some(pdf));
-    assert_eq!(assets.lookup(KeySpace::Uti, "com.adobe.pdf"), Some(pdf));
-    assert_eq!(assets.entry(pdf).unwrap().kind(), EntryKind::FileKind);
+    let mail = assets.lookup(KeySpace::App, "mail").unwrap();
+    assert_eq!(
+        assets.lookup(KeySpace::App, "dev.frascella.Mail"),
+        Some(mail)
+    );
+    // No file kind, category or type map exists any more.
+    assert!(assets.entries().all(|e| e.kind() != EntryKind::FileKind));
     // The raw alias entries exist in the file with `alias_of` set.
     let aliases = assets
         .entries()
         .filter(|e| e.kind() == EntryKind::Alias)
         .count();
-    assert_eq!(aliases, 19);
+    assert_eq!(aliases, 2);
     for alias in assets.entries().filter(|e| e.kind() == EntryKind::Alias) {
         let target = assets.entry(alias.alias_of().unwrap()).unwrap();
         assert_ne!(target.kind(), EntryKind::Alias);
@@ -450,37 +436,23 @@ fn blobs_slots_and_dynamic_layers() {
         (5, 32, Some("upper"))
     );
     assert_eq!((label.font, label.weight), (Some("Inter"), 500));
-    // 111.67 in 1/64 units.
-    assert_eq!(label.size, 7147);
-    assert_eq!(label.rect, [270.64, 763.7, 482.72, 136.04]);
-    assert_eq!(label.max_width, 482.72);
+    // 139.59 in 1/64 units (25 % over the former 111.67), one grey for every file.
+    assert_eq!(label.size, 8934);
+    assert_eq!(label.rect, [219.08, 744.5, 585.84, 170.05]);
+    assert_eq!(label.max_width, 585.84);
+    assert_eq!(label.color, [0x5F636BFF, 0x5F636BFF]);
     let alone = of_kind(SlotKind::FileLabelAlone);
     assert_eq!((alone.weight, alone.size), (900, 11234));
-    assert_eq!(of_kind(SlotKind::FallbackKind).format, Some("unknown"));
-    let bands: Vec<_> = generic
-        .slots()
-        .filter(|s| s.kind == SlotKind::SymbolBand)
-        .map(|s| (s.min_size, s.format.unwrap_or("")))
-        .collect();
-    assert_eq!(bands, [(128, "light"), (64, "regular"), (16, "semibold")]);
-    // Kinds and categories are entries of their own.
-    let pdf = assets
-        .entry(assets.lookup(KeySpace::Type, "kind.pdf").unwrap())
-        .unwrap();
-    let style = pdf.slot(0).unwrap();
-    assert_eq!(
-        (style.kind, style.font, style.format, style.color[0]),
-        (SlotKind::KindStyle, Some("key"), Some("pdf"), 0xE2332BFF)
-    );
-    let data = assets
-        .entry(assets.lookup(KeySpace::Type, "category.data").unwrap())
-        .unwrap();
-    let category = data.slot(0).unwrap();
-    assert_eq!(
-        (category.kind, category.format, category.color[0]),
-        (SlotKind::TypeCategory, Some("data"), 0x1F9D55FF)
-    );
-
+    assert_eq!(alone.color, [0x5F636BFF, 0x5F636BFF]);
+    // No per-type symbols: the glyph is the icon of the app that opens the file.
+    for gone in [
+        SlotKind::SymbolBand,
+        SlotKind::FallbackKind,
+        SlotKind::KindStyle,
+        SlotKind::TypeCategory,
+    ] {
+        assert!(generic.slots().all(|s| s.kind != gone), "{gone:?}");
+    }
     // Generic folder: stack with conditional middle and tint flags, symbol, effect, tint ramp.
     let folder = assets
         .entry(assets.lookup(KeySpace::Role, "folder.generic").unwrap())
@@ -502,7 +474,7 @@ fn blobs_slots_and_dynamic_layers() {
     let of_kind = |kind| folder.slots().find(|s| s.kind == kind).unwrap();
     assert_eq!(
         of_kind(SlotKind::FolderEmblem).rect,
-        [354.0, 434.0, 316.0, 316.0]
+        [335.04, 415.04, 353.92, 353.92]
     );
     let effect = of_kind(SlotKind::FolderEffect);
     assert_eq!(effect.color, [0x1A64C800, 0xFFFFFF00]);
@@ -589,17 +561,6 @@ fn compilation_is_deterministic() {
     assert_ne!(before.source_hash(), &[0u8; 32]);
 }
 
-#[test]
-fn a_type_table_naming_a_missing_kind_is_an_error() {
-    let fixture = fixture();
-    let table = fixture.root().join("bad-types.toml");
-    std::fs::write(&table, "[uti]\n\"public.nothing\" = \"kind.nothing\"\n").unwrap();
-    let mut options = fixture.options.clone();
-    options.types = Some(table);
-    let error = silica_assets::compile::compile(&options).err().unwrap();
-    assert!(error.to_string().contains("kind.nothing"), "{error}");
-}
-
 fn edit_compose(
     fixture: &mut common::Fixture,
     edit: impl FnOnce(&mut serde_json::Value),
@@ -624,29 +585,12 @@ fn edit_compose(
 }
 
 #[test]
-fn a_type_map_naming_a_missing_kind_symbol_or_category_is_an_error() {
+fn bad_composition_rules_are_errors() {
+    // The extension label needs its colour.
     let message = edit_compose(&mut fixture(), |j| {
-        j["file"]["types"]["mime"]["x/y"] = "nothing".into();
+        j["file"]["label"].as_object_mut().unwrap().remove("color");
     });
-    assert!(message.contains("kind.nothing"), "{message}");
-    let message = edit_compose(&mut fixture(), |j| {
-        j["file"]["types"]["mime"]["x/y"] = serde_json::json!({"category": "nothing"});
-    });
-    assert!(message.contains("category.nothing"), "{message}");
-    let message = edit_compose(&mut fixture(), |j| {
-        j["file"]["fallback"] = "nothing".into();
-    });
-    assert!(message.contains("fallback"), "{message}");
-    // The symbol must exist in symbols/.
-    let message = edit_compose(&mut fixture(), |j| {
-        j["file"]["kinds"]["pdf"]["glyph"] = "no-such-symbol".into();
-    });
-    assert!(message.contains("no-such-symbol"), "{message}");
-    // An override of an extension that already has a kind.
-    let message = edit_compose(&mut fixture(), |j| {
-        j["file"]["overrides"]["pdf"] = "data".into();
-    });
-    assert!(message.contains("overrides pdf"), "{message}");
+    assert!(message.contains("color"), "{message}");
     // A layer the sources do not provide.
     let message = edit_compose(&mut fixture(), |j| {
         j["folder"]["layers"][1]["role"] = "front".into();
@@ -657,17 +601,16 @@ fn a_type_map_naming_a_missing_kind_symbol_or_category_is_an_error() {
 #[test]
 fn the_shipped_type_table_parses() {
     let table: toml::Table = silica_assets::compile::DEFAULT_TYPES.parse().unwrap();
-    let uti = table["uti"].as_table().unwrap();
-    assert_eq!(uti["com.adobe.pdf"].as_str(), Some("kind.pdf"));
-    assert_eq!(uti["public.json"].as_str(), Some("category.data"));
     assert!(
         table["app"]
             .as_table()
             .unwrap()
             .contains_key("dev.frascella.Apps")
     );
-    // MIME and extensions come from the icon sources now.
-    assert!(!table.contains_key("mime") && !table.contains_key("ext"));
+    // The icon of a file is its app's: no type tables.
+    assert!(
+        !table.contains_key("uti") && !table.contains_key("mime") && !table.contains_key("ext")
+    );
 }
 
 /// The real silica-icons layout, when `SILICA_ICONS_A8B2` points at a checkout of it (the
@@ -690,16 +633,6 @@ fn the_real_layers_and_the_shipped_rules_compile() {
     let (bytes, report) = silica_assets::compile::compile(&options).unwrap();
     let assets = Assets::from_bytes(bytes).unwrap();
     assert!(report.symbols > 0);
-    for (space, key, name) in [
-        (KeySpace::Mime, "application/pdf", "kind.pdf"),
-        (KeySpace::Mime, "image/*", "kind.image"),
-        (KeySpace::Mime, "application/json", "category.data"),
-        (KeySpace::Ext, "rs", "kind.code"),
-        (KeySpace::Ext, "json", "category.data"),
-        (KeySpace::Ext, "blend", "category.media"),
-        (KeySpace::Role, "folder", "folder.generic"),
-    ] {
-        let id = assets.lookup(space, key).unwrap();
-        assert_eq!(assets.entry(id).unwrap().name(), name);
-    }
+    let id = assets.lookup(KeySpace::Role, "folder").unwrap();
+    assert_eq!(assets.entry(id).unwrap().name(), "folder.generic");
 }

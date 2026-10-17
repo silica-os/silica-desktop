@@ -94,8 +94,8 @@ byte_enum! {
         Wallpaper = 8,
         /// A key that points to another entry (`alias_of`): MIME, UTI, extension and role names.
         Alias = 9,
-        /// A kind of file (`kind.pdf`: a symbol and a color) or a category of files
-        /// (`category.data`: a color) of the generic file. No images.
+        /// Reserved: no entry has it. It was a kind (`kind.pdf`) or a category of files; a file's
+        /// icon is now its app's (docs/thumbnails.md).
         FileKind = 10,
     }
 }
@@ -180,22 +180,20 @@ byte_enum! {
         LayerRule = 9,
         /// The glyph box of the generic file (`rect`).
         GlyphBox = 10,
-        /// A band of symbol sizes: from `min_size` pt, `format` is the weight name (`light`,
+        /// A band of symbol sizes (of the folder): from `min_size` pt, `format` is the weight name (`light`,
         /// `regular`, `semibold`), `rect` = (scale, highlight 0 or 1, 0, 0).
         SymbolBand = 11,
         /// Where the body of an app icon goes when it replaces the symbol (`rect`).
         AppIconBody = 12,
         /// The extension label next to a glyph: `unit` max characters, `min_size` smallest
         /// icon side in pt, `rect` box, `font` family, `size` in 1/64 of a canvas unit,
-        /// `weight`, `format` the case, `tracking`, `max_width`.
+        /// `weight`, `format` the case, `tracking`, `max_width`, `color[0]` the text colour.
         FileLabel = 13,
         /// The extension label alone (no glyph): same fields as [`SlotKind::FileLabel`].
         FileLabelAlone = 14,
-        /// A kind of file, on a `FileKind` entry: `format` the kind name, `font` the symbol
-        /// name, `color[0]` its color.
+        /// Reserved, no longer written (was the symbol and color of a kind of file).
         KindStyle = 15,
-        /// The kind of a file with no kind and no usable extension (`format` is the kind
-        /// name), on the generic file.
+        /// Reserved, no longer written (was the fallback kind of the generic file).
         FallbackKind = 16,
         /// The engraving of the folder symbol: `color[0]` the color, `color[1]` the highlight
         /// (both `0xRRGGBB00`), `rect` = (opacity, highlight opacity, 0, 0), `tracking` the

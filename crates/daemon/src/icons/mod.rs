@@ -5,6 +5,11 @@
 //! resolves what a path is, builds the [`rules::Plan`] and renders it, or finds it already
 //! rendered: the cache file is named after the MD5 of the plan, so every icon with the same
 //! look at the same size is one file and nothing needs invalidating.
+//!
+//! A file has no symbol of its own type: its glyph is the icon of the app that opens it (or that
+//! app's document foreground for the type), else the file is an unknown extension and shows
+//! the sheet with the extension label alone. The previews of the apps' thumbnailers are
+//! [`Icons::thumbnailer_preview`].
 
 pub mod appicon;
 pub mod apps;
@@ -13,19 +18,30 @@ pub mod folder;
 pub mod mime;
 pub mod rules;
 mod svgfix;
+pub mod thumbnailer;
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
-use silica_assets::{Assets, EntryId, KeySpace, SlotKind};
+use silica_assets::{Assets, EntryId, KeySpace};
 
+use self::appicon::{Appearance, Look};
 use self::apps::{AppIcon, Apps, Dirs};
 use self::folder::Tint;
 use self::mime::MimeDb;
 use self::rules::{FileLook, FileRules, FolderLook, FolderRules, Glyph};
+use self::thumbnailer::Thumbnailers;
+use silica_assets::appicon::AppIcon as AppIconAssets;
+
+/// A document foreground bigger than this is not read.
+const MAX_DOCUMENT_SVG: u64 = 2 * 1024 * 1024;
+
+/// An `icon.assets` bigger than this is not read.
+const MAX_ICON_ASSETS: u64 = 64 * 1024 * 1024;
 
 /// How long the desktop entries are kept before they are read again.
 const APPS_TTL: Duration = Duration::from_secs(60);
@@ -57,6 +73,9 @@ pub struct Icons {
     folder_rules: FolderRules,
     mime: MimeDb,
     apps: Mutex<(Instant, Arc<Apps>)>,
+    thumbnailers: Mutex<(Instant, Arc<Thumbnailers>)>,
+    /// Whether the `icon.assets` named by a source string can be composed.
+    usable: Mutex<HashMap<String, bool>>,
     dirs: Dirs,
     home: PathBuf,
     user_dirs: Vec<(String, PathBuf)>,
@@ -94,6 +113,8 @@ impl Icons {
             folder_rules,
             mime,
             apps: Mutex::new((Instant::now(), apps)),
+            thumbnailers: Mutex::new((Instant::now(), Arc::new(Thumbnailers::load(&dirs)))),
+            usable: Mutex::new(HashMap::new()),
             dirs,
             home: PathBuf::from(home),
             user_dirs,
@@ -111,36 +132,34 @@ impl Icons {
         Arc::clone(&guard.1)
     }
 
-    /// The symbol and color of a kind of file.
-    fn kind_style(&self, kind: &str) -> Option<(String, [u8; 3])> {
-        let id = self
-            .assets
-            .lookup(KeySpace::Type, &format!("kind.{kind}"))?;
-        let slot = self
-            .assets
-            .entry(id)?
-            .slots()
-            .find(|s| s.kind == SlotKind::KindStyle)?;
-        let c = slot.color[0];
-        Some((
-            slot.font?.to_owned(),
-            [(c >> 24) as u8, (c >> 16) as u8, (c >> 8) as u8],
-        ))
+    fn thumbnailers(&self) -> Arc<Thumbnailers> {
+        let Ok(mut guard) = self.thumbnailers.lock() else {
+            return Arc::new(Thumbnailers::load(&self.dirs));
+        };
+        if guard.0.elapsed() > APPS_TTL {
+            *guard = (Instant::now(), Arc::new(Thumbnailers::load(&self.dirs)));
+        }
+        Arc::clone(&guard.1)
     }
 
-    fn category_color(&self, category: &str) -> [u8; 3] {
-        let color = self
-            .assets
-            .lookup(KeySpace::Type, &format!("category.{category}"))
-            .and_then(|id| self.assets.entry(id))
-            .and_then(|e| {
-                e.slots()
-                    .find(|s| s.kind == SlotKind::TypeCategory)
-                    .map(|s| s.color[0])
-            });
-        color.map_or([0x63, 0x63, 0x66], |c| {
-            [(c >> 24) as u8, (c >> 16) as u8, (c >> 8) as u8]
-        })
+    /// The MIME type of a file: by name, else by its first bytes.
+    fn mime_of(&self, path: &Path) -> Option<String> {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        self.mime
+            .for_name(name)
+            .map(str::to_owned)
+            .or_else(|| mime::sniff(&mime::read_head(path)).map(str::to_owned))
+    }
+
+    /// The preview a freedesktop thumbnailer of an app draws for `path`, `edge` pixels at most
+    /// (bounded in time, see [`thumbnailer`]). None when no installed thumbnailer takes its type.
+    pub fn thumbnailer_preview(&self, path: &Path, edge: u32) -> Option<image::DynamicImage> {
+        let chain = self.mime.chain(&self.mime_of(path)?);
+        let all = self.thumbnailers();
+        let path_var = std::env::var("PATH").unwrap_or_default();
+        all.find(&chain)
+            .into_iter()
+            .find_map(|t| thumbnailer::run(t, path, edge, thumbnailer::TIMEOUT, &path_var))
     }
 
     // ------------------------------------------------------------------ what a path looks like
@@ -176,63 +195,77 @@ impl Icons {
         }
     }
 
-    /// The look of the file at `path`.
-    pub fn file_look(&self, path: &Path, pt: f32) -> FileLook {
+    /// The look of the file at `path`: the glyph is, in order, the document foreground the
+    /// default app ships for its type, the icon of that app, or none (an unknown extension).
+    pub fn file_look(&self, path: &Path, _pt: f32) -> FileLook {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let extension = mime::extension_of(name);
-        let mime_type = self
-            .mime
-            .for_name(name)
-            .map(str::to_owned)
-            .or_else(|| mime::sniff(&mime::read_head(path)).map(str::to_owned));
-        let resolved = mime::resolve(
-            &self.assets,
-            &self.mime,
-            mime_type.as_deref(),
-            extension.as_deref(),
-        );
-        let chain = mime_type
-            .as_deref()
-            .map(|m| self.mime.chain(m))
+        let chain = self
+            .mime_of(path)
+            .map(|m| self.mime.chain(&m))
             .unwrap_or_default();
-        let app = self
-            .apps()
-            .icon_for(&chain)
-            .and_then(|icon| self.app_source(&icon, pt));
-        let category = self.category_color(&resolved.category);
-        let (glyph, label_color) = match (
-            app,
-            resolved.kind.as_deref().and_then(|k| self.kind_style(k)),
-        ) {
-            (Some(source), _) => (Glyph::App(source), category),
-            (None, Some((glyph, color))) => (Glyph::Symbol(glyph, color), color),
-            (None, None) => (Glyph::None, category),
-        };
-        FileLook {
-            glyph,
-            extension,
-            label_color,
-        }
+        let apps = self.apps();
+        let glyph = apps
+            .handler_for(&chain)
+            .and_then(|id| {
+                apps.document_icon(id, &chain)
+                    .and_then(|svg| self.document_source(&svg))
+                    .map(Glyph::Document)
+            })
+            .or_else(|| {
+                apps.icon_for(&chain)
+                    .and_then(|icon| self.app_source(&icon))
+                    .map(Glyph::App)
+            })
+            .unwrap_or(Glyph::None);
+        FileLook { glyph, extension }
     }
 
-    /// A stable name for an app icon: where it is and when it changed.
-    fn app_source(&self, icon: &AppIcon, _pt: f32) -> Option<String> {
+    /// A stable name for a document foreground: where it is and when it changed.
+    fn document_source(&self, svg: &Path) -> Option<String> {
+        let meta = fs::metadata(svg).ok()?;
+        if meta.len() > MAX_DOCUMENT_SVG {
+            return None;
+        }
+        Some(format!("doc:{}", stamp(svg, &meta)?))
+    }
+
+    /// A stable name for an app icon: where it is and when it changed. An icon folder counts
+    /// with its `icon.assets` when that can be composed, else with its `icon.png`.
+    fn app_source(&self, icon: &AppIcon) -> Option<String> {
         match icon {
-            AppIcon::File(path) => {
-                let meta = fs::metadata(path).ok()?;
-                let mtime = meta
-                    .modified()
-                    .ok()?
-                    .duration_since(UNIX_EPOCH)
-                    .ok()?
-                    .as_secs();
-                Some(format!("file:{}@{mtime}:{}", path.display(), meta.len()))
-            }
+            AppIcon::Folder(dir) => self
+                .composable_source(&dir.join("icon.assets"))
+                .or_else(|| png_source(&dir.join("icon.png"))),
+            AppIcon::File(path) => png_source(path),
             AppIcon::Assets(name) => {
                 self.assets.lookup(KeySpace::App, name)?;
                 Some(format!("assets:{name}"))
             }
         }
+    }
+
+    /// `icon:<path>@<mtime>:<size>` when `file` is an `icon.assets` that decodes.
+    fn composable_source(&self, file: &Path) -> Option<String> {
+        let meta = fs::metadata(file).ok()?;
+        if !meta.is_file() || meta.len() > MAX_ICON_ASSETS {
+            return None;
+        }
+        let key = format!("icon:{}", stamp(file, &meta)?);
+        let known = self.usable.lock().ok().and_then(|m| m.get(&key).copied());
+        let ok = known.unwrap_or_else(|| {
+            let ok = fs::read(file)
+                .ok()
+                .is_some_and(|bytes| AppIconAssets::decode(&bytes).is_some());
+            if let Ok(mut memo) = self.usable.lock() {
+                if memo.len() >= 512 {
+                    memo.clear();
+                }
+                memo.insert(key.clone(), ok);
+            }
+            ok
+        });
+        ok.then_some(key)
     }
 
     // ------------------------------------------------------------------------------- render
@@ -249,22 +282,10 @@ impl Icons {
                 rules::plan_folder(&self.folder_rules, size_px, pt, &look),
             )
         } else {
-            let mut look = self.file_look(path, pt);
-            let mut plan = rules::plan_file(&self.file_rules, size_px, pt, &look, |t, s, w| {
+            let look = self.file_look(path, pt);
+            let plan = rules::plan_file(&self.file_rules, size_px, pt, &look, |t, s, w| {
                 fonts.advance(t, s, w)
             });
-            // No glyph and no label to say what it is: the fallback kind.
-            if plan.symbol.is_none()
-                && plan.app.is_none()
-                && plan.label.is_none()
-                && let Some((glyph, color)) = self.kind_style(&self.file_rules.fallback)
-            {
-                look.glyph = Glyph::Symbol(glyph, color);
-                look.label_color = color;
-                plan = rules::plan_file(&self.file_rules, size_px, pt, &look, |t, s, w| {
-                    fonts.advance(t, s, w)
-                });
-            }
             (self.file_entry, plan)
         };
         let key = format!("{}|{plan:?}", self.assets.content_version());
@@ -275,11 +296,22 @@ impl Icons {
         if target.is_file() {
             return Some(target);
         }
-        let app = plan
-            .app
+        let app = plan.app.as_ref().and_then(|draw| {
+            let app_pt = pt * draw.rect[2] / size_px as f32;
+            self.load_app(&draw.source, draw.rect[2], app_pt)
+        });
+        let document = plan
+            .document
             .as_ref()
-            .and_then(|draw| self.load_app(&draw.source, draw.rect[2]));
-        let pixmap = compose::render(&self.assets, entry, &plan, app.as_ref(), &fonts)?;
+            .and_then(|draw| load_document(&draw.source));
+        let pixmap = compose::render(
+            &self.assets,
+            entry,
+            &plan,
+            app.as_ref(),
+            document.as_deref(),
+            &fonts,
+        )?;
         write_icon(
             &target,
             pixmap.width(),
@@ -289,14 +321,57 @@ impl Icons {
         Some(target)
     }
 
-    fn load_app(&self, source: &str, side: f32) -> Option<compose::Bitmap> {
+    /// Decodes the app icon a plan names, `side` pixels wide (`pt` points).
+    fn load_app(&self, source: &str, side: f32, pt: f32) -> Option<compose::Bitmap> {
         if let Some(rest) = source.strip_prefix("assets:") {
             return compose::assets_app_icon(&self.assets, rest, side.ceil() as u32);
+        }
+        if let Some(rest) = source.strip_prefix("icon:") {
+            // The same composition as `AppIcon` (docs/thumbnails.md), light appearance.
+            let (file, _) = rest.rsplit_once('@')?;
+            let bytes = fs::read(file).ok()?;
+            let icon = AppIconAssets::decode(&bytes)?;
+            let px = side.round().max(1.0) as u32;
+            let appearance = Appearance {
+                look: Look::Light,
+                dark: false,
+            };
+            let rgba = appicon::compose(&icon, px, pt, appearance, appicon::DEFAULT_ACCENT)?;
+            return Some(compose::Bitmap {
+                width: px,
+                height: px,
+                rgba,
+            });
         }
         let path = source.strip_prefix("file:")?;
         let (path, _) = path.rsplit_once('@')?;
         compose::file_app_icon(Path::new(path))
     }
+}
+
+/// The SVG a `doc:` source names.
+fn load_document(source: &str) -> Option<Vec<u8>> {
+    let (path, _) = source.strip_prefix("doc:")?.rsplit_once('@')?;
+    let meta = fs::metadata(path).ok()?;
+    (meta.len() <= MAX_DOCUMENT_SVG).then_some(())?;
+    fs::read(path).ok()
+}
+
+/// `<path>@<mtime>:<size>`.
+fn stamp(path: &Path, meta: &fs::Metadata) -> Option<String> {
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(format!("{}@{mtime}:{}", path.display(), meta.len()))
+}
+
+fn png_source(path: &Path) -> Option<String> {
+    let meta = fs::metadata(path).ok()?;
+    meta.is_file().then_some(())?;
+    Some(format!("file:{}", stamp(path, &meta)?))
 }
 
 pub(crate) fn write_icon(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Option<()> {

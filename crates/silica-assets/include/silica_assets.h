@@ -36,7 +36,7 @@ typedef struct silica_assets silica_assets;
 /* Key spaces for silica_assets_lookup. */
 enum {
   SILICA_SPACE_APP = 0,       /* icon id ("mail") or desktop application id ("dev.frascella.Mail") */
-  SILICA_SPACE_TYPE = 1,      /* "file-generic", a kind of file ("kind.pdf") or a category ("category.data") */
+  SILICA_SPACE_TYPE = 1,      /* "file-generic" */
   SILICA_SPACE_MIME = 2,      /* MIME type ("application/pdf"), or a wildcard key ("image/star") */
   SILICA_SPACE_UTI = 3,       /* Uniform Type Identifier ("com.adobe.pdf") */
   SILICA_SPACE_ROLE = 4,      /* "folder", "folder.generic", "volume.external", "trash.empty",
@@ -60,7 +60,7 @@ enum {
   SILICA_KIND_SOUND = 7,
   SILICA_KIND_WALLPAPER = 8,
   SILICA_KIND_ALIAS = 9, /* never returned by lookup: aliases are resolved */
-  SILICA_KIND_FILE_KIND = 10 /* a kind ("kind.pdf") or category ("category.data") of file */
+  SILICA_KIND_FILE_KIND = 10 /* reserved: no entry has it (kinds and categories were removed) */
 };
 
 /* Entry flags (silica_entry_info.flags). */
@@ -136,8 +136,8 @@ enum {
   SILICA_SLOT_FILE_LABEL = 13,    /* unit max chars, min_size pt, rect box, font, size in 1/64
                                      unit, weight, format case, tracking, max_width */
   SILICA_SLOT_FILE_LABEL_ALONE = 14,
-  SILICA_SLOT_KIND_STYLE = 15,    /* format kind name, font symbol name, color[0] */
-  SILICA_SLOT_FALLBACK_KIND = 16, /* format kind name */
+  SILICA_SLOT_KIND_STYLE = 15,    /* reserved, no longer written (file kinds were removed) */
+  SILICA_SLOT_FALLBACK_KIND = 16, /* reserved, no longer written */
   SILICA_SLOT_FOLDER_EFFECT = 17, /* color[0] engraving, color[1] highlight (0xRRGGBB00),
                                      rect = (opacity, highlight opacity, 0, 0), tracking offset */
   SILICA_SLOT_FOLDER_TINT = 18,   /* rect = (luminance low, high, shade, glow) */

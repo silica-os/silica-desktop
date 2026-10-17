@@ -28,6 +28,8 @@ pub struct LabelSpec {
     pub tracking: f32,
     pub max_width: f32,
     pub upper: bool,
+    /// The colour of the text: one grey for every file.
+    pub color: [u8; 3],
 }
 
 /// One step of a layer stack.
@@ -61,11 +63,9 @@ pub struct Effect {
 pub struct FileRules {
     pub steps: Vec<Step>,
     pub glyph_box: [f32; 4],
-    pub bands: Vec<Band>,
     pub app_body: Option<[f32; 4]>,
     pub label: Option<LabelSpec>,
     pub label_alone: Option<LabelSpec>,
-    pub fallback: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -102,6 +102,7 @@ fn label_of(slot: &silica_assets::Slot<'_>) -> LabelSpec {
         tracking: slot.tracking,
         max_width: slot.max_width,
         upper: slot.format == Some("upper"),
+        color: rgb(slot.color[0]),
     }
 }
 
@@ -129,11 +130,9 @@ impl FileRules {
         for slot in entry.slots() {
             match slot.kind {
                 SlotKind::GlyphBox => rules.glyph_box = slot.rect,
-                SlotKind::SymbolBand => rules.bands.push(band_of(&slot)),
                 SlotKind::AppIconBody => rules.app_body = Some(slot.rect),
                 SlotKind::FileLabel => rules.label = Some(label_of(&slot)),
                 SlotKind::FileLabelAlone => rules.label_alone = Some(label_of(&slot)),
-                SlotKind::FallbackKind => rules.fallback = slot.format.unwrap_or("").to_owned(),
                 _ => {}
             }
         }
@@ -344,6 +343,13 @@ pub struct AppDraw {
     pub rect: [f32; 3],
 }
 
+/// A document foreground (an SVG of the app) fitted in a box, in pixels of the icon.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DocDraw {
+    pub source: String,
+    pub rect: [f32; 4],
+}
+
 /// The label in pixels is `LabelPlan` on the canvas; the color is final.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LabelDraw {
@@ -361,6 +367,7 @@ pub struct Plan {
     pub glyph_at: usize,
     pub symbol: Option<SymbolDraw>,
     pub app: Option<AppDraw>,
+    pub document: Option<DocDraw>,
     pub label: Option<LabelDraw>,
 }
 
@@ -428,18 +435,20 @@ pub fn plan_folder(rules: &FolderRules, side: u32, pt: f32, look: &FolderLook) -
         glyph_at,
         symbol,
         app: None,
+        document: None,
         label: None,
     }
 }
 
-/// What the glyph of a file is.
+/// What the glyph of a file is. Never a symbol of a type: an unknown extension has none.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Glyph {
     None,
-    /// A symbol of the Silica set and its color.
-    Symbol(String, [u8; 3]),
-    /// An app icon, identified by `source` (a path and its modification time).
+    /// The icon of the app that opens the file, identified by `source` (where it is and when it
+    /// changed).
     App(String),
+    /// A document foreground the app ships for the file's type, identified by `source`.
+    Document(String),
 }
 
 /// What a file is, once resolved.
@@ -448,8 +457,6 @@ pub struct FileLook {
     pub glyph: Glyph,
     /// The extension without the dot, lowercase, if any.
     pub extension: Option<String>,
-    /// The color of the label.
-    pub label_color: [u8; 3],
 }
 
 /// The plan of a file icon.
@@ -477,21 +484,9 @@ pub fn plan_file(
     if !glyph_step {
         glyph_at = layers.len();
     }
-    let band = band_for(&rules.bands, pt);
-    let mut symbol = None;
     let mut app = None;
+    let mut document = None;
     let has_glyph = match &look.glyph {
-        Glyph::Symbol(name, color) => band.is_some_and(|band| {
-            symbol = Some(SymbolDraw {
-                name: name.clone(),
-                weight: band.weight.clone(),
-                rect: to_px(rules.glyph_box, side_f),
-                color: *color,
-                opacity: 1.0,
-                highlight: None,
-            });
-            true
-        }),
         Glyph::App(source) => rules.app_body.is_some_and(|body| {
             let [x, y, s] = app_canvas(body);
             let k = side_f / CANVAS;
@@ -501,6 +496,13 @@ pub fn plan_file(
             });
             true
         }),
+        Glyph::Document(source) => {
+            document = Some(DocDraw {
+                source: source.clone(),
+                rect: to_px(rules.glyph_box, side_f),
+            });
+            true
+        }
         Glyph::None => false,
     };
     let text = look.extension.as_deref().unwrap_or("");
@@ -515,15 +517,16 @@ pub fn plan_file(
         let plan = place_label(spec, text, |t, size| advance(t, size, weight));
         Some(LabelDraw {
             plan,
-            color: look.label_color,
+            color: spec.color,
         })
     });
     Plan {
         side,
         layers,
         glyph_at,
-        symbol,
+        symbol: None,
         app,
+        document,
         label,
     }
 }
@@ -536,16 +539,20 @@ mod tests {
         (a - b).abs() < 0.01
     }
 
+    /// `Text/Secondary` (light) of the Amalfi tokens.
+    const GREY: [u8; 3] = [0x5f, 0x63, 0x6b];
+
     fn label() -> LabelSpec {
         LabelSpec {
             max_chars: 5,
             min_size: 32.0,
-            rect: [270.64, 763.7, 482.72, 136.04],
-            size: 111.67,
+            rect: [219.08, 744.5, 585.84, 170.05],
+            size: 139.59,
             weight: 500,
             tracking: 0.0,
-            max_width: 482.72,
+            max_width: 585.84,
             upper: true,
+            color: GREY,
         }
     }
 
@@ -559,19 +566,6 @@ mod tests {
         }
     }
 
-    fn bands() -> Vec<Band> {
-        ["light", "regular", "semibold"]
-            .into_iter()
-            .zip([128.0, 64.0, 16.0])
-            .map(|(weight, min_size)| Band {
-                min_size,
-                weight: weight.to_owned(),
-                scale: 1.0,
-                highlight: true,
-            })
-            .collect()
-    }
-
     fn file_rules() -> FileRules {
         FileRules {
             steps: [LayerRole::Back, LayerRole::Glyph, LayerRole::Front]
@@ -583,43 +577,15 @@ mod tests {
                 })
                 .collect(),
             glyph_box: [262.0, 262.0, 500.0, 500.0],
-            bands: bands(),
             app_body: Some([303.67, 303.67, 416.67, 416.67]),
             label: Some(label()),
             label_alone: Some(alone()),
-            fallback: "unknown".to_owned(),
         }
     }
 
     /// Every letter 0.6 em wide.
     fn advance(text: &str, size: f32, _weight: u16) -> f32 {
         text.chars().count() as f32 * size * 0.6
-    }
-
-    #[test]
-    fn the_symbol_bands_follow_the_icon_side_in_points() {
-        let b = bands();
-        assert_eq!(
-            band_for(&b, 256.0).map(|b| b.weight.as_str()),
-            Some("light")
-        );
-        assert_eq!(
-            band_for(&b, 128.0).map(|b| b.weight.as_str()),
-            Some("light")
-        );
-        assert_eq!(
-            band_for(&b, 127.9).map(|b| b.weight.as_str()),
-            Some("regular")
-        );
-        assert_eq!(
-            band_for(&b, 64.0).map(|b| b.weight.as_str()),
-            Some("regular")
-        );
-        assert_eq!(
-            band_for(&b, 16.0).map(|b| b.weight.as_str()),
-            Some("semibold")
-        );
-        assert!(band_for(&b, 15.9).is_none());
     }
 
     #[test]
@@ -632,9 +598,9 @@ mod tests {
             assert!(close(r[0] + r[2] / 2.0, side / 2.0), "{side}");
         }
         // The symbol of the small folder band is 1.272 times larger around the same center.
-        let r = scaled_about_center([354.0, 434.0, 316.0, 316.0], 1.272);
+        let r = scaled_about_center([335.04, 415.04, 353.92, 353.92], 1.272);
         assert!(close(r[0] + r[2] / 2.0, 512.0) && close(r[1] + r[3] / 2.0, 592.0));
-        assert!(close(r[2], 316.0 * 1.272));
+        assert!(close(r[2], 353.92 * 1.272));
     }
 
     #[test]
@@ -666,18 +632,21 @@ mod tests {
     #[test]
     fn labels_shrink_to_fit_and_sit_on_the_baseline() {
         let l = label();
-        // Three letters fit at full size; baseline 872.34 as measured.
+        // The label is 25 % bigger than the former 111.67. Three letters fit at full size.
+        assert!(close(l.size, 111.67 * 1.25));
         let p = place_label(&l, "PDF".to_owned(), |t, s| advance(t, s, 500));
-        assert!(close(p.size, 111.67));
-        assert!(close(p.baseline, 872.34), "{}", p.baseline);
+        assert!(close(p.size, 139.59));
+        assert!(close(p.baseline, 880.30), "{}", p.baseline);
+        // It still sits under the glyph box (ends at 762) and inside the sheet.
+        assert!(p.baseline - 0.73 * p.size > 762.0 && p.baseline < 914.0);
         assert!(close(p.center_x, 512.0));
-        // Five letters at 0.6 em: 5 * 0.6 * 111.67 = 335 < 482.72: still full size. Make the
+        // Five letters at 0.6 em: 5 * 0.6 * 139.59 = 419 < 585.84: still full size. Make the
         // letters wider so that the text overflows and shrinks to exactly max_width.
         let p = place_label(&l, "WOFF2".to_owned(), |t, s| {
             t.chars().count() as f32 * s * 1.0
         });
-        assert!(close(p.size, 111.67 * 482.72 / (5.0 * 111.67)));
-        assert!(close(5.0 * p.size, 482.72));
+        assert!(close(p.size, 139.59 * 585.84 / (5.0 * 139.59)));
+        assert!(close(5.0 * p.size, 585.84));
         // The label alone: baseline 533.06.
         let p = place_label(&alone(), "ABC".to_owned(), |t, s| advance(t, s, 900));
         assert!(close(p.baseline, 533.06), "{}", p.baseline);
@@ -688,10 +657,10 @@ mod tests {
         let mut l = label();
         l.tracking = 100.0;
         let p = place_label(&l, "ABCDE".to_owned(), |t, s| advance(t, s, 500));
-        // 335 + 4 * 100 = 735 > 482.72.
+        // 419 + 4 * 100 = 819 > 585.84.
         assert!(close(
             p.size,
-            111.67 * 482.72 / (5.0 * 111.67 * 0.6 + 400.0)
+            139.59 * 585.84 / (5.0 * 139.59 * 0.6 + 400.0)
         ));
     }
 
@@ -699,14 +668,13 @@ mod tests {
         FileLook {
             glyph,
             extension: (!ext.is_empty()).then(|| ext.to_owned()),
-            label_color: [1, 2, 3],
         }
     }
 
     #[test]
-    fn a_file_with_a_symbol_has_back_symbol_front_and_a_label() {
+    fn a_file_with_an_app_icon_has_back_icon_front_and_a_label() {
         let rules = file_rules();
-        let l = look(Glyph::Symbol("doc-text".to_owned(), [9, 9, 9]), "pdf");
+        let l = look(Glyph::App("icon:/a/icon.assets@1:2".to_owned()), "pdf");
         let p = plan_file(&rules, 256, 128.0, &l, advance);
         assert_eq!(
             p.layers.iter().map(|l| l.role).collect::<Vec<_>>(),
@@ -714,24 +682,47 @@ mod tests {
         );
         // The glyph goes between the two layers.
         assert_eq!(p.glyph_at, 1);
-        let s = p.symbol.as_ref().map(|s| (s.weight.as_str(), s.rect));
-        assert_eq!(s, Some(("light", [65.5, 65.5, 125.0, 125.0])));
         assert_eq!(p.label.as_ref().map(|l| l.plan.text.as_str()), Some("PDF"));
-        assert!(p.app.is_none());
+        // No symbol of a type exists for a file.
+        assert!(p.app.is_some() && p.symbol.is_none() && p.document.is_none());
     }
 
     #[test]
-    fn small_sizes_drop_the_label_then_the_glyph() {
+    fn the_extension_label_is_the_same_grey_for_every_file() {
         let rules = file_rules();
-        let l = look(Glyph::Symbol("doc-text".to_owned(), [9, 9, 9]), "pdf");
-        let p = plan_file(&rules, 48, 24.0, &l, advance);
-        assert!(p.symbol.is_some() && p.label.is_none());
-        assert_eq!(
-            p.symbol.as_ref().map(|s| s.weight.as_str()),
-            Some("semibold")
+        for glyph in [
+            Glyph::None,
+            Glyph::App("a".to_owned()),
+            Glyph::Document("d".to_owned()),
+        ] {
+            let p = plan_file(&rules, 512, 256.0, &look(glyph, "abc"), advance);
+            assert_eq!(p.label.as_ref().map(|l| l.color), Some(GREY));
+        }
+    }
+
+    #[test]
+    fn a_document_foreground_goes_in_the_glyph_box_instead_of_the_app_icon() {
+        let rules = file_rules();
+        let l = look(
+            Glyph::Document("doc:/a/documents/x.svg@1:2".to_owned()),
+            "pdf",
         );
-        let p = plan_file(&rules, 24, 12.0, &l, advance);
-        assert!(p.symbol.is_none() && p.label.is_none());
+        let p = plan_file(&rules, 512, 256.0, &l, advance);
+        assert_eq!(
+            p.document.as_ref().map(|d| d.rect),
+            Some([131.0, 131.0, 250.0, 250.0])
+        );
+        assert!(p.app.is_none() && p.symbol.is_none());
+        assert_eq!(p.glyph_at, 1);
+        assert!(p.label.as_ref().is_some_and(|l| l.plan.weight == 500));
+    }
+
+    #[test]
+    fn small_sizes_drop_the_label() {
+        let rules = file_rules();
+        let l = look(Glyph::App("a".to_owned()), "pdf");
+        let p = plan_file(&rules, 48, 24.0, &l, advance);
+        assert!(p.app.is_some() && p.label.is_none());
     }
 
     #[test]
@@ -742,8 +733,7 @@ mod tests {
         let app = p.app.as_ref().map(|a| a.rect);
         assert!(app.is_some_and(|r| close(r[0], 253.10) && close(r[2], 517.8)));
         assert!(p.symbol.is_none());
-        // The label next to a glyph, in the category color.
-        assert_eq!(p.label.as_ref().map(|l| l.color), Some([1, 2, 3]));
+        assert_eq!(p.label.as_ref().map(|l| l.color), Some(GREY));
         assert_eq!(p.label.as_ref().map(|l| l.plan.weight), Some(500));
     }
 
@@ -756,7 +746,7 @@ mod tests {
             .as_ref()
             .map(|l| (l.plan.weight, l.plan.text.as_str()));
         assert_eq!(label, Some((900, "BLEND")));
-        assert!(p.symbol.is_none() && p.app.is_none());
+        assert!(p.symbol.is_none() && p.app.is_none() && p.document.is_none());
         // And hidden below 32 pt.
         let p = plan_file(&rules, 48, 24.0, &look(Glyph::None, "blend"), advance);
         assert!(p.label.is_none());
@@ -775,7 +765,7 @@ mod tests {
                 step(LayerRole::Front, true, false),
                 step(LayerRole::Symbol, true, false),
             ],
-            symbol_box: [354.0, 434.0, 316.0, 316.0],
+            symbol_box: [335.04, 415.04, 353.92, 353.92],
             bands: vec![
                 Band {
                     min_size: 128.0,
@@ -914,7 +904,12 @@ mod tests {
         let s = p.symbol.as_ref();
         assert_eq!(s.map(|s| s.weight.as_str()), Some("light"));
         assert_eq!(s.and_then(|s| s.highlight).map(|h| h.2), Some(1.0));
-        assert_eq!(s.map(|s| s.rect), Some([88.5, 108.5, 79.0, 79.0]));
+        assert!(s.is_some_and(|s| {
+            s.rect
+                .iter()
+                .zip([83.76, 103.76, 88.48, 88.48])
+                .all(|(a, b)| close(*a, b))
+        }));
         // 32 pt: Semibold, no highlight. 20 pt: the larger symbol. Below 16: none.
         let p = plan_folder(&rules, 64, 32.0, &look);
         assert_eq!(p.symbol.as_ref().map(|s| s.highlight.is_none()), Some(true));
@@ -922,7 +917,7 @@ mod tests {
         assert!(
             p.symbol
                 .as_ref()
-                .is_some_and(|s| close(s.rect[2], 316.0 * 1.272 * 40.0 / 1024.0))
+                .is_some_and(|s| close(s.rect[2], 353.92 * 1.272 * 40.0 / 1024.0))
         );
         assert!(plan_folder(&rules, 30, 15.0, &look).symbol.is_none());
         // On a tiny render the highlight shift is at least half a pixel.
@@ -936,5 +931,14 @@ mod tests {
             p.symbol.as_ref().and_then(|s| s.highlight).map(|h| h.2),
             Some(0.5)
         );
+    }
+
+    #[test]
+    fn the_folder_symbol_box_is_12_percent_bigger_around_the_same_center() {
+        let old = [354.0_f32, 434.0, 316.0, 316.0];
+        let new = folder_rules().symbol_box;
+        assert!(close(new[2] / old[2], 1.12) && close(new[3] / old[3], 1.12));
+        assert!(close(new[0] + new[2] / 2.0, old[0] + old[2] / 2.0));
+        assert!(close(new[1] + new[3] / 2.0, old[1] + old[3] / 2.0));
     }
 }

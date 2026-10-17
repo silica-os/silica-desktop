@@ -11,7 +11,7 @@ Status: design accepted by the user on 2026-10-16. Format version 1.
 | Asset | Source | Notes |
 | --- | --- | --- |
 | Shell app icons | silica-icons `apps/` | only the shell's own, by app id: `apps` (Launcher), `mission-control`, `screenshot` and the `silica` mark. The other Silica apps carry their own icon ("App icons" below) |
-| Generic file and folder | silica-icons `files/file-generic`, `files/folder-generic` (layer SVGs only) + `crates/silica-assets/data/compose.toml` (composition rules) | the layers and the rules the thumbnail service composes with, see "Generic file and folder"; MIME, UTI and extension map to a kind or category |
+| Generic file and folder | silica-icons `files/file-generic`, `files/folder-generic` (layer SVGs only) + `crates/silica-assets/data/compose.toml` (composition rules) | the layers and the rules the thumbnail service composes with, see "Generic file and folder"; a file has no type map: its icon is its app's |
 | Volumes, Trash | silica-icons `files/` | by role (external, network, optical, disk image, Trash empty/full) |
 | Badges | silica-icons `badges/` | alias, cloud, locked, unreadable, Dock stack close… |
 | System symbols | silica-icons `symbols/` | Icon Kit, light/regular/semibold; the SVG as it is (tintable template), not rasterized |
@@ -84,8 +84,7 @@ led out of range.
 ### Lookup tables
 
 One table per key space, numbered as in the C header: 0 `APP` (icon id such as `mail`, and
-desktop application id such as `dev.frascella.Mail` as an alias), 1 `TYPE` (`file-generic`, the kinds of file `kind.pdf`, `kind.code`... and the
-categories `category.data`...), 2 `MIME`
+desktop application id such as `dev.frascella.Mail` as an alias), 1 `TYPE` (`file-generic`; the kinds and categories of earlier drafts are gone), 2 `MIME`
 (`application/pdf`; wildcard keys such as `image/*` are stored literally and the reader tries
 the exact type first), 3 `UTI` (`com.adobe.pdf`), 4 `ROLE` (`folder`, `folder.generic`,
 `volume.internal|external|network|optical|disk-image`, `trash.empty`, `trash.full`,
@@ -93,8 +92,8 @@ the exact type first), 3 `UTI` (`com.adobe.pdf`), 4 `ROLE` (`folder`, `folder.ge
 e.g. `regular/key`), 6 `FONT` (file stem, `Inter-Regular`), 7 `SOUND` (file stem), 8
 `WALLPAPER` (`silica`), 9 `EXT` (extension without the dot, lowercase: `pdf`). `EXT` is an
 addition to the first draft: the `[file.types.extensions]` and `[file.overrides]` tables of
-`data/compose.toml` are the map from extension to kind or category, and the readers must not keep
-a map of their own.
+`data/compose.toml` were the map from extension to kind or category; it is empty now and the
+key space stays reserved.
 
 Each table is a minimal perfect hash (compress, hash and displace; PTHash was not needed at
 this size): `{ seed u64, bucket_count u32, key_count u32, displacements [u32; bucket_count],
@@ -105,12 +104,12 @@ stored in that entry is compared with the requested key to reject misses. No par
 allocation. The compiler uses the first seed (0, 1, ...) that gives a perfect hash, so the
 tables are deterministic. A table with no keys has `bucket_count = key_count = 0`.
 
-MIME, UTI, extension and desktop-id keys, and the role names that differ from the icon id, are
+Desktop-id keys, and the role names that differ from the icon id, are
 `alias` entries (`alias_of` is the entry that holds the images; an alias never points to an
-alias). `lookup` resolves them: the caller gets the real entry. The MIME, extension and override aliases come from `crates/silica-assets/data/compose.toml`
-(they point to `kind.*` or `category.*` entries); the app and UTI aliases from
-`crates/silica-assets/data/types.toml` (sections `[app]` and `[uti]`, a UTI target is a
-`kind.*` or `category.*` name). The compiler fails if a target does not exist. The top-level key `shell_apps` of the
+alias). `lookup` resolves them: the caller gets the real entry. The app aliases come from
+`crates/silica-assets/data/types.toml` (section `[app]`). The compiler fails if a target does not exist.
+The MIME, UTI and EXT key spaces are reserved and empty: no type map ships (the icon of a file is
+the icon of the app that opens it, see [`thumbnails.md`](thumbnails.md)). The top-level key `shell_apps` of the
 same file lists the app icons that are compiled (`apps`, `mission-control`, `screenshot`,
 `silica`): the other `apps/` folders of silica-icons are skipped and `[app]` aliases only those
 four. A table without `shell_apps` compiles every app icon (the test fixtures do).
@@ -154,7 +153,7 @@ in the requested theme and, if it has none, in the next theme of the fallback ch
 clear-dark -> clear -> dark -> default, tinted-dark -> tinted -> dark -> default, and
 dark, clear, tinted -> default.
 
-Entries of kind `file-kind` (`kind.pdf`, `category.data`) have no images, only a slot.
+The entry kind `file-kind` (10) is reserved: no entry has it any more.
 
 Where the images come from: an app icon uses its `rendered` PNGs (six themes, 1024 px); an app
 without them is composed from its SVG layers for default and dark; file, folder, volume, Trash
@@ -213,14 +212,16 @@ What the compiler writes:
 - Slots (kinds 9 to 20, `silica_assets.h`): `LayerRule` per step in drawing order (`unit` the
   role, `weight` flags: 1 tint reaches the step, 2 only when the folder has items; the folder
   ends with the `symbol` step, the file's stack lists `glyph` and the label follows it);
-  `GlyphBox`, `SymbolBand` (from `min_size` pt: weight name, scale, highlight), `AppIconBody`,
+  `GlyphBox`, `AppIconBody`, (folder only) `SymbolBand` (from `min_size` pt: weight name, scale, highlight),
   `FileLabel` and `FileLabelAlone` (`size` in 1/64 of a canvas unit, since the box metrics are
-  fractional), `FallbackKind`; for the folder `FolderEmblem` (the symbol box), `FolderEffect`,
+  fractional; `color` the one grey of the extension label, `[file.label].color` and
+  `[file.label_alone].color`, required); for the folder `FolderEmblem` (the symbol box), `FolderEffect`,
   `FolderTint`, `TintLabel`, `SpecialFolder` (key to symbol name).
-- One `file-kind` entry per kind (`kind.pdf`: `KindStyle` slot, symbol name and color) and per
-  category (`category.data`: `TypeCategory` slot, color), in TYPE; MIME keys (exact or `x/*`),
-  extension keys and the override keys are aliases of those entries. An extension that is both a
-  kind extension and an override is an error.
+- No kind, category or type map: the slots `SymbolBand` (on the file), `FallbackKind` (16), `KindStyle` (15)
+  and `TypeCategory` (7) are no longer written for the generic file and
+  readers must ignore them; the numbers stay reserved. `[file.glyph.symbol]`, `[file.kinds]`,
+  `[file.colors]`, `[file.overrides]`, `[file.types]`, `fallback` and the `[uti]` table of
+  `types.toml` are gone from the sources.
 - The compiler checks that every symbol named in `compose.toml` exists (light, regular and
   semibold) when the sources have symbols.
 
@@ -306,7 +307,7 @@ and every blob index and returns nothing for malformed input; it never panics.
   `crates/silica-assets/include/silica_assets.h`: open, close, lookup by key space, entry and
   slot info, variant by index, variant pick, blob pointer and length) serves `dart:ffi`; the
   only `unsafe` in the crate is the memory mapping and that ABI (`src/ffi/`).
-- **silica_ui**: `SilicaAssets` resolves app, type (MIME / UTI / path), folder role, volume,
+- **silica_ui**: `SilicaAssets` resolves app, folder role, volume,
   badge, symbol, font, sound and wallpaper requests through the C ABI; widgets get pixels as
   `ui.ImageDescriptor.raw` (no decode) or decode QOI; a size-bounded cache keyed by
   (entry, theme, side); theme follows `AmalfiTheme` at runtime; missing file or unknown format

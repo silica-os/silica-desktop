@@ -97,9 +97,6 @@ fn assets(root: &Path) -> Assets {
 
     let rules: toml::Table = silica_assets::compile::DEFAULT_COMPOSE.parse().unwrap();
     let mut glyphs = Vec::new();
-    for kind in rules["file"]["kinds"].as_table().unwrap().values() {
-        glyphs.push(kind["glyph"].as_str().unwrap().to_owned());
-    }
     for symbol in rules["folder"]["folders"].as_table().unwrap().values() {
         glyphs.push(symbol.as_str().unwrap().to_owned());
     }
@@ -213,8 +210,15 @@ fn the_tint_reaches_back_front_and_symbol_but_not_the_middle() {
     };
     let plan = rules::plan_folder(rules, 256, 128.0, &look);
     let fonts = compose::Fonts::from_assets(&s.icons.assets);
-    let tinted =
-        compose::render(&s.icons.assets, s.icons.folder_entry, &plan, None, &fonts).unwrap();
+    let tinted = compose::render(
+        &s.icons.assets,
+        s.icons.folder_entry,
+        &plan,
+        None,
+        None,
+        &fonts,
+    )
+    .unwrap();
     let plain = rules::plan_folder(
         rules,
         256,
@@ -224,8 +228,15 @@ fn the_tint_reaches_back_front_and_symbol_but_not_the_middle() {
             ..look.clone()
         },
     );
-    let plain =
-        compose::render(&s.icons.assets, s.icons.folder_entry, &plain, None, &fonts).unwrap();
+    let plain = compose::render(
+        &s.icons.assets,
+        s.icons.folder_entry,
+        &plain,
+        None,
+        None,
+        &fonts,
+    )
+    .unwrap();
     let at = |p: &resvg::tiny_skia::Pixmap, x: u32, y: u32| {
         let c = p.pixel(x, y).unwrap().demultiply();
         [c.red(), c.green(), c.blue(), c.alpha()]
@@ -285,86 +296,146 @@ fn a_special_folder_gets_its_symbol_from_user_dirs() {
     let _ = fs::remove_dir_all(&s.root);
 }
 
+const GREY: [u8; 4] = [0x5f, 0x63, 0x6b, 255];
+const SHEET: [u8; 4] = [0xf0, 0xf0, 0xf0, 255];
+
+/// A second service over the same home, so that entries and thumbnailers written after
+/// `setup` are read.
+fn reload(s: &Setup, tag: &str) -> Icons {
+    let root = s.root.clone();
+    let env = move |key: &str| -> Option<String> {
+        match key {
+            "HOME" => Some(root.join("home").display().to_string()),
+            "XDG_DATA_DIRS" | "XDG_CONFIG_DIRS" => Some(root.join("nowhere").display().to_string()),
+            _ => None,
+        }
+    };
+    Icons::with_assets(
+        assets(&s.root.join(tag)),
+        &env,
+        s.root.join(format!("cache-{tag}")),
+    )
+    .unwrap()
+}
+
+/// How many pixels of `img` in the rows `ys` are close to `color`, and their bounding rows.
+fn count_color(
+    path: &Path,
+    ys: std::ops::Range<u32>,
+    color: [u8; 4],
+    tolerance: u8,
+) -> (usize, Option<(u32, u32)>) {
+    let img = image::open(path).unwrap().to_rgba8();
+    let mut count = 0;
+    let mut rows: Option<(u32, u32)> = None;
+    for y in ys {
+        for x in 0..img.width() {
+            if near(img.get_pixel(x, y).0, color, tolerance) {
+                count += 1;
+                rows = Some(rows.map_or((y, y), |(a, b)| (a.min(y), b.max(y))));
+            }
+        }
+    }
+    (count, rows)
+}
+
 #[test]
-fn a_file_without_an_app_shows_the_symbol_of_its_kind() {
-    let s = setup("symbol");
-    let pdf = s.root.join("a.pdf");
-    fs::write(&pdf, "x").unwrap();
-    let out = s.icons.icon(&pdf, 512, 256.0).unwrap();
-    // The sheet, and at the center of the glyph box the red of the kind.
-    assert!(near(pixel(&out, 100, 300), [0xf0, 0xf0, 0xf0, 255], 1));
-    assert!(near(pixel(&out, 256, 256), [0xe2, 0x33, 0x2b, 255], 1));
-    // Same look, same file: a second PDF shares the cache entry.
+fn the_shipped_rules_have_the_bigger_label_the_grey_and_the_bigger_folder_symbol() {
+    let s = setup("shipped");
+    let label = s.icons.file_rules.label.as_ref().unwrap();
+    // 25 % over the former 111.67; the box still ends inside the sheet and starts under the
+    // glyph box (which ends at 762).
+    assert!((label.size / 111.67 - 1.25).abs() < 0.001, "{}", label.size);
+    assert!(label.rect[1] + label.rect[3] / 2.0 > 762.0 + label.rect[3] / 4.0);
+    assert!(label.rect[1] + label.rect[3] <= 1024.0 - 60.0);
+    assert_eq!(
+        (label.max_chars, label.min_size, label.upper),
+        (5, 32.0, true)
+    );
+    // One grey for every file: the Amalfi Text/Secondary of the light palette.
+    let tokens = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/design/amalfi/tokens.json"),
+    )
+    .unwrap();
+    let tokens: serde_json::Value = serde_json::from_str(&tokens).unwrap();
+    let secondary = tokens["colors"]["light"]["Text/Secondary"]
+        .as_str()
+        .unwrap();
+    let hex = format!(
+        "#{:02X}{:02X}{:02X}FF",
+        label.color[0], label.color[1], label.color[2]
+    );
+    assert_eq!(secondary, hex);
+    let alone = s.icons.file_rules.label_alone.as_ref().unwrap();
+    assert_eq!(alone.color, label.color);
+    // The folder symbol box: 12 % bigger around the same center (512, 592).
+    let b = s.icons.folder_rules.symbol_box;
+    assert!((b[2] / 316.0 - 1.12).abs() < 0.001 && (b[3] / 316.0 - 1.12).abs() < 0.001);
+    assert!((b[0] + b[2] / 2.0 - 512.0).abs() < 0.01 && (b[1] + b[3] / 2.0 - 592.0).abs() < 0.01);
+    let _ = fs::remove_dir_all(&s.root);
+}
+
+#[test]
+fn a_file_without_an_app_is_an_unknown_extension_with_the_label_alone() {
+    let s = setup("alone");
+    // A known type (PDF) and an unknown one: no handler, so no symbol of any kind.
+    for name in ["a.pdf", "scene.blend", "x.zzz"] {
+        let file = s.root.join(name);
+        fs::write(&file, "x").unwrap();
+        let look = s.icons.file_look(&file, 256.0);
+        assert_eq!(look.glyph, Glyph::None, "{name}");
+        let out = s.icons.icon(&file, 512, 256.0).unwrap();
+        // The sheet, with the glyph box (here its center) empty.
+        assert!(near(pixel(&out, 100, 300), SHEET, 1), "{name}");
+        assert!(near(pixel(&out, 256, 480), SHEET, 1), "{name}");
+        if Path::new(DEJAVU).is_file() {
+            // The label alone: the one grey, in the middle of the sheet.
+            let (n, rows) = count_color(&out, 150..330, GREY, 8);
+            assert!(n > 200, "{name}: {n}");
+            assert!(rows.is_some_and(|(a, b)| a > 170 && b < 300), "{rows:?}");
+        }
+    }
+    // Same look, same file: a second PDF shares the cache entry with the first.
+    let first = s.icons.icon(&s.root.join("a.pdf"), 512, 256.0).unwrap();
     let again = s.root.join("b.pdf");
     fs::write(&again, "y").unwrap();
-    assert_eq!(s.icons.icon(&again, 512, 256.0), Some(out.clone()));
-    // The label "PDF" sits in the label box when Inter is there (here DejaVu stands in).
+    assert_eq!(s.icons.icon(&again, 512, 256.0), Some(first));
+    // No extension, or one that is too long: the bare sheet, no question mark.
+    let bare = s.root.join("README");
+    let long = s.root.join("data.sqlite3x");
+    for file in [&bare, &long] {
+        fs::write(file, "x").unwrap();
+        let out = s.icons.icon(file, 512, 256.0).unwrap();
+        assert!(near(pixel(&out, 256, 256), SHEET, 1));
+        assert_eq!(count_color(&out, 0..512, GREY, 8).0, 0);
+    }
+    // Below 32 pt the label is gone.
     if Path::new(DEJAVU).is_file() {
-        let img = image::open(&out).unwrap().to_rgba8();
-        let red_in_label = (0..512u32)
-            .flat_map(|x| (382..450).map(move |y| (x, y)))
-            .filter(|&(x, y)| near(img.get_pixel(x, y).0, [0xe2, 0x33, 0x2b, 255], 8))
-            .count();
-        assert!(red_in_label > 100, "{red_in_label}");
-        // Below 32 pt the label is gone.
-        let small = s.icons.icon(&pdf, 48, 24.0).unwrap();
-        let img = image::open(&small).unwrap().to_rgba8();
-        let label_rows = (36..45u32)
-            .flat_map(|y| (0..48u32).map(move |x| (x, y)))
-            .filter(|&(x, y)| near(img.get_pixel(x, y).0, [0xe2, 0x33, 0x2b, 255], 8))
-            .count();
-        assert_eq!(label_rows, 0);
+        let small = s.icons.icon(&s.root.join("a.pdf"), 48, 24.0).unwrap();
+        assert_eq!(count_color(&small, 0..48, GREY, 8).0, 0);
     }
     let _ = fs::remove_dir_all(&s.root);
 }
 
-#[test]
-fn an_unknown_file_with_a_short_extension_gets_the_label_alone() {
-    let s = setup("alone");
-    let blend = s.root.join("scene.blend");
-    fs::write(&blend, "x").unwrap();
-    let look = s.icons.file_look(&blend, 256.0);
-    assert_eq!(look.glyph, Glyph::None);
-    assert_eq!(look.extension.as_deref(), Some("blend"));
-    // Nothing in the middle of the sheet but the label's row: the glyph box is empty.
-    let out = s.icons.icon(&blend, 512, 256.0).unwrap();
-    assert!(near(pixel(&out, 256, 160), [0xf0, 0xf0, 0xf0, 255], 1));
-    // A name with a long extension and one without: the fallback kind's symbol (a question).
-    let long = s.root.join("data.sqlite3x");
-    fs::write(&long, "x").unwrap();
-    let out = s.icons.icon(&long, 512, 256.0).unwrap();
-    assert!(near(pixel(&out, 256, 256), [0x8e, 0x8e, 0x93, 255], 1));
-    let _ = fs::remove_dir_all(&s.root);
-}
-
-#[test]
-fn the_default_app_icon_replaces_the_symbol_and_is_fitted_to_its_body() {
-    let s = setup("app");
-    let apps = s.root.join("home/.local/share/applications");
+/// A desktop entry of an app with an icon folder holding a green `icon.png`.
+fn write_editor(s: &Setup, extra: &str) -> PathBuf {
     let app_dir = s.root.join("editor-icon");
     write(&app_dir.join("icon.png"), png(1024, [0, 200, 0, 255]));
     write(
-        &apps.join("editor.desktop"),
+        &s.root.join("home/.local/share/applications/editor.desktop"),
         format!(
-            "[Desktop Entry]\nName=Editor\nX-Silica-Icon={}\nMimeType=text/plain;\n",
+            "[Desktop Entry]\nName=Editor\nX-Silica-Icon={}\nMimeType=text/plain;\n{extra}",
             app_dir.display()
         ),
     );
-    // Applications are read at load: build a second service over the same home.
-    let env = {
-        let root = s.root.clone();
-        move |key: &str| -> Option<String> {
-            match key {
-                "HOME" => Some(root.join("home").display().to_string()),
-                "XDG_DATA_DIRS" | "XDG_CONFIG_DIRS" => {
-                    Some(root.join("nowhere").display().to_string())
-                }
-                _ => None,
-            }
-        }
-    };
-    let icons =
-        Icons::with_assets(assets(&s.root.join("again")), &env, s.root.join("cache2")).unwrap();
+    app_dir
+}
+
+#[test]
+fn the_default_app_icon_is_the_glyph_and_the_label_is_bigger_and_grey() {
+    let s = setup("app");
+    write_editor(&s, "");
+    let icons = reload(&s, "again");
     let txt = s.root.join("note.txt");
     fs::write(&txt, "x").unwrap();
     // A CSV file inherits the handler of text/plain through its parent.
@@ -375,9 +446,118 @@ fn the_default_app_icon_replaces_the_symbol_and_is_fitted_to_its_body() {
         // The app icon covers canvas 253.10..770.9: pixels 126.5..385.4 of 512.
         assert!(near(pixel(&out, 256, 256), [0, 200, 0, 255], 2));
         assert!(near(pixel(&out, 135, 135), [0, 200, 0, 255], 2));
-        assert!(near(pixel(&out, 120, 120), [0xf0, 0xf0, 0xf0, 255], 1));
-        assert!(near(pixel(&out, 395, 395), [0xf0, 0xf0, 0xf0, 255], 1));
+        assert!(near(pixel(&out, 120, 120), SHEET, 1));
+        assert!(near(pixel(&out, 395, 395), SHEET, 1));
+        if Path::new(DEJAVU).is_file() {
+            // The label under the glyph: grey, and cap height 0.73 x 139.59 x 0.5 = 51 px
+            // (it was 41 px at the former size).
+            let (n, rows) = count_color(&out, 386..500, GREY, 8);
+            assert!(n > 200, "{n}");
+            let height = rows.map_or(0, |(a, b)| b - a + 1);
+            assert!((46..=56).contains(&height), "{rows:?}");
+        }
     }
+    let _ = fs::remove_dir_all(&s.root);
+}
+
+#[test]
+fn an_icon_folder_with_icon_assets_is_composed_as_the_glyph() {
+    let s = setup("composed");
+    let app_dir = write_editor(&s, "");
+    // A format-2 icon: a green body. icon.assets is the compiled form.
+    let src = s.root.join("editor-src");
+    write(
+        &src.join("icon.json"),
+        "{\"format\":2,\"id\":\"editor\",\"name\":\"Editor\",\"kind\":\"app\",\"keyline\":\"full\",\
+         \"background\":{\"light\":{\"gradient\":[\"#00c800\",\"#00c800\"]}},\
+         \"layers\":[{\"id\":\"body\",\"role\":\"body\"}]}",
+    );
+    write(
+        &src.join("layers/body.svg"),
+        svg(&rect(0, 0, 1024, 1024, "#00c800")),
+    );
+    write(&src.join("icon.png"), png(64, [255, 0, 0, 255]));
+    fs::write(
+        app_dir.join("icon.assets"),
+        silica_assets::compile::app_icon(&src).unwrap(),
+    )
+    .unwrap();
+    let icons = reload(&s, "again");
+    let txt = s.root.join("note.txt");
+    fs::write(&txt, "x").unwrap();
+    assert!(
+        matches!(icons.file_look(&txt, 256.0).glyph, Glyph::App(ref v) if v.starts_with("icon:"))
+    );
+    let out = icons.icon(&txt, 512, 256.0).unwrap();
+    assert!(near(pixel(&out, 256, 256), [0, 200, 0, 255], 3));
+    assert!(near(pixel(&out, 120, 120), SHEET, 1));
+    // A damaged icon.assets falls back to the icon.png of the folder.
+    fs::write(app_dir.join("icon.assets"), "not an icon").unwrap();
+    let icons = reload(&s, "damaged");
+    assert!(
+        matches!(icons.file_look(&txt, 256.0).glyph, Glyph::App(ref v) if v.starts_with("file:"))
+    );
+    let _ = fs::remove_dir_all(&s.root);
+}
+
+#[test]
+fn a_handler_without_a_usable_icon_leaves_the_file_unknown() {
+    let s = setup("third-party");
+    let apps = s.root.join("home/.local/share/applications");
+    write(
+        &apps.join("viewer.desktop"),
+        "[Desktop Entry]\nName=Viewer\nIcon=viewer\nMimeType=text/plain;\n",
+    );
+    write(
+        &apps.join("broken.desktop"),
+        format!(
+            "[Desktop Entry]\nName=Broken\nX-Silica-Icon={}\nMimeType=image/x-nothing;\n",
+            s.root.join("no-such-folder").display()
+        ),
+    );
+    let icons = reload(&s, "again");
+    let txt = s.root.join("note.txt");
+    fs::write(&txt, "x").unwrap();
+    assert_eq!(icons.file_look(&txt, 256.0).glyph, Glyph::None);
+    let out = icons.icon(&txt, 512, 256.0).unwrap();
+    assert!(near(pixel(&out, 256, 480), SHEET, 1));
+    let _ = fs::remove_dir_all(&s.root);
+}
+
+#[test]
+fn a_document_foreground_replaces_the_app_icon_in_the_glyph_box() {
+    let s = setup("document");
+    let app_dir = write_editor(
+        &s,
+        "X-Silica-Document-Icons=text/plain=notes;image/png=missing;\n",
+    );
+    write(
+        &app_dir.join("documents/notes.svg"),
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" viewBox=\"0 0 100 100\">\
+         <rect width=\"100\" height=\"100\" fill=\"#0000c8\"/></svg>",
+    );
+    let icons = reload(&s, "again");
+    let txt = s.root.join("note.txt");
+    let csv = s.root.join("t.csv");
+    let md = s.root.join("x.zzz");
+    for file in [&txt, &csv, &md] {
+        fs::write(file, "x").unwrap();
+    }
+    for file in [&txt, &csv] {
+        assert!(matches!(
+            icons.file_look(file, 256.0).glyph,
+            Glyph::Document(_)
+        ));
+        let out = icons.icon(file, 512, 256.0).unwrap();
+        // The glyph box is 131..381 of 512: blue inside, and not the app icon's green, whose
+        // body reaches 126.5.
+        assert!(near(pixel(&out, 256, 256), [0, 0, 200, 255], 2));
+        assert!(near(pixel(&out, 135, 135), [0, 0, 200, 255], 2));
+        assert!(near(pixel(&out, 128, 128), SHEET, 1));
+        assert!(near(pixel(&out, 385, 385), SHEET, 1));
+    }
+    // A type the app does not list keeps the app icon (c); a missing document file as well.
+    assert!(matches!(icons.file_look(&md, 256.0).glyph, Glyph::None));
     let _ = fs::remove_dir_all(&s.root);
 }
 
@@ -392,37 +572,93 @@ fn icons_are_refused_beyond_the_size_limit_and_for_missing_files() {
     let _ = fs::remove_dir_all(&s.root);
 }
 
+#[cfg(unix)]
+fn script(path: &Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    write(path, format!("#!/bin/sh\n{body}\n"));
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// Registers the type `application/x-sdoc` (`*.sdoc`) and a thumbnailer for it.
+fn with_thumbnailer(s: &Setup, exec_body: &str) -> Icons {
+    let home = s.root.join("home");
+    write(
+        &home.join(".local/share/mime/globs2"),
+        "50:application/pdf:*.pdf\n50:text/plain:*.txt\n50:application/x-sdoc:*.sdoc\n50:image/png:*.png\n",
+    );
+    let bin = s.root.join("bin/maker");
+    script(&bin, exec_body);
+    write(
+        &home.join(".local/share/thumbnailers/sdoc.thumbnailer"),
+        format!(
+            "[Thumbnailer Entry]\nTryExec={0}\nExec={0} %s %o\nMimeType=application/x-sdoc;image/png;\n",
+            bin.display()
+        ),
+    );
+    reload(s, "thumbs")
+}
+
 #[test]
-fn files_resolve_to_kinds_and_categories_through_the_compiled_map() {
-    let s = setup("resolve");
-    let r = |mime: Option<&str>, ext: Option<&str>| {
-        mime::resolve(&s.icons.assets, &s.icons.mime, mime, ext)
-    };
-    let got = r(Some("application/pdf"), Some("pdf"));
-    assert_eq!(
-        (got.kind.as_deref(), got.category.as_str()),
-        (Some("pdf"), "document")
-    );
-    // The parent decides when the type has no entry of its own.
-    let got = r(Some("text/csv"), Some("csv"));
-    assert_eq!(got.kind.as_deref(), Some("spreadsheet"));
-    assert_eq!(got.category, "data");
-    // An explicit category entry beats the text parent: JSON is data, not text.
-    let got = r(Some("application/json"), Some("json"));
-    assert_eq!((got.kind, got.category.as_str()), (None, "data"));
-    // An extension override gives the category of a file with no kind.
-    let got = r(Some("application/x-blender"), Some("blend"));
-    assert_eq!((got.kind, got.category.as_str()), (None, "media"));
-    // Wildcard types, the extension alone, and nothing at all.
-    assert_eq!(
-        r(Some("image/x-unknown"), None).kind.as_deref(),
-        Some("image")
-    );
-    assert_eq!(r(None, Some("rs")).kind.as_deref(), Some("code"));
-    let got = r(None, None);
-    assert_eq!((got.kind, got.category.as_str()), (None, "other"));
-    let got = r(Some("application/x-nothing"), Some("zzz"));
-    assert_eq!((got.kind, got.category.as_str()), (None, "other"));
+fn an_app_thumbnailer_draws_the_preview_after_the_built_in_generators() {
+    let s = setup("thumbnailer");
+    let ready = s.root.join("ready.png");
+    image::RgbaImage::from_pixel(32, 32, image::Rgba([200, 10, 10, 255]))
+        .save(&ready)
+        .unwrap();
+    let icons = with_thumbnailer(&s, &format!("cp {} \"$2\"", ready.display()));
+    let root = s.root.join("thumbs");
+    let doc = s.root.join("a.sdoc");
+    fs::write(&doc, "x").unwrap();
+    let uri = format!("file://{}", doc.display());
+    let (path, preview) =
+        crate::thumbnails::icon_job(&root, Some(&icons), &uri, 128, 2.0, 0).unwrap();
+    assert!(preview && path.starts_with(&root));
+    assert!(near(pixel(&path, 10, 10), [200, 10, 10, 255], 1));
+    // The flag that asks for the icon skips every preview.
+    let (_, preview) = crate::thumbnails::icon_job(
+        &root,
+        Some(&icons),
+        &uri,
+        128,
+        2.0,
+        crate::thumbnails::ICON_NO_PREVIEW,
+    )
+    .unwrap();
+    assert!(!preview);
+    // A real image is drawn by the built-in generator even though a thumbnailer lists image/png.
+    let pic = s.root.join("pic.png");
+    image::RgbaImage::from_pixel(64, 64, image::Rgba([10, 200, 10, 255]))
+        .save(&pic)
+        .unwrap();
+    let uri = format!("file://{}", pic.display());
+    let (path, preview) =
+        crate::thumbnails::icon_job(&root, Some(&icons), &uri, 128, 2.0, 0).unwrap();
+    assert!(preview && near(pixel(&path, 10, 10), [10, 200, 10, 255], 1));
+    // A type with no thumbnailer has no preview: the composed icon.
+    let txt = s.root.join("n.txt");
+    fs::write(&txt, "x").unwrap();
+    let uri = format!("file://{}", txt.display());
+    let (_, preview) = crate::thumbnails::icon_job(&root, Some(&icons), &uri, 128, 2.0, 0).unwrap();
+    assert!(!preview);
+    let _ = fs::remove_dir_all(&s.root);
+}
+
+#[test]
+fn a_failing_thumbnailer_falls_back_to_the_composed_icon_and_is_remembered() {
+    let s = setup("thumbnailer-fail");
+    let marker = s.root.join("runs");
+    let icons = with_thumbnailer(&s, &format!("echo x >> {}\nexit 1", marker.display()));
+    let root = s.root.join("thumbs");
+    let doc = s.root.join("b.sdoc");
+    fs::write(&doc, "x").unwrap();
+    let uri = format!("file://{}", doc.display());
+    for _ in 0..2 {
+        let (path, preview) =
+            crate::thumbnails::icon_job(&root, Some(&icons), &uri, 128, 2.0, 0).unwrap();
+        assert!(!preview && path.starts_with(s.root.join("cache-thumbs")));
+    }
+    // The failure is on record: the program ran once.
+    assert_eq!(fs::read_to_string(&marker).unwrap().lines().count(), 1);
     let _ = fs::remove_dir_all(&s.root);
 }
 

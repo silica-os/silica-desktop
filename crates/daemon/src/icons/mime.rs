@@ -1,11 +1,10 @@
-//! The shared-mime-info database (names to types, aliases, parents) and the resolution of a
-//! file to its kind or category with the map compiled in `silica.assets`.
+//! The shared-mime-info database (names to types, aliases, parents) and a few magic numbers.
+//! It only finds the app that opens a file and the text of its extension label: a file has no
+//! kind, category or symbol of its own.
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-use silica_assets::{Assets, KeySpace};
 
 /// The parts of shared-mime-info the resolution needs.
 #[derive(Clone, Debug, Default)]
@@ -114,148 +113,6 @@ pub fn sniff(head: &[u8]) -> Option<&'static str> {
     }
 }
 
-/// The category of a type that the map does not know, by the rules of silica-icons.
-pub fn mime_category(mime: &str) -> &'static str {
-    let (major, minor) = mime.split_once('/').unwrap_or((mime, ""));
-    let has = |needles: &[&str]| needles.iter().any(|n| minor.contains(n));
-    match major {
-        "image" | "audio" | "video" | "font" | "model" => "media",
-        "text" if has(&["csv", "json", "xml", "yaml", "calendar", "vcard", "sql"]) => "data",
-        "text"
-            if has(&[
-                "x-c",
-                "rust",
-                "python",
-                "javascript",
-                "java",
-                "go",
-                "script",
-                "css",
-            ]) =>
-        {
-            "code"
-        }
-        "text" => "document",
-        "application" if has(&["json", "xml", "yaml", "toml", "sql", "sqlite", "database"]) => {
-            "data"
-        }
-        "application"
-            if has(&[
-                "zip",
-                "tar",
-                "gzip",
-                "bzip",
-                "xz",
-                "zstd",
-                "rar",
-                "7z",
-                "compressed",
-                "debian",
-                "rpm",
-                "java-archive",
-                "flatpak",
-            ]) =>
-        {
-            "archive"
-        }
-        "application"
-            if has(&[
-                "pdf",
-                "msword",
-                "rtf",
-                "opendocument",
-                "officedocument",
-                "epub",
-                "postscript",
-                "abiword",
-            ]) =>
-        {
-            "document"
-        }
-        "application" if has(&["javascript", "x-shellscript", "x-perl", "x-php", "x-ruby"]) => {
-            "code"
-        }
-        _ => "other",
-    }
-}
-
-/// The category a kind of file belongs to (for the color of a label next to an app icon).
-pub fn kind_category(kind: &str) -> &'static str {
-    match kind {
-        "pdf" | "text" | "document" | "presentation" | "web" => "document",
-        "spreadsheet" => "data",
-        "code" | "executable" => "code",
-        "archive" | "disk-image" => "archive",
-        "image" | "audio" | "video" | "font" => "media",
-        _ => "other",
-    }
-}
-
-/// What the type map says about a file.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Resolved {
-    /// The kind (`pdf`), if the file has one.
-    pub kind: Option<String>,
-    /// The category (`data`): the map's, or the one the type suggests.
-    pub category: String,
-}
-
-fn entry_name<'a>(assets: &'a Assets, space: KeySpace, key: &str) -> Option<&'a str> {
-    Some(assets.entry(assets.lookup(space, key)?)?.name())
-}
-
-/// Resolves a file by the order of the icon format: the type and its parents in the map
-/// (exact, then `major/*`), then the extension, otherwise no kind and the category of the
-/// type. An override of the extension decides the category of a file with no kind.
-pub fn resolve(
-    assets: &Assets,
-    db: &MimeDb,
-    mime: Option<&str>,
-    extension: Option<&str>,
-) -> Resolved {
-    let from_ext = extension.and_then(|e| entry_name(assets, KeySpace::Ext, e));
-    let ext_category = from_ext.and_then(|n| n.strip_prefix("category."));
-    let mut hit: Option<&str> = None;
-    if let Some(mime) = mime {
-        for candidate in db.chain(mime) {
-            let wildcard = candidate
-                .split_once('/')
-                .map(|(major, _)| format!("{major}/*"));
-            hit = entry_name(assets, KeySpace::Mime, &candidate).or_else(|| {
-                wildcard
-                    .as_deref()
-                    .and_then(|w| entry_name(assets, KeySpace::Mime, w))
-            });
-            if hit.is_some() {
-                break;
-            }
-        }
-    }
-    let by_mime = mime.map_or("other", |m| mime_category(db.canonical(m)));
-    let hit = hit.or(from_ext);
-    match hit {
-        Some(name) => match name.strip_prefix("kind.") {
-            Some(kind) => Resolved {
-                kind: Some(kind.to_owned()),
-                category: ext_category
-                    .unwrap_or_else(|| kind_category(kind))
-                    .to_owned(),
-            },
-            None => Resolved {
-                kind: None,
-                category: ext_category
-                    .or_else(|| name.strip_prefix("category."))
-                    .unwrap_or(by_mime)
-                    .to_owned(),
-            },
-        },
-        None => Resolved {
-            kind: None,
-            category: by_mime.to_owned(),
-        },
-    }
-}
-
 /// The directories whose `mime/` folder is searched: `$XDG_DATA_HOME`, `$XDG_DATA_DIRS`.
 pub fn data_dirs(env: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
@@ -349,16 +206,5 @@ mod tests {
         assert_eq!(sniff(b"\x7fELF\x02"), Some("application/x-pie-executable"));
         assert_eq!(sniff(b"#!/bin/sh"), Some("application/x-shellscript"));
         assert_eq!(sniff(b"hello"), None);
-    }
-
-    #[test]
-    fn categories_by_type() {
-        assert_eq!(mime_category("text/csv"), "data");
-        assert_eq!(mime_category("text/plain"), "document");
-        assert_eq!(mime_category("application/zip"), "archive");
-        assert_eq!(mime_category("application/x-blender"), "other");
-        assert_eq!(mime_category("image/x-xcf"), "media");
-        assert_eq!(mime_category("application/pdf"), "document");
-        assert_eq!(kind_category("spreadsheet"), "data");
     }
 }

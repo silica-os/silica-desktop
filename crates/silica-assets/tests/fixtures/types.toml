@@ -1,8 +1,3 @@
 # The type table of the test fixtures.
 [app]
 "dev.frascella.Mail" = "mail"
-
-[uti]
-"com.adobe.pdf" = "kind.pdf"
-"public.plain-text" = "kind.text"
-"public.json" = "category.data"
