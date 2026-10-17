@@ -36,7 +36,7 @@ typedef struct silica_assets silica_assets;
 /* Key spaces for silica_assets_lookup. */
 enum {
   SILICA_SPACE_APP = 0,       /* icon id ("mail") or desktop application id ("dev.frascella.Mail") */
-  SILICA_SPACE_TYPE = 1,      /* file type icon id ("file-pdf") */
+  SILICA_SPACE_TYPE = 1,      /* "file-generic", a kind of file ("kind.pdf") or a category ("category.data") */
   SILICA_SPACE_MIME = 2,      /* MIME type ("application/pdf"), or a wildcard key ("image/star") */
   SILICA_SPACE_UTI = 3,       /* Uniform Type Identifier ("com.adobe.pdf") */
   SILICA_SPACE_ROLE = 4,      /* "folder", "folder.generic", "volume.external", "trash.empty",
@@ -59,7 +59,8 @@ enum {
   SILICA_KIND_FONT = 6,
   SILICA_KIND_SOUND = 7,
   SILICA_KIND_WALLPAPER = 8,
-  SILICA_KIND_ALIAS = 9 /* never returned by lookup: aliases are resolved */
+  SILICA_KIND_ALIAS = 9, /* never returned by lookup: aliases are resolved */
+  SILICA_KIND_FILE_KIND = 10 /* a kind ("kind.pdf") or category ("category.data") of file */
 };
 
 /* Entry flags (silica_entry_info.flags). */
@@ -87,8 +88,9 @@ enum {
   SILICA_LAYER_HAND_MINUTE = 2,
   SILICA_LAYER_HAND_SECOND = 3,
   SILICA_LAYER_CAP = 4,
-  SILICA_LAYER_BACKGROUND = 5, /* reserved */
-  SILICA_LAYER_FOREGROUND = 6  /* reserved */
+  SILICA_LAYER_BACKGROUND = 5, /* "back" of the generic file and folder (SVG) */
+  SILICA_LAYER_FOREGROUND = 6, /* "front" (SVG) */
+  SILICA_LAYER_MIDDLE = 7      /* "middle" of the generic folder (SVG) */
 };
 
 /* Encodings of variant data. */
@@ -124,7 +126,23 @@ enum {
                                      3 bottom-right); rect = (corner x, corner y, fraction of the
                                      icon side from min_size up, fraction below it, one badge
                                      only); size = priority; weight = position in the order */
-  SILICA_SLOT_TYPE_CATEGORY = 7   /* label color of a category: format = category name */
+  SILICA_SLOT_TYPE_CATEGORY = 7,  /* label color of a category: format = category name */
+  SILICA_SLOT_TITLE = 8,          /* display title: format */
+  SILICA_SLOT_LAYER_RULE = 9,     /* unit: role (0 back, 1 middle, 2 front, 3 glyph, 4 symbol,
+                                     5 label); weight: flags (1 tint, 2 only when not empty) */
+  SILICA_SLOT_GLYPH_BOX = 10,     /* rect */
+  SILICA_SLOT_SYMBOL_BAND = 11,   /* min_size pt; format weight name; rect = (scale, highlight, 0, 0) */
+  SILICA_SLOT_APP_ICON_BODY = 12, /* rect */
+  SILICA_SLOT_FILE_LABEL = 13,    /* unit max chars, min_size pt, rect box, font, size in 1/64
+                                     unit, weight, format case, tracking, max_width */
+  SILICA_SLOT_FILE_LABEL_ALONE = 14,
+  SILICA_SLOT_KIND_STYLE = 15,    /* format kind name, font symbol name, color[0] */
+  SILICA_SLOT_FALLBACK_KIND = 16, /* format kind name */
+  SILICA_SLOT_FOLDER_EFFECT = 17, /* color[0] engraving, color[1] highlight (0xRRGGBB00),
+                                     rect = (opacity, highlight opacity, 0, 0), tracking offset */
+  SILICA_SLOT_FOLDER_TINT = 18,   /* rect = (luminance low, high, shade, glow) */
+  SILICA_SLOT_TINT_LABEL = 19,    /* format name, color[0] */
+  SILICA_SLOT_SPECIAL_FOLDER = 20 /* format key (DOCUMENTS), font symbol name */
 };
 
 typedef struct silica_entry_info {

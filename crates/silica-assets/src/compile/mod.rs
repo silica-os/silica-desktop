@@ -46,6 +46,8 @@ pub struct Options {
     pub sounds: Option<PathBuf>,
     /// The MIME / UTI / extension table (default: the one in this crate, `data/types.toml`).
     pub types: Option<PathBuf>,
+    /// The composition rules of the generic file and folder (default: `data/compose.toml`).
+    pub compose: Option<PathBuf>,
     /// Written in the header (default: `silica-assets <crate version>`).
     pub content_version: Option<String>,
 }
@@ -66,6 +68,9 @@ pub struct Report {
 
 /// The type table shipped with the crate.
 pub const DEFAULT_TYPES: &str = include_str!("../../data/types.toml");
+
+/// The composition rules shipped with the crate.
+pub const DEFAULT_COMPOSE: &str = include_str!("../../data/compose.toml");
 
 /// Compiles the sources into the bytes of a `silica.assets`.
 pub fn compile(options: &Options) -> Result<(Vec<u8>, Report), CompileError> {

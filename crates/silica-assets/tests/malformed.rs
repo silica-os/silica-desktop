@@ -325,14 +325,18 @@ fn compiling_broken_sources_is_an_error_not_a_panic() {
     // An SVG that is not an SVG.
     let fixture = common::fixture();
     std::fs::write(
-        fixture.options.icons.join("files/file-pdf/icon.svg"),
+        fixture.options.icons.join("files/file-generic/back.svg"),
         b"<not svg",
     )
     .unwrap();
     assert!(silica_assets::compile::compile(&fixture.options).is_err());
     // A manifest that is not JSON.
     let fixture = common::fixture();
-    std::fs::write(fixture.options.icons.join("files/file-pdf/icon.json"), b"{").unwrap();
+    std::fs::write(
+        fixture.options.icons.join("files/file-generic/icon.json"),
+        b"{",
+    )
+    .unwrap();
     assert!(silica_assets::compile::compile(&fixture.options).is_err());
     // A missing icons folder.
     let mut options = common::fixture().options;

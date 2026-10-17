@@ -294,11 +294,16 @@ xx-large 1024}/<md5 of the URI>.png`, `Thumb::URI` and `Thumb::MTime` text chunk
   no thumbnail (unsupported type, folder, unreadable, or a recorded failure): the client keeps the
   file-type icon. A cached file is reused while its `Thumb::MTime` equals the file's mtime.
 - `Invalidate(as uris)`: forgets the thumbnails of these files in every bucket.
-- Signal `Ready(s uri, u size_px, s path)` after a successful `Thumbnail`.
+- `Icon(s uri, u size_px, d scale, u flags) -> (s path, b preview)`: the icon of a file or folder
+  at exactly `size_px` pixels (`size_px / scale` points wide), composed from the system layers;
+  see [`thumbnails.md`](thumbnails.md). For a file that has a preview (as `Thumbnail`) the preview
+  is returned with `preview` true, unless `flags` has `NO_PREVIEW` (1). ("", false) when nothing can
+  be made (no `silica.assets`, missing file, queue full): the client keeps its own icon.
+- Signal `Ready(s uri, u size_px, s path)` after a successful `Thumbnail` or `Icon`.
 
 Generators: PNG, JPEG, GIF (first frame), WebP, BMP, TIFF (EXIF orientation applied), and the first
-page of a PDF through `pdftoppm` when poppler is installed. Not yet: SVG, video, text, the composed
-folder icon.
+page of a PDF through `pdftoppm` when poppler is installed. Not yet: SVG, video, text previews. The composed
+icons (folders, and files without a preview) are in [`thumbnails.md`](thumbnails.md).
 
 ## Authentication (polkit agent)
 

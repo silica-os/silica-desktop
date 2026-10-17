@@ -1,0 +1,141 @@
+# Composition rules of the test fixtures (a trimmed copy of data/compose.toml).
+
+[file]
+fallback = "unknown"
+layers = [{ role = "back" }, { role = "glyph" }, { role = "front" }]
+
+[file.glyph]
+box = [262, 262, 500, 500]
+
+[file.glyph.symbol]
+sizes = [{ min_size = 128, weight = "light" }, { min_size = 64, weight = "regular" }, { min_size = 16, weight = "semibold" }]
+
+[file.glyph.app_icon]
+body = [303.67, 303.67, 416.67, 416.67]
+
+[file.label]
+font = "Inter"
+size = 111.67
+weight = 500
+tracking = 0
+box = [270.64, 763.7, 482.72, 136.04]
+case = "upper"
+max_chars = 5
+max_width = 482.72
+overflow = "shrink"
+min_size = 32
+
+[file.label_alone]
+font = "Inter"
+size = 175.53
+weight = 900
+tracking = 0
+box = [219.08, 362.8, 585.84, 212.83]
+case = "upper"
+max_chars = 5
+max_width = 585.84
+overflow = "shrink"
+min_size = 32
+
+[file.kinds]
+
+[file.kinds.pdf]
+glyph = "key"
+color = "#e2332b"
+
+[file.kinds.text]
+glyph = "gear"
+color = "#8e8e93"
+
+[file.kinds.spreadsheet]
+glyph = "key"
+color = "#1f9d55"
+
+[file.kinds.code]
+glyph = "key"
+color = "#7a5af8"
+
+[file.kinds.image]
+glyph = "key"
+color = "#2f7cf6"
+
+[file.kinds.unknown]
+glyph = "key"
+color = "#8e8e93"
+
+[file.colors]
+
+[file.colors.document]
+color = "#2f7cf6"
+
+[file.colors.data]
+color = "#1f9d55"
+
+[file.colors.code]
+color = "#ff6a00"
+
+[file.colors.archive]
+color = "#8e8e93"
+
+[file.colors.media]
+color = "#e8336d"
+
+[file.colors.other]
+color = "#636366"
+
+[file.overrides]
+json = "data"
+sketch = "media"
+
+[file.types]
+
+[file.types.mime]
+"application/pdf" = "pdf"
+"text/plain" = "text"
+"text/markdown" = "text"
+"image/*" = "image"
+"text/x-python" = "code"
+
+[file.types.mime."application/json"]
+category = "data"
+
+[file.types.extensions]
+pdf = "pdf"
+txt = "text"
+md = "text"
+py = "code"
+png = "image"
+csv = "spreadsheet"
+
+[folder]
+layers = [{ role = "back", tint = true }, { role = "middle", when = "not-empty" }, { role = "front", tint = true }]
+tint_symbol = true
+
+[folder.symbol]
+box = [354, 434, 316, 316]
+sizes = [{ min_size = 128, weight = "light", scale = 1 }, { min_size = 64, weight = "regular", scale = 1 }, { min_size = 32, weight = "semibold", scale = 1, highlight = false }, { min_size = 16, weight = "semibold", scale = 1.272, highlight = false }]
+
+[folder.effect]
+color = "#1a64c8"
+opacity = 0.78
+highlight = "#ffffff"
+highlight_opacity = 0.5
+offset = 4
+
+[folder.tint]
+luminance = [0.35, 0.85]
+shade = 0.72
+glow = 0.5
+
+[folder.tint.labels]
+red = "#f2382e"
+orange = "#f98a17"
+yellow = "#f5c400"
+green = "#2fb350"
+blue = "#2f7cf6"
+purple = "#a052e0"
+gray = "#8e8e93"
+
+[folder.folders]
+HOME = "key"
+DOCUMENTS = "gear"

@@ -24,12 +24,10 @@ import 'package:silica_ui/silica_ui.dart';
 
 import '../faro/faro.dart' show OuterShadow;
 import '../l10n/l10n.dart';
-import '../system/folder_icons.dart';
-import '../system/folder_style.dart';
 import '../system/glass_profile.dart';
 import '../system/silica_symbol.dart';
 import 'dock.dart' show DockLabel, pressedShade;
-import 'model.dart' show defaultCanvas;
+import 'model.dart' show defaultCanvas, dockIconRevision;
 import 'glass_groups.dart';
 import 'stack_settings.dart';
 
@@ -194,22 +192,13 @@ String fileName(String path) {
   return parts.isEmpty ? path : parts.last;
 }
 
-/// The silica-icons icon of a file or a folder: special folders with their symbol, files
-/// with the silica-icons rules (MIME type, extension, generic file). No badges in the Dock
-/// (icon-format.md).
-IconSource? fileIcon(FileSystemEntity entry) {
-  if (entry is Directory) {
-    // With its colour and symbol (folder_style.dart).
-    final folder = styledFolderIcon(entry.path);
-    if (folder == null) return null;
-    // A folder with something inside is drawn full (symbol and tint on top as before).
-    return FolderSource(
-      folderHasItems(entry.path) ? fullFolder(folder) : folder,
-    );
-  }
-  final file = resolveFileIcon(entry.path);
-  return file == null ? null : FileSource(file);
-}
+/// The icon of a file or a folder: the system composes it (`Thumbnails1.Icon`: kind or handling
+/// app, folder colour and symbol, special folders). No badges in the Dock (icon-format.md).
+IconSource? fileIcon(FileSystemEntity entry) => ServiceSource(
+  Uri.file(entry.path),
+  isFolder: entry is Directory,
+  revision: dockIconRevision,
+);
 
 /// The fan geometry for item `i` (from the bottom): the icon's centre, relative to the centre
 /// of the stack icon in x and to the top of the Dock area in y; its side ([fanIcon]); its

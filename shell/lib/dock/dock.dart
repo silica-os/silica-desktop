@@ -27,7 +27,6 @@ import 'package:flutter/gestures.dart' show kPrimaryButton, kSecondaryButton;
 
 import '../l10n/l10n.dart';
 import '../system/desktop_entries.dart';
-import '../system/folder_style.dart';
 import '../system/glass_profile.dart';
 import '../system/layer_control.dart';
 import '../system/shadow_image.dart';
@@ -92,8 +91,8 @@ class _LiveDockState extends State<LiveDock> {
       try {
         _folderWatches[path] = Directory(path).watch().listen((event) {
           // The folder's or an item's colour or symbol may have changed (an attribute change
-          // is a modify event): read them again.
-          folderStyles.invalidate([path, event.path]);
+          // is a modify event): the icons are asked again.
+          dockIconRevision++;
           _folderRedraw?.cancel();
           _folderRedraw = Timer(const Duration(milliseconds: 150), () {
             if (mounted) setState(() {});

@@ -1,4 +1,4 @@
-//! `silica-assets-compile --icons DIR [--brand DIR] [--wallpapers DIR] [--fonts DIR] [--sounds DIR] [--types FILE]
+//! `silica-assets-compile --icons DIR [--brand DIR] [--wallpapers DIR] [--fonts DIR] [--sounds DIR] [--types FILE] [--compose FILE]
 //! [--version TEXT] --out FILE`: compiles the sources into a `silica.assets`.
 //!
 //! The file is written to a temporary name and renamed over `--out`, so a running session that
@@ -10,7 +10,7 @@ use std::process::ExitCode;
 use silica_assets::compile::{Options, compile};
 
 const USAGE: &str = "usage: silica-assets-compile --icons DIR [--brand DIR] [--wallpapers DIR] [--fonts DIR] \
-[--sounds DIR] [--types FILE] [--version TEXT] --out FILE";
+[--sounds DIR] [--types FILE] [--compose FILE] [--version TEXT] --out FILE";
 
 fn run() -> Result<(), String> {
     let mut options = Options::default();
@@ -25,6 +25,7 @@ fn run() -> Result<(), String> {
             "--fonts" => options.fonts = Some(PathBuf::from(value("--fonts")?)),
             "--sounds" => options.sounds = Some(PathBuf::from(value("--sounds")?)),
             "--types" => options.types = Some(PathBuf::from(value("--types")?)),
+            "--compose" => options.compose = Some(PathBuf::from(value("--compose")?)),
             "--version" => options.content_version = Some(value("--version")?),
             "--out" => out = Some(PathBuf::from(value("--out")?)),
             other => return Err(format!("unknown argument {other}\n{USAGE}")),

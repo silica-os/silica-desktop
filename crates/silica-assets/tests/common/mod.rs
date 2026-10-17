@@ -25,7 +25,7 @@ impl Fixture {
     }
 }
 
-fn copy_tree(from: &Path, to: &Path) {
+pub fn copy_tree(from: &Path, to: &Path) {
     fs::create_dir_all(to).unwrap();
     for entry in fs::read_dir(from).unwrap() {
         let entry = entry.unwrap();
@@ -160,35 +160,34 @@ pub fn fixture() -> Fixture {
     );
 
     let files = icons.join("files");
-    for name in [
-        "file-pdf",
-        "file-text",
-        "file-unknown",
-        "file-generic",
-        "folder",
-        "trash-empty",
-        "volume-external",
-        "stack-close",
+    // The layers of the generic file and folder (each a distinct color, so tests can tell them
+    // apart), and the other file icons as before.
+    for (file, color) in [("back", "#eeeeee"), ("front", "#dddddd")] {
+        write(
+            &files.join(format!("file-generic/{file}.svg")),
+            svg(&rect(170, 60, 684, 904, color)),
+        );
+    }
+    for (file, area, color) in [
+        ("back", (34, 116, 956, 776), "#4497f8"),
+        ("middle", (92, 230, 840, 620), "#ffffff"),
+        ("front", (34, 293, 956, 599), "#82c4fd"),
     ] {
+        write(
+            &files.join(format!("folder-generic/{file}.svg")),
+            svg(&rect(area.0, area.1, area.2, area.3, color)),
+        );
+    }
+    for name in ["trash-empty", "volume-external", "stack-close"] {
         write(
             &files.join(name).join("icon.svg"),
             svg(&rect(170, 60, 684, 904, "#eeeeee")),
         );
-        if name != "file-unknown" {
-            write(
-                &files.join(name).join("icon-dark.svg"),
-                svg(&rect(170, 60, 684, 904, "#333333")),
-            );
-        }
+        write(
+            &files.join(name).join("icon-dark.svg"),
+            svg(&rect(170, 60, 684, 904, "#333333")),
+        );
     }
-    write(
-        &files.join("folder/icon-full.svg"),
-        svg(&rect(40, 132, 944, 760, "#44aaff")),
-    );
-    write(
-        &files.join("folder/icon-full-dark.svg"),
-        svg(&rect(40, 132, 944, 760, "#2266aa")),
-    );
 
     let badges = icons.join("badges");
     for name in ["alias", "unreadable"] {
@@ -205,6 +204,9 @@ pub fn fixture() -> Fixture {
     let symbol = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\">\
                   <path d=\"M3 12L21 12\" stroke=\"currentColor\"/></svg>";
     write(&icons.join("symbols/regular/key.svg"), symbol);
+    write(&icons.join("symbols/regular/gear.svg"), symbol);
+    write(&icons.join("symbols/semibold/key.svg"), symbol);
+    write(&icons.join("symbols/semibold/gear.svg"), symbol);
     write(&icons.join("symbols/light/key.svg"), symbol);
     write(&icons.join("symbols/light/gear.svg"), symbol);
 
@@ -240,6 +242,7 @@ pub fn fixture() -> Fixture {
         fonts: Some(fonts),
         sounds: Some(sounds),
         types: Some(fixtures.join("types.toml")),
+        compose: Some(fixtures.join("compose.toml")),
         content_version: Some("silica-assets test".to_owned()),
     };
     Fixture { dir, options }

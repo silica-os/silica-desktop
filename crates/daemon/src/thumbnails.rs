@@ -6,6 +6,9 @@
 //! with the `Thumb::URI` and `Thumb::MTime` text chunks, and `fail/silica-daemon/` for files that
 //! could not be rendered.
 //!
+//! `Icon` is the second entry point: the icon of a file or folder composed at the exact pixel
+//! size (see [`crate::icons`], docs/thumbnails.md), preferring a real preview for files.
+//!
 //! Generators (v1): raster images (PNG, JPEG, GIF first frame, WebP, BMP, TIFF; EXIF
 //! orientation) and the first page of a PDF, when `pdftoppm` (poppler) is installed. Anything
 //! else, and folders, get an empty path: the client keeps the file-type icon. Rendering runs on
@@ -20,6 +23,7 @@ use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
 
+use crate::icons::Icons;
 use zbus::interface;
 use zbus::object_server::SignalEmitter;
 
@@ -41,6 +45,9 @@ const MAX_SOURCE_BYTES: u64 = 256 * 1024 * 1024;
 
 /// How long `pdftoppm` may take.
 const PDF_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// `Icon` flag: never answer with a preview of the content, always the composed icon.
+pub const ICON_NO_PREVIEW: u32 = 1;
 
 const WORKERS: usize = 3;
 const QUEUE: usize = 128;
@@ -279,10 +286,51 @@ pub fn invalidate(root: &Path, uri: &str) {
     let _ = fs::remove_file(fail_path(root, uri));
 }
 
+/// What a job asks for.
+enum Request {
+    Thumbnail {
+        uri: String,
+        size_px: u32,
+    },
+    Icon {
+        uri: String,
+        size_px: u32,
+        scale: f64,
+        flags: u32,
+    },
+}
+
+type Answer = Option<(PathBuf, bool)>;
+
 struct Job {
-    uri: String,
+    request: Request,
+    reply: async_channel::Sender<Answer>,
+}
+
+/// The icon of `uri`: a preview when the file has one (and it is wanted), else the composed
+/// icon. The flag says which.
+pub(crate) fn icon_job(
+    root: &Path,
+    icons: Option<&Icons>,
+    uri: &str,
     size_px: u32,
-    reply: async_channel::Sender<Option<PathBuf>>,
+    scale: f64,
+    flags: u32,
+) -> Answer {
+    let path = uri_to_path(uri)?;
+    let meta = fs::metadata(&path).ok()?;
+    if meta.is_file()
+        && flags & ICON_NO_PREVIEW == 0
+        && let Some(preview) = thumbnail(root, uri, size_px)
+    {
+        return Some((preview, true));
+    }
+    let pt = if scale.is_finite() && scale >= 0.25 {
+        size_px as f32 / scale as f32
+    } else {
+        size_px as f32
+    };
+    icons?.icon(&path, size_px, pt).map(|p| (p, false))
 }
 
 /// A fixed set of threads that render thumbnails.
@@ -291,12 +339,13 @@ struct Pool {
 }
 
 impl Pool {
-    fn new(root: PathBuf) -> Self {
+    fn new(root: PathBuf, icons: Option<Arc<Icons>>) -> Self {
         let (jobs, queue) = mpsc::sync_channel::<Job>(QUEUE);
         let queue = Arc::new(Mutex::new(queue));
         for n in 0..WORKERS {
             let queue = Arc::clone(&queue);
             let root = root.clone();
+            let icons = icons.clone();
             let _ = std::thread::Builder::new()
                 .name(format!("thumbnails-{n}"))
                 .spawn(move || {
@@ -306,7 +355,17 @@ impl Pool {
                             Err(_) => return,
                         };
                         let Ok(job) = job else { return };
-                        let out = thumbnail(&root, &job.uri, job.size_px);
+                        let out = match &job.request {
+                            Request::Thumbnail { uri, size_px } => {
+                                thumbnail(&root, uri, *size_px).map(|p| (p, true))
+                            }
+                            Request::Icon {
+                                uri,
+                                size_px,
+                                scale,
+                                flags,
+                            } => icon_job(&root, icons.as_deref(), uri, *size_px, *scale, *flags),
+                        };
                         let _ = job.reply.send_blocking(out);
                     }
                 });
@@ -315,14 +374,9 @@ impl Pool {
     }
 
     /// Queues a job; None when the queue is full or the pool is gone.
-    fn submit(&self, uri: &str, size_px: u32) -> Option<async_channel::Receiver<Option<PathBuf>>> {
+    fn submit(&self, request: Request) -> Option<async_channel::Receiver<Answer>> {
         let (reply, answer) = async_channel::bounded(1);
-        let job = Job {
-            uri: uri.to_owned(),
-            size_px,
-            reply,
-        };
-        match self.jobs.try_send(job) {
+        match self.jobs.try_send(Job { request, reply }) {
             Ok(()) => Some(answer),
             Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => None,
         }
@@ -336,13 +390,18 @@ pub struct Thumbnails {
 
 impl Thumbnails {
     pub fn new(root: PathBuf) -> Self {
-        let pool = Pool::new(root.clone());
+        Self::with_icons(root, None)
+    }
+
+    pub fn with_icons(root: PathBuf, icons: Option<Arc<Icons>>) -> Self {
+        let pool = Pool::new(root.clone(), icons);
         Self { root, pool }
     }
 
-    /// The service with the cache of the current user.
+    /// The service with the cache of the current user and the system assets.
     pub fn from_env() -> Self {
-        Self::new(cache_root(&|k| std::env::var(k).ok()))
+        let env = |k: &str| std::env::var(k).ok();
+        Self::with_icons(cache_root(&env), Icons::load(&env).map(Arc::new))
     }
 }
 
@@ -357,15 +416,52 @@ impl Thumbnails {
         size_px: u32,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
     ) -> String {
-        let Some(answer) = self.pool.submit(&uri, size_px) else {
+        let request = Request::Thumbnail {
+            uri: uri.clone(),
+            size_px,
+        };
+        let Some(answer) = self.pool.submit(request) else {
             return String::new();
         };
-        let Ok(Some(path)) = answer.recv().await else {
+        let Ok(Some((path, _))) = answer.recv().await else {
             return String::new();
         };
         let path = path.to_string_lossy().into_owned();
         let _ = Self::ready(&emitter, &uri, size_px, &path).await;
         path
+    }
+
+    /// The icon of a file or folder for `uri` at `size_px` pixels on a display of `scale`
+    /// (the icon side in points is `size_px / scale`: the symbol weight and the extension label
+    /// depend on it). Returns the path of a PNG of exactly `size_px` pixels, composed from the
+    /// system layers (folders: with their colour and symbol; files: the handling app's icon or
+    /// the symbol of their kind, and the extension), or, for a file that has one and unless
+    /// `flags` has `NO_PREVIEW` (1), the preview of its content (a cached thumbnail of up to
+    /// the bucket size) with `true`. "" when nothing can be made (the client keeps its own
+    /// icon). Rendering happens off the bus thread; `Ready` follows a success.
+    async fn icon(
+        &self,
+        uri: String,
+        size_px: u32,
+        scale: f64,
+        flags: u32,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) -> (String, bool) {
+        let request = Request::Icon {
+            uri: uri.clone(),
+            size_px,
+            scale,
+            flags,
+        };
+        let Some(answer) = self.pool.submit(request) else {
+            return (String::new(), false);
+        };
+        let Ok(Some((path, preview))) = answer.recv().await else {
+            return (String::new(), false);
+        };
+        let path = path.to_string_lossy().into_owned();
+        let _ = Self::ready(&emitter, &uri, size_px, &path).await;
+        (path, preview)
     }
 
     /// Forgets the cached thumbnails of these files (after they changed).

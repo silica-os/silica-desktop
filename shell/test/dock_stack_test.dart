@@ -270,10 +270,8 @@ void main() {
     await tester.pumpWidget(dock(StackDisplay.stack));
     await tester.pump();
     final pile = find.byType(PileIcon);
-    if (resolveFileIcon('${dir.path}/a.txt') != null) {
-      expect(pile, findsOneWidget);
-      expect(tester.widget<PileIcon>(pile).sources, hasLength(3));
-    }
+    expect(pile, findsOneWidget);
+    expect(tester.widget<PileIcon>(pile).sources, hasLength(3));
     await tester.pumpWidget(dock(StackDisplay.folder));
     await tester.pump();
     expect(find.byType(PileIcon), findsNothing);
@@ -416,7 +414,7 @@ void main() {
       Widget dock(String folder, StackDisplay display) => Directionality(
         textDirection: TextDirection.ltr,
         child: Dock(
-          items: [Item.app('Stack', command: 'x', folder: folder)],
+          items: [Item.app('Stack', command: folder, folder: folder)],
           onOpenPath: (_) {},
           stackSettingsFor: (_) => StackSettings(display: display),
         ),
