@@ -356,8 +356,15 @@ An app's menus, context menus, pop-up buttons and popovers extend past the windo
   it follows the window's appearance.
 - **Without it** (an app not started with `--multi-window`, tests, another platform) the menu
   is drawn inside the window's overlay and clipped at its edge, as before.
-- Not done: the popover's open scale (its surface and glass appear at once), the menu's fade,
-  and popups for the shell's own layers (the menu bar and Dock menus keep their input regions).
+- **Shell layers** (silica-desktop#222): a menu of a shell layer (Faro's view menu) is a popup
+  of the layer too (`zwlr_layer_surface_v1.get_popup`; the embedder offers popups to a shell
+  whose layers are views of one engine). Ossido draws a layer's glass below the layer's own
+  pixels, so a menu inside the layer would sit under the panel's icons and text; as a popup it
+  is above the layer with its own glass. Only Faro's view menu is converted so far; the menu
+  bar, Dock and Control Center menus draw over transparent parts of their layers and still
+  draw inside them.
+- Not done: the popover's open scale (its surface and glass appear at once) and the menu's
+  fade.
 
 ## Not measured yet
 
