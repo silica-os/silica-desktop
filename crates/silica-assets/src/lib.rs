@@ -16,6 +16,6 @@ pub mod compile;
 
 pub use format::{
     Corner, Encoding, EntryKind, FLAG_HAS_DARK, FLAG_HAS_DYNAMIC, FLAG_TINTABLE, FORMAT, KeySpace,
-    Layer, NONE, SlotKind, State, Theme, Unit,
+    LAYER_TINT, LAYER_WHEN_NOT_EMPTY, Layer, LayerRole, NONE, SlotKind, State, Theme, Unit,
 };
 pub use reader::{Assets, Entry, EntryId, Error, Query, Slot, Variant};

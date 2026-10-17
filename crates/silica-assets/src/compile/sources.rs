@@ -11,7 +11,7 @@ use crate::format::*;
 
 use super::builder::{Builder, SlotSpec, VariantSpec};
 use super::raster::{self, Image};
-use super::{CompileError, DEFAULT_TYPES, Options, Report};
+use super::{CompileError, DEFAULT_COMPOSE, DEFAULT_TYPES, Options, Report};
 
 const THEMES: [(&str, Theme); 6] = [
     ("default", Theme::Default),
@@ -113,6 +113,8 @@ fn color_of(text: Option<&str>) -> u32 {
 }
 
 struct Ctx<'a> {
+    /// (where, symbol name) the manifests refer to; checked against `symbols/` at the end.
+    symbol_refs: Vec<(String, String)>,
     builder: &'a mut Builder,
     reader: &'a mut Reader,
     report: &'a mut Report,
@@ -176,10 +178,24 @@ pub(super) fn compile(options: &Options) -> Result<(Vec<u8>, Report), CompileErr
         .parse()
         .map_err(|e| CompileError::new(format!("types.toml: {e}")))?;
 
+    let compose_text = match &options.compose {
+        Some(path) => fs::read_to_string(path)
+            .map_err(|e| CompileError::new(format!("cannot read {}: {e}", path.display())))?,
+        None => DEFAULT_COMPOSE.to_owned(),
+    };
+    reader.note("compose.toml", compose_text.as_bytes());
+    let compose: Value = serde_json::to_value(
+        compose_text
+            .parse::<toml::Table>()
+            .map_err(|e| CompileError::new(format!("compose.toml: {e}")))?,
+    )
+    .map_err(|e| CompileError::new(format!("compose.toml: {e}")))?;
+
     // The builder needs the hash up front, but the hash is known only after reading: build
     // with a placeholder and patch the header at the end.
     let mut builder = Builder::new(&version, [0; 32]);
     let mut ctx = Ctx {
+        symbol_refs: Vec::new(),
         builder: &mut builder,
         reader: &mut reader,
         report: &mut report,
@@ -194,9 +210,15 @@ pub(super) fn compile(options: &Options) -> Result<(Vec<u8>, Report), CompileErr
         shell_apps.as_deref(),
         &mut app_ids,
     )?;
-    files(&mut ctx, &options.icons.join("files"), &mut type_ids)?;
+    files(
+        &mut ctx,
+        &options.icons.join("files"),
+        &compose,
+        &mut type_ids,
+    )?;
     badges(&mut ctx, &options.icons.join("badges"))?;
     symbols(&mut ctx, &options.icons.join("symbols"))?;
+    check_symbol_refs(&ctx)?;
     if let Some(fonts) = &options.fonts {
         fonts_from(&mut ctx, fonts)?;
     }
@@ -501,6 +523,13 @@ fn file_role(id: &str) -> (KeySpace, String, EntryKind) {
     if id.starts_with("file-") {
         return (KeySpace::Type, id.to_owned(), EntryKind::File);
     }
+    if id == "folder-generic" {
+        return (
+            KeySpace::Role,
+            "folder.generic".to_owned(),
+            EntryKind::Folder,
+        );
+    }
     let kind = if id.starts_with("folder") {
         EntryKind::Folder
     } else if id.starts_with("volume") {
@@ -522,6 +551,7 @@ fn file_role(id: &str) -> (KeySpace, String, EntryKind) {
 fn files(
     ctx: &mut Ctx<'_>,
     dir: &Path,
+    compose: &Value,
     type_ids: &mut BTreeMap<String, u32>,
 ) -> Result<(), CompileError> {
     for name in list(dir)? {
@@ -540,6 +570,21 @@ fn files(
         ctx.builder.register(space, entry)?;
         if space == KeySpace::Type {
             type_ids.insert(entry_name.clone(), entry);
+        }
+        match id.as_str() {
+            "file-generic" => {
+                generic_file(ctx, &icon_dir, &manifest, compose, entry, type_ids)?;
+                ctx.report.files += 1;
+                continue;
+            }
+            "folder-generic" => {
+                generic_folder(ctx, &icon_dir, &manifest, compose, entry)?;
+                ctx.builder.add_alias(KeySpace::Role, "folder", entry)?;
+                ctx.report.aliases += 1;
+                ctx.report.files += 1;
+                continue;
+            }
+            _ => {}
         }
 
         let artwork = |layers: Option<&Value>| -> Option<String> {
@@ -579,6 +624,545 @@ fn files(
         }
         set_flags(ctx, entry, flags);
         ctx.report.files += 1;
+    }
+    Ok(())
+}
+
+/// Every symbol a manifest names must exist (when the sources have symbols at all).
+fn check_symbol_refs(ctx: &Ctx<'_>) -> Result<(), CompileError> {
+    if ctx.report.symbols == 0 {
+        return Ok(());
+    }
+    for (place, name) in &ctx.symbol_refs {
+        for weight in ["light", "regular", "semibold"] {
+            if !ctx
+                .builder
+                .has_key(KeySpace::Symbol, &format!("{weight}/{name}"))
+            {
+                return Err(CompileError::new(format!(
+                    "{place}: no symbol {weight}/{name} in the sources"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+// ------------------------------------------------------------- generic file and folder
+
+fn text_of<'a>(value: &'a Value, key: &str, what: &str) -> Result<&'a str, CompileError> {
+    str_of(value, key).ok_or_else(|| CompileError::new(format!("{what}: no \"{key}\"")))
+}
+
+fn object_of<'a>(
+    value: &'a Value,
+    key: &str,
+    what: &str,
+) -> Result<&'a serde_json::Map<String, Value>, CompileError> {
+    value
+        .get(key)
+        .and_then(Value::as_object)
+        .ok_or_else(|| CompileError::new(format!("{what}: no \"{key}\" object")))
+}
+
+fn rect_strict(value: Option<&Value>, what: &str) -> Result<[f32; 4], CompileError> {
+    let bad = || CompileError::new(format!("{what}: not an array of four numbers"));
+    let array = value.and_then(Value::as_array).ok_or_else(bad)?;
+    if array.len() != 4 {
+        return Err(bad());
+    }
+    let mut out = [0.0f32; 4];
+    for (slot, v) in out.iter_mut().zip(array) {
+        *slot = v.as_f64().ok_or_else(bad)? as f32;
+    }
+    Ok(out)
+}
+
+fn layer_role(name: &str) -> Option<LayerRole> {
+    Some(match name {
+        "back" => LayerRole::Back,
+        "middle" => LayerRole::Middle,
+        "front" => LayerRole::Front,
+        "glyph" => LayerRole::Glyph,
+        "symbol" => LayerRole::Symbol,
+        "label" => LayerRole::Label,
+        _ => return None,
+    })
+}
+
+/// A font size on the 1024 canvas as stored: 1/64 of a unit.
+fn size_q6(value: f64) -> Result<u16, CompileError> {
+    let q = (value * 64.0).round();
+    if !(0.0..=65535.0).contains(&q) {
+        return Err(CompileError::new(format!("font size {value} out of range")));
+    }
+    Ok(q as u16)
+}
+
+/// The stack of a layered icon: the SVG of every stored layer (`back`, `middle`, `front`), a
+/// `LayerRule` slot per step in drawing order, and the rasterized composites (`back + front`
+/// as the normal state, with `middle` as the full state) for readers that draw no layers.
+fn layered(
+    ctx: &mut Ctx<'_>,
+    dir: &Path,
+    manifest: &Value,
+    compose: &Value,
+    entry: u32,
+) -> Result<(), CompileError> {
+    // The files come from silica-icons (`layers` of its manifest, by role); the order, the
+    // tint and the condition from compose.toml.
+    let files = manifest
+        .get("layers")
+        .and_then(Value::as_array)
+        .ok_or_else(|| CompileError::new(format!("{}: no layers", dir.display())))?;
+    let stack = compose
+        .get("layers")
+        .and_then(Value::as_array)
+        .ok_or_else(|| CompileError::new("compose.toml: no layers"))?;
+    let mut images: Vec<(Image, bool)> = Vec::new();
+    let mut seen: Vec<LayerRole> = Vec::new();
+    for layer in stack {
+        let name = text_of(layer, "role", "layer")?;
+        let role = layer_role(name)
+            .ok_or_else(|| CompileError::new(format!("layer role {name:?} is unknown")))?;
+        if seen.contains(&role) {
+            return Err(CompileError::new(format!("layer {name:?} listed twice")));
+        }
+        seen.push(role);
+        let mut flags = 0;
+        if layer.get("tint").and_then(Value::as_bool).unwrap_or(false) {
+            flags |= LAYER_TINT;
+        }
+        match str_of(layer, "when") {
+            None => {}
+            Some("not-empty") => flags |= LAYER_WHEN_NOT_EMPTY,
+            Some(other) => {
+                return Err(CompileError::new(format!(
+                    "layer {name:?}: unknown condition {other:?}"
+                )));
+            }
+        }
+        let stored = match role {
+            LayerRole::Back => Some(Layer::Background),
+            LayerRole::Middle => Some(Layer::Middle),
+            LayerRole::Front => Some(Layer::Foreground),
+            _ => None,
+        };
+        if let Some(stored) = stored {
+            let file = files
+                .iter()
+                .find(|l| str_of(l, "role") == Some(name))
+                .and_then(|l| str_of(l, "file"))
+                .ok_or_else(|| {
+                    CompileError::new(format!("{}: no file for layer {name:?}", dir.display()))
+                })?;
+            let bytes = ctx.reader.read(dir, file)?;
+            let image = raster::image_from_svg(&bytes)
+                .map_err(|e| CompileError::new(format!("{}/{file}: {e}", dir.display())))?;
+            ctx.builder.add_variant(
+                entry,
+                VariantSpec {
+                    theme: Theme::Default,
+                    layer: stored,
+                    encoding: Encoding::Svg,
+                    state: State::Normal,
+                    size_px: 0,
+                    width: 0,
+                    height: 0,
+                    data: bytes,
+                },
+            )?;
+            images.push((image, flags & LAYER_WHEN_NOT_EMPTY != 0));
+        }
+        ctx.builder.add_slot(
+            entry,
+            SlotSpec {
+                kind: Some(SlotKind::LayerRule),
+                unit: role as u8,
+                weight: flags,
+                ..SlotSpec::default()
+            },
+        )?;
+    }
+    // Composites: the stack without the conditional layers (normal), then with them (full,
+    // only when there is a conditional layer).
+    let has_conditional = images.iter().any(|(_, conditional)| *conditional);
+    for (state, with_conditional) in [(State::Normal, false), (State::Full, true)] {
+        if with_conditional && !has_conditional {
+            continue;
+        }
+        let mut canvas: Option<Image> = None;
+        for (image, conditional) in &images {
+            if *conditional && !with_conditional {
+                continue;
+            }
+            match canvas.as_mut() {
+                None => canvas = Some(image.clone()),
+                Some(bottom) => raster::over(bottom, image),
+            }
+        }
+        if let Some(canvas) = canvas {
+            ctx.add_ladder(entry, Theme::Default, Layer::Composite, state, &canvas)?;
+        }
+    }
+    Ok(())
+}
+
+fn symbol_bands(
+    ctx: &mut Ctx<'_>,
+    entry: u32,
+    sizes: &Value,
+    what: &str,
+) -> Result<(), CompileError> {
+    for band in sizes.as_array().into_iter().flatten() {
+        let weight = text_of(band, "weight", what)?;
+        if !matches!(weight, "light" | "regular" | "semibold") {
+            return Err(CompileError::new(format!(
+                "{what}: unknown weight {weight:?}"
+            )));
+        }
+        let highlight = band
+            .get("highlight")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        ctx.builder.add_slot(
+            entry,
+            SlotSpec {
+                kind: Some(SlotKind::SymbolBand),
+                min_size: num(band.get("min_size"), 0.0) as u16,
+                rect: [
+                    num(band.get("scale"), 1.0) as f32,
+                    if highlight { 1.0 } else { 0.0 },
+                    0.0,
+                    0.0,
+                ],
+                format: Some(weight.to_owned()),
+                ..SlotSpec::default()
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn label_slot(
+    ctx: &mut Ctx<'_>,
+    entry: u32,
+    kind: SlotKind,
+    label: &Value,
+    what: &str,
+) -> Result<(), CompileError> {
+    if str_of(label, "overflow").unwrap_or("shrink") != "shrink" {
+        return Err(CompileError::new(format!(
+            "{what}: only overflow \"shrink\" exists"
+        )));
+    }
+    ctx.builder.add_slot(
+        entry,
+        SlotSpec {
+            kind: Some(kind),
+            unit: num(label.get("max_chars"), 0.0) as u8,
+            min_size: num(label.get("min_size"), 0.0) as u16,
+            rect: rect_strict(label.get("box"), &format!("{what}.box"))?,
+            font: Some(text_of(label, "font", what)?.to_owned()),
+            size: size_q6(num(label.get("size"), 0.0))?,
+            weight: num(label.get("weight"), 400.0) as u16,
+            format: Some(str_of(label, "case").unwrap_or("upper").to_owned()),
+            tracking: num(label.get("tracking"), 0.0) as f32,
+            max_width: num(label.get("max_width"), 0.0) as f32,
+            ..SlotSpec::default()
+        },
+    )
+}
+
+fn kind_target(
+    value: &Value,
+    what: &str,
+    ids: &BTreeMap<String, u32>,
+) -> Result<u32, CompileError> {
+    let name = match (
+        value.as_str(),
+        value.get("category").and_then(Value::as_str),
+    ) {
+        (Some(kind), _) => format!("kind.{kind}"),
+        (None, Some(category)) => format!("category.{category}"),
+        _ => {
+            return Err(CompileError::new(format!(
+                "{what}: a kind or {{\"category\"}}"
+            )));
+        }
+    };
+    ids.get(&name)
+        .copied()
+        .ok_or_else(|| CompileError::new(format!("{what}: no kind or category {name:?}")))
+}
+
+/// `file-generic`: back and front layers, the glyph box, the label, the kinds, the categories
+/// and the type map (MIME, extension, override) of silica-icons `files/file-generic/icon.json`.
+fn generic_file(
+    ctx: &mut Ctx<'_>,
+    dir: &Path,
+    manifest: &Value,
+    compose: &Value,
+    entry: u32,
+    type_ids: &mut BTreeMap<String, u32>,
+) -> Result<(), CompileError> {
+    let dynamic = compose
+        .get("file")
+        .ok_or_else(|| CompileError::new("compose.toml: no [file]"))?;
+    ctx.builder.set_flags(entry, FLAG_HAS_DYNAMIC);
+    layered(ctx, dir, manifest, dynamic, entry)?;
+    let glyph = dynamic
+        .get("glyph")
+        .ok_or_else(|| CompileError::new("file-generic: no dynamic.glyph"))?;
+    ctx.builder.add_slot(
+        entry,
+        SlotSpec {
+            kind: Some(SlotKind::GlyphBox),
+            rect: rect_strict(glyph.get("box"), "glyph.box")?,
+            ..SlotSpec::default()
+        },
+    )?;
+    if let Some(symbol) = glyph.get("symbol") {
+        symbol_bands(
+            ctx,
+            entry,
+            symbol.get("sizes").unwrap_or(&Value::Null),
+            "glyph.symbol",
+        )?;
+    }
+    if let Some(app) = glyph.get("app_icon") {
+        ctx.builder.add_slot(
+            entry,
+            SlotSpec {
+                kind: Some(SlotKind::AppIconBody),
+                rect: rect_strict(app.get("body"), "glyph.app_icon.body")?,
+                ..SlotSpec::default()
+            },
+        )?;
+    }
+    if let Some(label) = dynamic.get("label") {
+        label_slot(ctx, entry, SlotKind::FileLabel, label, "label")?;
+    }
+    if let Some(label) = dynamic.get("label_alone") {
+        label_slot(ctx, entry, SlotKind::FileLabelAlone, label, "label_alone")?;
+    }
+
+    // Kinds and categories are entries of their own, in the TYPE key space.
+    let mut files_ids: BTreeMap<String, u32> = BTreeMap::new();
+    for (name, kind) in object_of(dynamic, "kinds", "file-generic")? {
+        let id = ctx.builder.add_entry(
+            &format!("kind.{name}"),
+            EntryKind::FileKind,
+            FLAG_HAS_DYNAMIC,
+        );
+        ctx.builder.register(KeySpace::Type, id)?;
+        let color = color_of(str_of(kind, "color"));
+        ctx.builder.add_slot(
+            id,
+            SlotSpec {
+                kind: Some(SlotKind::KindStyle),
+                font: Some(text_of(kind, "glyph", &format!("kind {name}"))?.to_owned()),
+                color: [color, color],
+                format: Some(name.clone()),
+                ..SlotSpec::default()
+            },
+        )?;
+        ctx.symbol_refs.push((
+            format!("kind {name}"),
+            str_of(kind, "glyph").unwrap_or("").to_owned(),
+        ));
+        files_ids.insert(format!("kind.{name}"), id);
+    }
+    for (name, category) in object_of(dynamic, "colors", "file-generic")? {
+        let id = ctx.builder.add_entry(
+            &format!("category.{name}"),
+            EntryKind::FileKind,
+            FLAG_HAS_DYNAMIC,
+        );
+        ctx.builder.register(KeySpace::Type, id)?;
+        let color = color_of(str_of(category, "color"));
+        ctx.builder.add_slot(
+            id,
+            SlotSpec {
+                kind: Some(SlotKind::TypeCategory),
+                color: [color, color],
+                format: Some(name.clone()),
+                ..SlotSpec::default()
+            },
+        )?;
+        files_ids.insert(format!("category.{name}"), id);
+    }
+    if let Some(fallback) = str_of(dynamic, "fallback") {
+        if !files_ids.contains_key(&format!("kind.{fallback}")) {
+            return Err(CompileError::new(format!(
+                "fallback kind {fallback:?} does not exist"
+            )));
+        }
+        ctx.builder.add_slot(
+            entry,
+            SlotSpec {
+                kind: Some(SlotKind::FallbackKind),
+                format: Some(fallback.to_owned()),
+                ..SlotSpec::default()
+            },
+        )?;
+    }
+
+    let types = object_of(dynamic, "types", "file-generic")?;
+    if let Some(mime) = types.get("mime").and_then(Value::as_object) {
+        for (key, value) in mime {
+            let target = kind_target(value, &format!("types.mime {key}"), &files_ids)?;
+            ctx.builder.add_alias(KeySpace::Mime, key, target)?;
+            ctx.report.aliases += 1;
+        }
+    }
+    if let Some(extensions) = types.get("extensions").and_then(Value::as_object) {
+        for (key, value) in extensions {
+            let target = kind_target(value, &format!("types.extensions {key}"), &files_ids)?;
+            ctx.builder.add_alias(KeySpace::Ext, key, target)?;
+            ctx.report.aliases += 1;
+        }
+    }
+    // An override gives the category of an extension that has no kind.
+    if let Some(overrides) = dynamic.get("overrides").and_then(Value::as_object) {
+        for (key, value) in overrides {
+            let name = value.as_str().ok_or_else(|| {
+                CompileError::new(format!("overrides {key}: not a category name"))
+            })?;
+            let target = files_ids
+                .get(&format!("category.{name}"))
+                .copied()
+                .ok_or_else(|| {
+                    CompileError::new(format!("overrides {key}: no category {name:?}"))
+                })?;
+            ctx.builder
+                .add_alias(KeySpace::Ext, key, target)
+                .map_err(|e| {
+                    CompileError::new(format!("overrides {key}: also a kind extension ({e})"))
+                })?;
+            ctx.report.aliases += 1;
+        }
+    }
+    type_ids.extend(files_ids);
+    Ok(())
+}
+
+/// `folder-generic`: back, middle and front, the symbol box and bands, the engraving, the tint
+/// ramp and its named colors, and the special folders.
+fn generic_folder(
+    ctx: &mut Ctx<'_>,
+    dir: &Path,
+    manifest: &Value,
+    compose: &Value,
+    entry: u32,
+) -> Result<(), CompileError> {
+    let dynamic = compose
+        .get("folder")
+        .ok_or_else(|| CompileError::new("compose.toml: no [folder]"))?;
+    ctx.builder
+        .set_flags(entry, FLAG_HAS_DYNAMIC | FLAG_TINTABLE);
+    layered(ctx, dir, manifest, dynamic, entry)?;
+    let symbol = dynamic
+        .get("symbol")
+        .ok_or_else(|| CompileError::new("folder-generic: no dynamic.symbol"))?;
+    ctx.builder.add_slot(
+        entry,
+        SlotSpec {
+            kind: Some(SlotKind::FolderEmblem),
+            rect: rect_strict(symbol.get("box"), "symbol.box")?,
+            ..SlotSpec::default()
+        },
+    )?;
+    symbol_bands(
+        ctx,
+        entry,
+        symbol.get("sizes").unwrap_or(&Value::Null),
+        "symbol",
+    )?;
+    // The symbol step of the stack, after the layers.
+    ctx.builder.add_slot(
+        entry,
+        SlotSpec {
+            kind: Some(SlotKind::LayerRule),
+            unit: LayerRole::Symbol as u8,
+            weight: if dynamic
+                .get("tint_symbol")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                LAYER_TINT
+            } else {
+                0
+            },
+            ..SlotSpec::default()
+        },
+    )?;
+    if let Some(effect) = dynamic.get("effect") {
+        let color = color_of(str_of(effect, "color")) & 0xFFFF_FF00;
+        let highlight = color_of(str_of(effect, "highlight")) & 0xFFFF_FF00;
+        ctx.builder.add_slot(
+            entry,
+            SlotSpec {
+                kind: Some(SlotKind::FolderEffect),
+                rect: [
+                    num(effect.get("opacity"), 1.0) as f32,
+                    num(effect.get("highlight_opacity"), 0.0) as f32,
+                    0.0,
+                    0.0,
+                ],
+                color: [color, highlight],
+                tracking: num(effect.get("offset"), 0.0) as f32,
+                ..SlotSpec::default()
+            },
+        )?;
+    }
+    if let Some(tint) = dynamic.get("tint") {
+        let range = rect_of(tint.get("luminance"));
+        ctx.builder.add_slot(
+            entry,
+            SlotSpec {
+                kind: Some(SlotKind::FolderTint),
+                rect: [
+                    range[0],
+                    range[1],
+                    num(tint.get("shade"), 1.0) as f32,
+                    num(tint.get("glow"), 0.0) as f32,
+                ],
+                ..SlotSpec::default()
+            },
+        )?;
+        if let Some(labels) = tint.get("labels").and_then(Value::as_object) {
+            for (name, value) in labels {
+                let color = color_of(value.as_str());
+                ctx.builder.add_slot(
+                    entry,
+                    SlotSpec {
+                        kind: Some(SlotKind::TintLabel),
+                        color: [color, color],
+                        format: Some(name.clone()),
+                        ..SlotSpec::default()
+                    },
+                )?;
+            }
+        }
+    }
+    if let Some(folders) = dynamic.get("folders").and_then(Value::as_object) {
+        for (key, symbol) in folders {
+            let name = symbol
+                .as_str()
+                .ok_or_else(|| CompileError::new(format!("folders {key}: not a symbol name")))?;
+            ctx.symbol_refs
+                .push((format!("folder {key}"), name.to_owned()));
+            ctx.builder.add_slot(
+                entry,
+                SlotSpec {
+                    kind: Some(SlotKind::SpecialFolder),
+                    font: Some(name.to_owned()),
+                    format: Some(key.clone()),
+                    ..SlotSpec::default()
+                },
+            )?;
+        }
     }
     Ok(())
 }
@@ -906,9 +1490,7 @@ fn aliases(
 ) -> Result<(), CompileError> {
     for (table, space, targets) in [
         ("app", KeySpace::App, app_ids),
-        ("mime", KeySpace::Mime, type_ids),
         ("uti", KeySpace::Uti, type_ids),
-        ("ext", KeySpace::Ext, type_ids),
     ] {
         let Some(map) = types.get(table).and_then(toml::Value::as_table) else {
             continue;

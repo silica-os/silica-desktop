@@ -94,6 +94,9 @@ byte_enum! {
         Wallpaper = 8,
         /// A key that points to another entry (`alias_of`): MIME, UTI, extension and role names.
         Alias = 9,
+        /// A kind of file (`kind.pdf`: a symbol and a color) or a category of files
+        /// (`category.data`: a color) of the generic file. No images.
+        FileKind = 10,
     }
 }
 
@@ -118,8 +121,12 @@ byte_enum! {
         HandMinute = 2,
         HandSecond = 3,
         Cap = 4,
+        /// The back layer of a layered icon (generic file and folder: `back`).
         Background = 5,
+        /// The front layer of a layered icon (generic file and folder: `front`).
         Foreground = 6,
+        /// The middle layer of the generic folder (the sheet that shows when it has items).
+        Middle = 7,
     }
 }
 
@@ -168,6 +175,53 @@ byte_enum! {
         TypeCategory = 7,
         /// The display title of an entry (`format` is the title): wallpapers.
         Title = 8,
+        /// One step of the stack of a layered icon, in drawing order (`unit` is the
+        /// [`LayerRole`], `weight` the `LAYER_*` flags).
+        LayerRule = 9,
+        /// The glyph box of the generic file (`rect`).
+        GlyphBox = 10,
+        /// A band of symbol sizes: from `min_size` pt, `format` is the weight name (`light`,
+        /// `regular`, `semibold`), `rect` = (scale, highlight 0 or 1, 0, 0).
+        SymbolBand = 11,
+        /// Where the body of an app icon goes when it replaces the symbol (`rect`).
+        AppIconBody = 12,
+        /// The extension label next to a glyph: `unit` max characters, `min_size` smallest
+        /// icon side in pt, `rect` box, `font` family, `size` in 1/64 of a canvas unit,
+        /// `weight`, `format` the case, `tracking`, `max_width`.
+        FileLabel = 13,
+        /// The extension label alone (no glyph): same fields as [`SlotKind::FileLabel`].
+        FileLabelAlone = 14,
+        /// A kind of file, on a `FileKind` entry: `format` the kind name, `font` the symbol
+        /// name, `color[0]` its color.
+        KindStyle = 15,
+        /// The kind of a file with no kind and no usable extension (`format` is the kind
+        /// name), on the generic file.
+        FallbackKind = 16,
+        /// The engraving of the folder symbol: `color[0]` the color, `color[1]` the highlight
+        /// (both `0xRRGGBB00`), `rect` = (opacity, highlight opacity, 0, 0), `tracking` the
+        /// offset on the 1024 canvas.
+        FolderEffect = 17,
+        /// The tint ramp of the folder: `rect` = (luminance low, luminance high, shade, glow).
+        FolderTint = 18,
+        /// A named tint color of the folder (`format` the name, `color[0]` the color).
+        TintLabel = 19,
+        /// A special folder (`format` the key: `DOCUMENTS`, `HOME`...) and its symbol (`font`).
+        SpecialFolder = 20,
+    }
+}
+
+byte_enum! {
+    /// The `unit` of a [`SlotKind::LayerRule`]: what is drawn at that step.
+    LayerRole: u8 {
+        Back = 0,
+        Middle = 1,
+        Front = 2,
+        /// The glyph of the generic file: a symbol or an app icon.
+        Glyph = 3,
+        /// The engraved symbol of the generic folder.
+        Symbol = 4,
+        /// The extension label of the generic file.
+        Label = 5,
     }
 }
 
@@ -189,6 +243,11 @@ byte_enum! {
         BottomRight = 3,
     }
 }
+
+/// `LayerRule` flag: the step goes through the tint ramp of the folder.
+pub const LAYER_TINT: u16 = 1;
+/// `LayerRule` flag: the step is drawn only when the folder has at least one item.
+pub const LAYER_WHEN_NOT_EMPTY: u16 = 2;
 
 /// Entry flag: the entry has dynamic slots.
 pub const FLAG_HAS_DYNAMIC: u16 = 1;

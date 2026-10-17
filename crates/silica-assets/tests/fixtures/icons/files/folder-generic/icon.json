@@ -1,0 +1,26 @@
+{
+  "format": 1,
+  "id": "folder-generic",
+  "name": "folder generic",
+  "kind": "file",
+  "layers": [
+    {
+      "role": "back",
+      "file": "back.svg"
+    },
+    {
+      "role": "middle",
+      "file": "middle.svg"
+    },
+    {
+      "role": "front",
+      "file": "front.svg"
+    }
+  ],
+  "content_area": [
+    34,
+    116,
+    956,
+    776
+  ]
+}

@@ -1,46 +1,22 @@
 {
   "format": 1,
   "id": "file-generic",
-  "name": "file-generic",
+  "name": "file generic",
   "kind": "file",
   "layers": [
     {
-      "role": "artwork",
-      "file": "icon.svg"
+      "role": "back",
+      "file": "back.svg"
+    },
+    {
+      "role": "front",
+      "file": "front.svg"
     }
   ],
-  "variants": {
-    "dark": {
-      "artwork": "icon-dark.svg"
-    }
-  },
-  "dynamic": {
-    "type": "file-label",
-    "label": {
-      "font": "Inter",
-      "size": 175.53,
-      "weight": 900,
-      "tracking": 0,
-      "box": [
-        219.08,
-        362.8,
-        585.84,
-        212.83
-      ],
-      "case": "upper",
-      "max_chars": 5,
-      "max_width": 585.84,
-      "overflow": "shrink"
-    },
-    "colors": {
-      "document": {
-        "color": "#2f7cf6",
-        "dark_color": "#5aa0ff"
-      },
-      "data": {
-        "color": "#1f9d55",
-        "dark_color": "#3fd07f"
-      }
-    }
-  }
+  "content_area": [
+    170,
+    60,
+    684,
+    904
+  ]
 }

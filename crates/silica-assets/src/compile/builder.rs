@@ -100,6 +100,13 @@ impl Builder {
         (self.entries.len() - 1) as u32
     }
 
+    /// Whether `key` is registered in `space`.
+    pub fn has_key(&self, space: KeySpace, key: &str) -> bool {
+        self.spaces
+            .get(space as usize)
+            .is_some_and(|table| table.contains_key(key))
+    }
+
     pub fn set_flags(&mut self, entry: u32, flags: u16) {
         if let Some(rec) = self.entries.get_mut(entry as usize) {
             rec.flags = flags;

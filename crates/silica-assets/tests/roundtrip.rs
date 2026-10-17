@@ -30,17 +30,22 @@ fn every_key_is_found_and_misses_are_rejected() {
         (KeySpace::App, "clock", "clock"),
         (KeySpace::App, "calendar", "calendar"),
         (KeySpace::App, "dev.frascella.Mail", "mail"),
-        (KeySpace::Type, "file-pdf", "file-pdf"),
+        (KeySpace::Type, "kind.pdf", "kind.pdf"),
+        (KeySpace::Type, "category.data", "category.data"),
         (KeySpace::Type, "file-generic", "file-generic"),
-        (KeySpace::Mime, "application/pdf", "file-pdf"),
-        (KeySpace::Mime, "text/markdown", "file-text"),
-        (KeySpace::Mime, "image/*", "file-unknown"),
-        (KeySpace::Mime, "application/json", "file-generic"),
-        (KeySpace::Uti, "com.adobe.pdf", "file-pdf"),
-        (KeySpace::Uti, "public.plain-text", "file-text"),
-        (KeySpace::Ext, "pdf", "file-pdf"),
-        (KeySpace::Ext, "md", "file-text"),
-        (KeySpace::Role, "folder", "folder"),
+        (KeySpace::Mime, "application/pdf", "kind.pdf"),
+        (KeySpace::Mime, "text/markdown", "kind.text"),
+        (KeySpace::Mime, "image/*", "kind.image"),
+        (KeySpace::Mime, "application/json", "category.data"),
+        (KeySpace::Uti, "com.adobe.pdf", "kind.pdf"),
+        (KeySpace::Uti, "public.plain-text", "kind.text"),
+        (KeySpace::Uti, "public.json", "category.data"),
+        (KeySpace::Ext, "pdf", "kind.pdf"),
+        (KeySpace::Ext, "json", "category.data"),
+        (KeySpace::Ext, "sketch", "category.media"),
+        (KeySpace::Ext, "md", "kind.text"),
+        (KeySpace::Role, "folder", "folder.generic"),
+        (KeySpace::Role, "folder.generic", "folder.generic"),
         (KeySpace::Role, "trash.empty", "trash.empty"),
         (KeySpace::Role, "volume.external", "volume.external"),
         (KeySpace::Role, "dock.stack-close", "dock.stack-close"),
@@ -75,8 +80,9 @@ fn every_key_is_found_and_misses_are_rejected() {
         (KeySpace::Uti, "application/pdf"),
         (KeySpace::Ext, ".pdf"),
         (KeySpace::Ext, "PDF"),
-        (KeySpace::Role, "folder.generic"),
         (KeySpace::Role, "trash.full"),
+        (KeySpace::Type, "kind.nothing"),
+        (KeySpace::Ext, "docx"),
         (KeySpace::Symbol, "bold/key"),
         (KeySpace::Symbol, "key"),
         (KeySpace::Font, "Inter"),
@@ -102,17 +108,17 @@ fn every_key_is_found_and_misses_are_rejected() {
 fn aliases_and_entries_describe_themselves() {
     let fixture = fixture();
     let (assets, _) = open(&fixture);
-    let pdf = assets.lookup(KeySpace::Type, "file-pdf").unwrap();
+    let pdf = assets.lookup(KeySpace::Type, "kind.pdf").unwrap();
     assert_eq!(assets.lookup(KeySpace::Mime, "application/pdf"), Some(pdf));
     assert_eq!(assets.lookup(KeySpace::Ext, "pdf"), Some(pdf));
     assert_eq!(assets.lookup(KeySpace::Uti, "com.adobe.pdf"), Some(pdf));
-    assert_eq!(assets.entry(pdf).unwrap().kind(), EntryKind::File);
+    assert_eq!(assets.entry(pdf).unwrap().kind(), EntryKind::FileKind);
     // The raw alias entries exist in the file with `alias_of` set.
     let aliases = assets
         .entries()
         .filter(|e| e.kind() == EntryKind::Alias)
         .count();
-    assert_eq!(aliases, 11);
+    assert_eq!(aliases, 19);
     for alias in assets.entries().filter(|e| e.kind() == EntryKind::Alias) {
         let target = assets.entry(alias.alias_of().unwrap()).unwrap();
         assert_ne!(target.kind(), EntryKind::Alias);
@@ -234,7 +240,8 @@ fn variant_pick_by_requested_side() {
         side: 128,
     };
     let v = assets.pick(folder, full).unwrap();
-    assert_eq!((v.state, v.theme), (State::Full, Theme::Dark));
+    // No dark layers: the default theme answers.
+    assert_eq!((v.state, v.theme), (State::Full, Theme::Default));
 
     // A wallpaper: light 128 wide and a 4 wide preview, dark 64 wide; 100 asks for the larger one.
     let wallpaper = assets.lookup(KeySpace::Wallpaper, "silica").unwrap();
@@ -411,23 +418,139 @@ fn blobs_slots_and_dynamic_layers() {
     assert_eq!(day.color, [0xFFFFFFFF, 0xFFFFFFFF]);
     assert!(calendar.slot(2).is_none());
 
-    // Generic file label and category colors.
+    // Generic file: the stack, the glyph box, the labels and the fallback.
     let generic = assets
         .entry(assets.lookup(KeySpace::Type, "file-generic").unwrap())
         .unwrap();
-    let label = generic.slot(0).unwrap();
-    assert_eq!(
-        (label.kind, label.unit, label.format),
-        (SlotKind::TypeLabel, 5, Some("upper"))
-    );
-    let categories: Vec<_> = generic
+    let rules: Vec<_> = generic
         .slots()
-        .filter(|s| s.kind == SlotKind::TypeCategory)
+        .filter(|s| s.kind == SlotKind::LayerRule)
+        .map(|s| (s.unit, s.weight))
         .collect();
-    assert_eq!(categories.len(), 2);
-    assert_eq!(categories[0].format, Some("data"));
-    assert_eq!(categories[1].format, Some("document"));
-    assert_eq!(categories[1].color, [0x2F7CF6FF, 0x5AA0FFFF]);
+    assert_eq!(
+        rules,
+        [
+            (LayerRole::Back as u8, 0),
+            (LayerRole::Glyph as u8, 0),
+            (LayerRole::Front as u8, 0)
+        ]
+    );
+    let of_kind = |kind| generic.slots().find(|s| s.kind == kind).unwrap();
+    assert_eq!(
+        of_kind(SlotKind::GlyphBox).rect,
+        [262.0, 262.0, 500.0, 500.0]
+    );
+    assert_eq!(
+        of_kind(SlotKind::AppIconBody).rect,
+        [303.67, 303.67, 416.67, 416.67]
+    );
+    let label = of_kind(SlotKind::FileLabel);
+    assert_eq!(
+        (label.unit, label.min_size, label.format),
+        (5, 32, Some("upper"))
+    );
+    assert_eq!((label.font, label.weight), (Some("Inter"), 500));
+    // 111.67 in 1/64 units.
+    assert_eq!(label.size, 7147);
+    assert_eq!(label.rect, [270.64, 763.7, 482.72, 136.04]);
+    assert_eq!(label.max_width, 482.72);
+    let alone = of_kind(SlotKind::FileLabelAlone);
+    assert_eq!((alone.weight, alone.size), (900, 11234));
+    assert_eq!(of_kind(SlotKind::FallbackKind).format, Some("unknown"));
+    let bands: Vec<_> = generic
+        .slots()
+        .filter(|s| s.kind == SlotKind::SymbolBand)
+        .map(|s| (s.min_size, s.format.unwrap_or("")))
+        .collect();
+    assert_eq!(bands, [(128, "light"), (64, "regular"), (16, "semibold")]);
+    // Kinds and categories are entries of their own.
+    let pdf = assets
+        .entry(assets.lookup(KeySpace::Type, "kind.pdf").unwrap())
+        .unwrap();
+    let style = pdf.slot(0).unwrap();
+    assert_eq!(
+        (style.kind, style.font, style.format, style.color[0]),
+        (SlotKind::KindStyle, Some("key"), Some("pdf"), 0xE2332BFF)
+    );
+    let data = assets
+        .entry(assets.lookup(KeySpace::Type, "category.data").unwrap())
+        .unwrap();
+    let category = data.slot(0).unwrap();
+    assert_eq!(
+        (category.kind, category.format, category.color[0]),
+        (SlotKind::TypeCategory, Some("data"), 0x1F9D55FF)
+    );
+
+    // Generic folder: stack with conditional middle and tint flags, symbol, effect, tint ramp.
+    let folder = assets
+        .entry(assets.lookup(KeySpace::Role, "folder.generic").unwrap())
+        .unwrap();
+    let rules: Vec<_> = folder
+        .slots()
+        .filter(|s| s.kind == SlotKind::LayerRule)
+        .map(|s| (s.unit, s.weight))
+        .collect();
+    assert_eq!(
+        rules,
+        [
+            (LayerRole::Back as u8, LAYER_TINT),
+            (LayerRole::Middle as u8, LAYER_WHEN_NOT_EMPTY),
+            (LayerRole::Front as u8, LAYER_TINT),
+            (LayerRole::Symbol as u8, LAYER_TINT),
+        ]
+    );
+    let of_kind = |kind| folder.slots().find(|s| s.kind == kind).unwrap();
+    assert_eq!(
+        of_kind(SlotKind::FolderEmblem).rect,
+        [354.0, 434.0, 316.0, 316.0]
+    );
+    let effect = of_kind(SlotKind::FolderEffect);
+    assert_eq!(effect.color, [0x1A64C800, 0xFFFFFF00]);
+    assert_eq!(
+        (effect.rect[0], effect.rect[1], effect.tracking),
+        (0.78, 0.5, 4.0)
+    );
+    assert_eq!(of_kind(SlotKind::FolderTint).rect, [0.35, 0.85, 0.72, 0.5]);
+    let bands: Vec<_> = folder
+        .slots()
+        .filter(|s| s.kind == SlotKind::SymbolBand)
+        .map(|s| (s.min_size, s.format.unwrap_or(""), s.rect[0], s.rect[1]))
+        .collect();
+    assert_eq!(
+        bands,
+        [
+            (128, "light", 1.0, 1.0),
+            (64, "regular", 1.0, 1.0),
+            (32, "semibold", 1.0, 0.0),
+            (16, "semibold", 1.272, 0.0)
+        ]
+    );
+    let blue = folder
+        .slots()
+        .find(|s| s.kind == SlotKind::TintLabel && s.format == Some("blue"))
+        .unwrap();
+    assert_eq!(blue.color[0], 0x2F7CF6FF);
+    let documents = folder
+        .slots()
+        .find(|s| s.kind == SlotKind::SpecialFolder && s.format == Some("DOCUMENTS"))
+        .unwrap();
+    assert_eq!(documents.font, Some("gear"));
+
+    // The layers are stored as SVG (back, middle, front), the composites as images.
+    let svg_layers: Vec<_> = folder
+        .variants()
+        .filter(|v| v.encoding == Encoding::Svg)
+        .map(|v| v.layer)
+        .collect();
+    assert_eq!(
+        svg_layers,
+        [Layer::Background, Layer::Middle, Layer::Foreground]
+    );
+    let mut normal = Query::composite(Theme::Default, 64);
+    let empty = assets.pick(folder.id(), normal).unwrap();
+    normal.state = State::Full;
+    let full = assets.pick(folder.id(), normal).unwrap();
+    assert_ne!(empty.data, full.data);
 
     // Badge placement.
     let alias = assets
@@ -467,52 +590,116 @@ fn compilation_is_deterministic() {
 }
 
 #[test]
-fn a_type_table_naming_a_missing_icon_is_an_error() {
+fn a_type_table_naming_a_missing_kind_is_an_error() {
     let fixture = fixture();
     let table = fixture.root().join("bad-types.toml");
-    std::fs::write(
-        &table,
-        "[mime]\n\"application/x-nothing\" = \"file-nothing\"\n",
-    )
-    .unwrap();
+    std::fs::write(&table, "[uti]\n\"public.nothing\" = \"kind.nothing\"\n").unwrap();
     let mut options = fixture.options.clone();
     options.types = Some(table);
     let error = silica_assets::compile::compile(&options).err().unwrap();
-    assert!(error.to_string().contains("file-nothing"), "{error}");
+    assert!(error.to_string().contains("kind.nothing"), "{error}");
+}
+
+fn edit_compose(
+    fixture: &mut common::Fixture,
+    edit: impl FnOnce(&mut serde_json::Value),
+) -> String {
+    let path = fixture
+        .options
+        .types
+        .clone()
+        .unwrap()
+        .with_file_name("compose.toml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut json = serde_json::to_value(text.parse::<toml::Table>().unwrap()).unwrap();
+    edit(&mut json);
+    let table: toml::Table = serde_json::from_value(json).unwrap();
+    let out = fixture.root().join("edited-compose.toml");
+    std::fs::write(&out, toml::to_string(&table).unwrap()).unwrap();
+    fixture.options.compose = Some(out);
+    silica_assets::compile::compile(&fixture.options)
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default()
 }
 
 #[test]
-fn the_shipped_type_table_parses_and_covers_what_mustache_knows() {
+fn a_type_map_naming_a_missing_kind_symbol_or_category_is_an_error() {
+    let message = edit_compose(&mut fixture(), |j| {
+        j["file"]["types"]["mime"]["x/y"] = "nothing".into();
+    });
+    assert!(message.contains("kind.nothing"), "{message}");
+    let message = edit_compose(&mut fixture(), |j| {
+        j["file"]["types"]["mime"]["x/y"] = serde_json::json!({"category": "nothing"});
+    });
+    assert!(message.contains("category.nothing"), "{message}");
+    let message = edit_compose(&mut fixture(), |j| {
+        j["file"]["fallback"] = "nothing".into();
+    });
+    assert!(message.contains("fallback"), "{message}");
+    // The symbol must exist in symbols/.
+    let message = edit_compose(&mut fixture(), |j| {
+        j["file"]["kinds"]["pdf"]["glyph"] = "no-such-symbol".into();
+    });
+    assert!(message.contains("no-such-symbol"), "{message}");
+    // An override of an extension that already has a kind.
+    let message = edit_compose(&mut fixture(), |j| {
+        j["file"]["overrides"]["pdf"] = "data".into();
+    });
+    assert!(message.contains("overrides pdf"), "{message}");
+    // A layer the sources do not provide.
+    let message = edit_compose(&mut fixture(), |j| {
+        j["folder"]["layers"][1]["role"] = "front".into();
+    });
+    assert!(message.contains("twice"), "{message}");
+}
+
+#[test]
+fn the_shipped_type_table_parses() {
     let table: toml::Table = silica_assets::compile::DEFAULT_TYPES.parse().unwrap();
-    let mime = table["mime"].as_table().unwrap();
-    for needed in [
-        "application/pdf",
-        "text/plain",
-        "text/markdown",
-        "text/csv",
-        "application/zip",
-        "application/x-tar",
-        "application/gzip",
-        "application/json",
-        "text/html",
-        "image/*",
-        "audio/*",
-        "video/*",
-        "font/*",
-        "application/x-shellscript",
-        "application/vnd.rar",
-        "application/x-7z-compressed",
-        "application/zstd",
-        "application/x-bzip2",
-        "application/x-xz",
-    ] {
-        assert!(mime.contains_key(needed), "{needed}");
-    }
+    let uti = table["uti"].as_table().unwrap();
+    assert_eq!(uti["com.adobe.pdf"].as_str(), Some("kind.pdf"));
+    assert_eq!(uti["public.json"].as_str(), Some("category.data"));
     assert!(
-        table["uti"]
+        table["app"]
             .as_table()
             .unwrap()
-            .contains_key("com.adobe.pdf")
+            .contains_key("dev.frascella.Apps")
     );
-    assert!(table["ext"].as_table().unwrap().contains_key("pdf"));
+    // MIME and extensions come from the icon sources now.
+    assert!(!table.contains_key("mime") && !table.contains_key("ext"));
+}
+
+/// The real silica-icons layout, when `SILICA_ICONS_A8B2` points at a checkout of it (the
+/// commit a8b2a27 of branch amalfi-icons): the layers and the shipped composition rules compile.
+#[test]
+fn the_real_layers_and_the_shipped_rules_compile() {
+    let Some(icons) = std::env::var_os("SILICA_ICONS_A8B2") else {
+        return;
+    };
+    // The real file and folder layers and the symbols over the fixture's other icons.
+    let fixture = fixture();
+    let real = std::path::PathBuf::from(icons);
+    let mut options = fixture.options.clone();
+    for dir in ["files/file-generic", "files/folder-generic", "symbols"] {
+        let target = options.icons.join(dir);
+        std::fs::remove_dir_all(&target).unwrap();
+        common::copy_tree(&real.join(dir), &target);
+    }
+    options.compose = None;
+    let (bytes, report) = silica_assets::compile::compile(&options).unwrap();
+    let assets = Assets::from_bytes(bytes).unwrap();
+    assert!(report.symbols > 0);
+    for (space, key, name) in [
+        (KeySpace::Mime, "application/pdf", "kind.pdf"),
+        (KeySpace::Mime, "image/*", "kind.image"),
+        (KeySpace::Mime, "application/json", "category.data"),
+        (KeySpace::Ext, "rs", "kind.code"),
+        (KeySpace::Ext, "json", "category.data"),
+        (KeySpace::Ext, "blend", "category.media"),
+        (KeySpace::Role, "folder", "folder.generic"),
+    ] {
+        let id = assets.lookup(space, key).unwrap();
+        assert_eq!(assets.entry(id).unwrap().name(), name);
+    }
 }

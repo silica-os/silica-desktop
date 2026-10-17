@@ -2,18 +2,7 @@
 [app]
 "dev.frascella.Mail" = "mail"
 
-[mime]
-"application/pdf" = "file-pdf"
-"text/plain" = "file-text"
-"text/markdown" = "file-text"
-"image/*" = "file-unknown"
-"application/json" = "file-generic"
-
 [uti]
-"com.adobe.pdf" = "file-pdf"
-"public.plain-text" = "file-text"
-
-[ext]
-pdf = "file-pdf"
-txt = "file-text"
-md = "file-text"
+"com.adobe.pdf" = "kind.pdf"
+"public.plain-text" = "kind.text"
+"public.json" = "category.data"
