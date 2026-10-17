@@ -10,8 +10,6 @@ import 'package:silica_ui/silica_ui.dart';
 
 import '../l10n/app_localizations.dart';
 import '../system/desktop_entries.dart';
-import '../system/folder_icons.dart';
-import '../system/folder_style.dart';
 import '../system/icon_lookup.dart';
 import '../system/shell_channel.dart';
 import '../system/silica_icons.dart';
@@ -288,8 +286,6 @@ List<Item> dockItems(
         folder.split('/').where((p) => p.isNotEmpty).lastOrNull ?? folder,
         folder: folder,
         iconPath: findIcon(folder == downloads ? 'folder-download' : 'folder'),
-        layered: _folderIcon(folder),
-        folderIcon: _styledFolder(folder),
         command: openPathCommand(entries, folder),
       ),
     // The minimized windows, from the first minimized, before the Trash (D-08).
@@ -304,22 +300,6 @@ List<Item> dockItems(
       trash: true,
     ),
   ];
-}
-
-/// The Dock's folder icon: the full variant when the folder has something inside.
-LayeredIcon? _folderIcon(String folder) {
-  final icon = findSilicaIcon('folder-generic');
-  if (icon == null || !folderHasItems(folder)) return icon;
-  return fullFolderVariant(icon);
-}
-
-/// The Dock folder with its own colour or symbol, full or empty; null for a plain folder (the
-/// item keeps the plain `folder-generic`).
-FolderIcon? _styledFolder(String folder) {
-  // Special folders (Downloads…) get their symbol from silica-icons even without a style.
-  final icon = styledFolderIcon(folder);
-  if (icon == null || (icon.symbol == null && icon.tint == null)) return null;
-  return folderHasItems(folder) ? fullFolder(icon) : icon;
 }
 
 Item _windowItem(

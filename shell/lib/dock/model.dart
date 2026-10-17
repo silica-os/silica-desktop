@@ -192,6 +192,9 @@ Duration enterDuration(double ratio) {
 }
 
 /// A Dock item: an app (or folder, trash) or the separator.
+/// Bumped when a Dock folder reports a change, so its icons are asked again.
+int dockIconRevision = 0;
+
 enum ItemKind { app, separator }
 
 class Item {
@@ -200,7 +203,6 @@ class Item {
     this.running = false,
     this.iconPath,
     this.layered,
-    this.folderIcon,
     this.command,
     this.windows = const [],
     this.id,
@@ -222,7 +224,6 @@ class Item {
     this.iconPath,
     this.layered,
   }) : kind = ItemKind.app,
-       folderIcon = null,
        running = false,
        command = null,
        windows = const [],
@@ -240,7 +241,6 @@ class Item {
       running = false,
       iconPath = null,
       layered = null,
-      folderIcon = null,
       command = null,
       windows = const [],
       id = null,
@@ -262,9 +262,6 @@ class Item {
 
   /// The layered silica-icons icon, preferred to [iconPath].
   final LayeredIcon? layered;
-
-  /// A folder with its own colour or symbol (folder_style.dart), preferred to [layered].
-  final FolderIcon? folderIcon;
 
   /// The command to launch it (Exec without field codes), if it is an app.
   final String? command;
@@ -308,7 +305,11 @@ class Item {
 
   /// The icon to draw; null: placeholder with the initial.
   IconSource? get icon => switch ((layered, iconPath)) {
-    _ when folderIcon != null => FolderSource(folderIcon!),
+    _ when folder != null => ServiceSource(
+      Uri.file(folder!),
+      isFolder: true,
+      revision: dockIconRevision,
+    ),
     (final LayeredIcon l, _) => LayeredSource(l),
     (null, final String path) => FlatSource(path),
     _ => null,
@@ -325,7 +326,6 @@ class Item {
   bool get isPlace =>
       trash ||
       folder != null ||
-      folderIcon != null ||
       (layered != null && layered!.kind != IconKind.app);
 }
 
