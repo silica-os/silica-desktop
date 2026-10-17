@@ -1140,6 +1140,7 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     duration: stackOpen,
   );
   final FocusNode _stackFocus = FocusNode();
+  Timer? _stackOpenTimer;
 
   /// The starting height of the surface and the screen (to center the alert).
   double? _baseHeight;
@@ -1183,6 +1184,42 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
   StreamSubscription<void>? _dismissed;
   int? _dropIndex;
 
+  /// The slot of the gap a folder dragged in from another app opens right of the separator
+  /// (an index in the items), null when there is none.
+  int? _folderGap;
+
+  /// Among the folders: how many are left of `x`, if `x` is in the folders' side of the Dock
+  /// (right of the separator, in the active zone); null elsewhere.
+  int? _folderSlotAt(Offset local, Size size) {
+    final current = layout(
+      presenceOf: _presenceOf,
+      metrics: _m,
+      _items,
+      width: size.width,
+      height: size.height,
+    );
+    final x = local.dx, y = local.dy, height = size.height;
+    final separator = _items.indexWhere((i) => i.kind == ItemKind.separator);
+    if (separator < 0 ||
+        !inActiveZone(current, x, y, height) ||
+        x <= current.center(separator)) {
+      return null;
+    }
+    var before = 0;
+    for (var i = separator + 1; i < _items.length; i++) {
+      if (_items[i].folder != null && current.center(i) < x) before++;
+    }
+    return before;
+  }
+
+  void _setFolderGap(int? gap) {
+    if (gap == _folderGap) return;
+    setState(() {
+      _folderGap = gap;
+      _settleUntil = DateTime.now().add(gapSlide);
+    });
+  }
+
   void _fileDrag(SilicaDragEvent event) {
     final box = context.findRenderObject();
     if (!mounted || box is! RenderBox || !box.hasSize) return;
@@ -1205,6 +1242,15 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
         final target = index != null && _items[index].acceptsFiles
             ? index
             : null;
+        // No item takes the drag: a folder dropped here would be added, so the Dock makes room.
+        final before = target == null ? _folderSlotAt(local, size) : null;
+        _setFolderGap(
+          before == null
+              ? null
+              : _items.indexWhere((i) => i.kind == ItemKind.separator) +
+                    1 +
+                    before,
+        );
         if (target != _dropIndex) {
           setState(() {
             if (_pressed == _dropIndex) _pressed = target;
@@ -1228,26 +1274,8 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
             paths.every(FileSystemEntity.isDirectorySync)) {
           // Folders right of the separator: added to the Dock where they were dropped.
           final local = box.globalToLocal(position);
-          final current = layout(
-            presenceOf: _presenceOf,
-            metrics: _m,
-            _items,
-            width: size.width,
-            height: size.height,
-          );
-          final separator = _items.indexWhere(
-            (i) => i.kind == ItemKind.separator,
-          );
-          final inZone = inActiveZone(current, local.dx, local.dy, size.height);
-          if (separator >= 0 &&
-              inZone &&
-              local.dx > current.center(separator)) {
-            var before = 0;
-            for (var i = separator + 1; i < _items.length; i++) {
-              if (_items[i].folder != null && current.center(i) < local.dx) {
-                before++;
-              }
-            }
+          final before = _folderSlotAt(local, size);
+          if (before != null) {
             widget.onAddFolders?.call(paths, before);
           }
         }
@@ -1278,6 +1306,10 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
   void _endFileDrag() {
     _springTimer?.cancel();
     _springTimer = null;
+    if (_folderGap != null) {
+      _folderGap = null;
+      _settleUntil = DateTime.now().add(gapSlide);
+    }
     setState(() {
       if (_pressed == _dropIndex) _pressed = null;
       _dropIndex = null;
@@ -1517,6 +1549,7 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     _labelOff?.cancel();
     _ghostTicker.dispose();
     _slotTicker.dispose();
+    _stackOpenTimer?.cancel();
     _stackAnim.dispose();
     _stackFocus.dispose();
     _shown.dispose();
@@ -1537,6 +1570,11 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
   /// the Dock, with an empty slot where it would fall.
   List<Item> _displayItems(Size size) {
     final drag = _drag;
+    final gap = _folderGap;
+    if (drag == null && gap != null && gap <= _items.length) {
+      // A folder dragged in from another app: room where it would land (D-05, MU-40).
+      return [..._items]..insert(gap, gapItem);
+    }
     if (drag == null || !drag.started) return _items;
     final rest = [..._items]..removeAt(drag.index);
     if (!drag.inside || drag.remove) return rest;
@@ -1965,7 +2003,7 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
 
   /// The first files of a folder shown as a stack, for the icon: read again only when the
   /// folder changes (modification time) or the order changes.
-  final Map<String, (DateTime, StackSort, List<IconSource>)> _piles = {};
+  final Map<String, (DateTime, StackSort, int, List<IconSource>)> _piles = {};
 
   List<IconSource>? _pileOf(Item item) {
     final folder = item.folder;
@@ -1980,14 +2018,17 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
       return null;
     }
     final cached = _piles[folder];
-    if (cached != null && cached.$1 == changed && cached.$2 == settings.sort) {
-      return cached.$3;
+    if (cached != null &&
+        cached.$1 == changed &&
+        cached.$2 == settings.sort &&
+        cached.$3 == dockIconRevision) {
+      return cached.$4;
     }
     final sources = [
       for (final entry in stackEntries(folder, sort: settings.sort).take(3))
         ?fileIcon(entry),
     ];
-    _piles[folder] = (changed, settings.sort, sources);
+    _piles[folder] = (changed, settings.sort, dockIconRevision, sources);
     return sources;
   }
 
@@ -2023,17 +2064,40 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     });
     _showLabel(null);
     _stackAnim.duration = stackOpen;
-    _stackAnim.forward(from: 0);
+    _stackAnim.value = 0;
+    // The motion starts ~90 ms (fan) or ~70 ms (grid) after the press (dock-stacks.md).
+    _stackOpenTimer?.cancel();
+    _stackOpenTimer = Timer(
+      _stackView == StackView.fan ? fanOpenDelay : gridOpenDelay,
+      () {
+        _stackOpenTimer = null;
+        if (mounted && _stackIndex != null && !_stackClosing) {
+          _stackAnim.forward(from: 0);
+        }
+      },
+    );
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _stackFocus.requestFocus(),
     );
   }
 
   /// `byButton`: released on the close button (~300 ms); otherwise Esc or a click elsewhere.
-  Future<void> _closeStack({bool byButton = false}) async {
+  Future<void> _closeStack({
+    bool byButton = false,
+    bool afterFile = false,
+  }) async {
     if (_stackIndex == null || _stackClosing) return;
     _stackClosing = true;
-    _stackAnim.duration = byButton
+    _stackOpenTimer?.cancel();
+    _stackOpenTimer = null;
+    // Clicking a file: the stack closes ~13 ms after the release, in ~150 ms.
+    if (afterFile) {
+      await Future<void>.delayed(stackFileCloseDelay);
+      if (!mounted) return;
+    }
+    _stackAnim.duration = afterFile
+        ? stackFileClose
+        : byButton
         ? stackCloseByButton
         : _stackView == StackView.fan
         ? fanClose
@@ -2055,7 +2119,7 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
   }
 
   void _openFromStack(String path) {
-    _closeStack();
+    _closeStack(afterFile: true);
     widget.onOpenPath?.call(path);
   }
 
@@ -2215,7 +2279,9 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
         // During and right after the drag the icons slide into place (~265 ms).
         final settle = _settleUntil;
         final sliding =
-            dragging || (settle != null && DateTime.now().isBefore(settle));
+            dragging ||
+            _folderGap != null ||
+            (settle != null && DateTime.now().isBefore(settle));
         if (sliding && !dragging) {
           WidgetsBinding.instance.scheduleFrame();
         }
