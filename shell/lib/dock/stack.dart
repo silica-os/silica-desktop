@@ -102,6 +102,14 @@ const double gridTipHeight = gridTipDepth;
 const double gridTipAboveDock = 8;
 
 const Duration stackOpen = Duration(milliseconds: 240);
+
+/// The motion starts this long after the press (dock-stacks.md, Fan and Grid › Opening).
+const Duration fanOpenDelay = Duration(milliseconds: 90);
+const Duration gridOpenDelay = Duration(milliseconds: 70);
+
+/// Clicking a file: the stack starts closing ~13 ms after the release and lasts ~150 ms.
+const Duration stackFileCloseDelay = Duration(milliseconds: 13);
+const Duration stackFileClose = Duration(milliseconds: 150);
 const Duration fanClose = Duration(milliseconds: 210);
 const Duration gridClose = Duration(milliseconds: 150);
 

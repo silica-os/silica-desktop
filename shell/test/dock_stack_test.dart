@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:silica_shell/dock/apps.dart' show downloadDir;
@@ -98,7 +99,8 @@ void main() {
         Offset(rest.center(0), 1000 - bottomGap - backgroundHeight / 2),
       );
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
       // By name, without the hidden ones, and "Open folder" on top.
       expect(find.text('a.txt'), findsOneWidget);
       expect(find.text('b.txt'), findsOneWidget);
@@ -441,5 +443,159 @@ void main() {
       defaultStackSettings('${home.path}/Documents', env: env).sort,
       StackSort.name,
     );
+  });
+
+  testWidgets(
+    'opening starts 90 ms (fan) after the press, the file closes in 150 ms',
+    (tester) async {
+      final dir = Directory.systemTemp.createTempSync('tempi');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      for (final name in ['a.txt', 'b.txt']) {
+        File('${dir.path}/$name').writeAsStringSync('x');
+      }
+      tester.view.physicalSize = const Size(1280, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      expect(fanOpenDelay, const Duration(milliseconds: 90));
+      expect(gridOpenDelay, const Duration(milliseconds: 70));
+      expect(stackOpen, const Duration(milliseconds: 240));
+      expect(stackFileCloseDelay, const Duration(milliseconds: 13));
+      expect(stackFileClose, const Duration(milliseconds: 150));
+      expect(fanClose, const Duration(milliseconds: 210));
+      expect(gridClose, const Duration(milliseconds: 150));
+      final opened = <String>[];
+      final items = [Item.app('Stack', command: 'x', folder: dir.path)];
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: Dock(
+            items: items,
+            onOpenPath: opened.add,
+            stackSettingsFor: (_) =>
+                const StackSettings(content: StackContent.fan),
+          ),
+        ),
+      );
+      final rest = layout(items, width: 1280, height: 1000);
+      await tester.tapAt(
+        Offset(rest.center(0), 1000 - bottomGap - backgroundHeight / 2),
+      );
+      await tester.pump();
+      final anim = tester.state<State>(find.byType(Dock));
+      double progress() => (find.byType(FanStack).evaluate().isEmpty)
+          ? -1
+          : tester.widget<FanStack>(find.byType(FanStack)).progress;
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(progress(), 0);
+      await tester.pump(const Duration(milliseconds: 60));
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.pump(const Duration(milliseconds: 40));
+      expect(progress(), greaterThan(0));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(progress(), 1);
+      expect(anim.mounted, isTrue);
+      await tester.tap(find.text('b.txt'));
+      // 13 ms of nothing, then 150 ms to close.
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(progress(), 1);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.pump(const Duration(milliseconds: 40));
+      expect(progress(), lessThan(1));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.byType(FanStack), findsNothing);
+      expect(opened, ['${dir.path}/b.txt']);
+    },
+  );
+
+  testWidgets('the pile is read again when the icons are asked again', (
+    tester,
+  ) async {
+    final dir = Directory.systemTemp.createTempSync('pila2');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    File('${dir.path}/a.txt').writeAsStringSync('x');
+    tester.view.physicalSize = const Size(1280, 300);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    Widget dock() => Directionality(
+      textDirection: TextDirection.ltr,
+      child: Dock(
+        items: [Item.app('Stack', command: 'x', folder: dir.path)],
+        onOpenPath: (_) {},
+      ),
+    );
+    await tester.pumpWidget(dock());
+    await tester.pump();
+    final first = tester.widget<PileIcon>(find.byType(PileIcon)).sources.first;
+    dockIconRevision++;
+    await tester.pumpWidget(Container());
+    await tester.pumpWidget(dock());
+    await tester.pump();
+    final second = tester.widget<PileIcon>(find.byType(PileIcon)).sources.first;
+    expect(second, isNot(first));
+  });
+
+  testWidgets('a folder dragged over the folders opens a gap and closes it', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 300);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final added = <(List<String>, int)>[];
+    final dir = Directory.systemTemp.createTempSync('nuova');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    const items = [
+      Item.app('Terminal', command: 'term'),
+      Item.separator(),
+      Item.app('Downloads', command: 'x', folder: '/nonexistent-dl'),
+      Item.app('Trash', command: 'xdg-open trash:///', trash: true),
+    ];
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: Dock(
+          items: items,
+          onAddFolders: (paths, index) => added.add((paths, index)),
+        ),
+      ),
+    );
+    Future<void> send(String method, [Object? args]) async {
+      await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+        SilicaDrag.channel.name,
+        const JSONMethodCodec().encodeMethodCall(MethodCall(method, args)),
+        (_) {},
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+
+    double width() => tester
+        .getSize(
+          find
+              .byWidgetPredicate(
+                (w) => w is Positioned && w.height == backgroundHeight,
+              )
+              .first,
+        )
+        .width;
+    final rest = layout(items, width: 1280, height: 300);
+    final y = 300 - bottomGap - backgroundHeight / 2;
+    final x = rest.center(1) + 2;
+    final before = width();
+    await send('enter', {'x': x, 'y': y});
+    await send('motion', {'x': x, 'y': y});
+    expect(width(), greaterThan(before + 20));
+    // Leaving closes the gap.
+    await send('leave');
+    expect(width(), closeTo(before, 0.5));
+    // Dropping adds the folder at the gap's place.
+    await send('enter', {'x': x, 'y': y});
+    await send('motion', {'x': x, 'y': y});
+    await send('drop', {
+      'x': x,
+      'y': y,
+      'uris': [Uri.directory(dir.path).toString()],
+    });
+    expect(added.single.$2, 0);
+    expect(added.single.$1.single, startsWith(dir.path));
+    await tester.pump(const Duration(seconds: 1));
   });
 }
