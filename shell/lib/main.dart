@@ -10,7 +10,7 @@ import 'dart:io';
 import 'package:flutter/scheduler.dart' show timeDilation;
 import 'package:flutter/widgets.dart';
 import 'package:silica_ui/silica_ui.dart'
-    show AmalfiGlassBackend, AmalfiGlassBackendScope;
+    show AmalfiGlassBackend, AmalfiGlassBackendScope, SystemLookScope;
 
 import 'auth/auth_dialog.dart';
 import 'controlcenter/controlcenter.dart';
@@ -129,7 +129,12 @@ class ShellComponent extends StatelessWidget {
     return ShellLocalizations(
       child: ScrollConfiguration(
         behavior: const ShellScrollBehavior(),
-        child: Directionality(textDirection: TextDirection.ltr, child: glass),
+        // The Appearance choices of Settings (accent, highlight, scroll bars, icon style) follow
+        // live, as in every app.
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: SystemLookScope(child: glass),
+        ),
       ),
     );
   }
