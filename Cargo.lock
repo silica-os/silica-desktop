@@ -2267,6 +2267,7 @@ dependencies = [
 name = "silica-daemon"
 version = "0.0.0"
 dependencies = [
+ "ab_glyph",
  "async-channel",
  "async-io",
  "async-process",
@@ -2276,9 +2277,14 @@ dependencies = [
  "image",
  "md5",
  "png 0.17.16",
+ "qoi",
+ "resvg",
+ "rustix 1.1.5",
  "serde",
  "serde_json",
+ "silica-assets",
  "silica-control",
+ "toml",
  "tracing",
  "wayland-client",
  "wayland-protocols",

@@ -8,6 +8,7 @@
 pub mod actions;
 pub mod auth;
 pub mod clipboard;
+pub mod icons;
 pub mod notifications;
 pub mod server;
 pub mod share;
