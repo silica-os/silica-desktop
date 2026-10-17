@@ -6,6 +6,7 @@
 //! rendered: the cache file is named after the MD5 of the plan, so every icon with the same
 //! look at the same size is one file and nothing needs invalidating.
 
+pub mod appicon;
 pub mod apps;
 pub mod compose;
 pub mod folder;
@@ -297,7 +298,7 @@ impl Icons {
     }
 }
 
-fn write_icon(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Option<()> {
+pub(crate) fn write_icon(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Option<()> {
     use std::os::unix::fs::DirBuilderExt;
     let dir = path.parent()?;
     fs::DirBuilder::new()

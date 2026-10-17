@@ -1,0 +1,20 @@
+{
+  "format": 2,
+  "id": "synthetic",
+  "name": "Synthetic",
+  "kind": "app",
+  "keyline": "full",
+  "background": { "light": { "gradient": ["#ffffff", "#c8d6e8"] } },
+  "glass": { "top": 0.8, "bottom": 0.5, "blur": 10 },
+  "layers": [
+    { "id": "shade", "role": "detail", "blend": "multiply", "opacity": 0.8 },
+    { "id": "glass", "role": "body", "clear": { "mode": "glass" }, "tinted": { "mode": "light" } },
+    { "id": "body", "role": "body", "dark": { "opacity": 0.9, "clear": { "luma": [60, 220] } } },
+    { "id": "marks", "role": "detail", "clear": { "mode": "ramp", "luma": [40, 240] }, "tinted": { "mode": "ramp", "luma": [0.2, 0.9] } },
+    { "id": "sheen", "role": "highlight" },
+    { "id": "dot", "role": "detail", "clear": { "mode": "light" }, "tinted": { "mode": "accent" } },
+    { "id": "fine", "role": "detail", "min_size": 100, "tinted": { "mode": "keep" } },
+    { "id": "hidden", "role": "detail", "clear": { "mode": "hide" }, "tinted": { "mode": "hide" } }
+  ],
+  "fallback": { "light": "icon.png", "dark": "icon-dark.png" }
+}

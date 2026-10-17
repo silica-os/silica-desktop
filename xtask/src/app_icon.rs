@@ -31,6 +31,40 @@ pub fn copy_to_bundle(app: &Path, bundle: &Path) -> Result<Option<PathBuf>> {
     Ok(Some(to))
 }
 
+/// Name of the compiled icon in `icon/` (docs/assets-format.md, "App icon file").
+pub const COMPILED: &str = "icon.assets";
+
+/// [`copy_to_bundle`], then the compiled `icon/icon.assets` next to the copied sources (the
+/// thumbnail service composes light, dark, clear and tinted from it). The fallback PNGs and
+/// `icon.json` stay. A compile error is a warning: the app keeps its flat icon.
+pub fn bundle_icon(app: &Path, bundle: &Path) -> Result<Option<PathBuf>> {
+    let Some(copied) = copy_to_bundle(app, bundle)? else {
+        return Ok(None);
+    };
+    if let Err(e) = compile(&copied, &copied.join(COMPILED)) {
+        eprintln!("xtask: warning: {}: no {COMPILED}: {e}", copied.display());
+    }
+    Ok(Some(copied))
+}
+
+/// Compiles the icon folder `from` into `to` with `silica-assets-compile --app-icon`.
+pub fn compile(from: &Path, to: &Path) -> Result<()> {
+    let mut command = crate::cargo_command(&[
+        "run",
+        "--release",
+        "--locked",
+        "--quiet",
+        "--package",
+        "silica-assets",
+        "--bin",
+        "silica-assets-compile",
+        "--",
+        "--app-icon",
+    ]);
+    command.arg(from).arg("--out").arg(to);
+    crate::status(command)
+}
+
 fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     std::fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
     for item in std::fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))? {

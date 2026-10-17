@@ -6,6 +6,7 @@
 //! - [`compile`] (feature `compile`, on by default) turns the sources (silica-icons, fonts,
 //!   sounds, wallpapers) into the file.
 
+pub mod appicon;
 pub mod ffi;
 pub mod format;
 mod mph;

@@ -47,7 +47,7 @@ pub fn install_app(app: &str) -> Result<()> {
         engine.display()
     );
     // The app's own icon (`icon/` in its repository), copied next to the bundle.
-    let icon = crate::app_icon::copy_to_bundle(&dir, &dir.join("build/release"))?.map(|folder| {
+    let icon = crate::app_icon::bundle_icon(&dir, &dir.join("build/release"))?.map(|folder| {
         let png = crate::app_icon::png_name(&folder);
         (folder.display().to_string(), png)
     });

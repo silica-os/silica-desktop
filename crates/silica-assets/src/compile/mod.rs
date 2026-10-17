@@ -2,6 +2,7 @@
 //! `data/types.toml`) and writes the bytes of a `silica.assets`. Deterministic: sources are read
 //! in sorted order and no clock, thread or random number takes part in the output.
 
+mod app_icon;
 mod builder;
 mod raster;
 mod sources;
@@ -9,6 +10,7 @@ mod sources;
 use std::fmt;
 use std::path::PathBuf;
 
+pub use app_icon::app_icon;
 pub use builder::{Builder, SlotSpec, VariantSpec};
 pub use raster::{Image, Rendition, ladder};
 

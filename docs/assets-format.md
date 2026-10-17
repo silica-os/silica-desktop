@@ -264,6 +264,39 @@ icon/                    the silica-icons apps/<id>/ folder, as it is
   `icon.png` as `/usr/share/icons/hicolor/512x512/apps/<id>.png`, for tools that only read the
   XDG icon theme.
 
+### App icon file: `icon/icon.assets`
+
+`cargo xtask bundle`, `install-app` and `os deploy` also compile the icon folder into
+`<bundle>/icon/icon.assets` (`silica-assets-compile --app-icon DIR --out FILE`; crate
+`silica-assets`, modules `appicon` and `compile::app_icon`). `icon.json` and the SVG layers are
+build-time sources: nothing reads JSON at runtime. The fallback PNGs (`icon.png`,
+`icon-dark.png`) and `icon.json` are still copied, for launchers and for a client that cannot
+reach the thumbnail service. A compile error is a warning: the app keeps its flat icon.
+
+The thumbnail service (`AppIcon` of `dev.frascella.Silica.Thumbnails1`, docs/thumbnails.md)
+composes light, dark, clear and tinted from this file. Both formats of silica-icons compile:
+format 2 as it is; format 1 as the background file plus one `body` layer (the foreground, ramp
+in clear and tinted, neutral shadow).
+
+Binary layout, little endian, deterministic (same sources, same bytes):
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| magic | `"SAIC"` | |
+| version | u32 | 1 |
+| digest | u64 | xxh3-64 of the payload; names the icon in caches |
+| background | 2 x background | light, dark. Gradient: `0`, top rgb (3 bytes), bottom rgb; SVG: `1`, u32 blob index |
+| glass | 3 x f32 | opacity at the top, at the bottom, blur sigma (canvas units) |
+| layers | u32 count (max 16), then per layer | id (u32 length + UTF-8), role u8 (body, detail, highlight, dynamic), dynamic flag u8 and, if 1: kind u8 (clock-hand, clock-cap, calendar-month, calendar-day), unit u8 (0 none, hour, minute, second), pivot 2 x f32; then 2 forms: light, dark |
+| form | | blob index u32, opacity f32, blend u8 (normal, multiply, screen), shadow u8 (none, neutral, chromatic), min_size f32, then clear and tinted specs |
+| spec | | mode u8 (ramp, light, glass, accent, keep, hide), opacity f32 (multiplies the layer opacity; role factor already applied), luma flag u8 and, if 1, 2 x f32 |
+| blobs | u32 count, then each u32 length + bytes | the SVG files, deduplicated; at most 16 MB each |
+
+Every default of the manifest is resolved by the compiler (role modes, opacity factors such as the
+0.6 of `highlight`, shadows, `layers/<id>-dark.svg`, the `dark` override block merged into the
+dark form), so a reader applies no rules of its own. `decode` checks the digest, every length
+and every blob index and returns nothing for malformed input; it never panics.
+
 ## Readers
 
 - **Rust**: crate `silica-assets` (in silica-desktop `crates/`): `Assets::open(path)` maps the

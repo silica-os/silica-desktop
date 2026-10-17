@@ -105,6 +105,31 @@ Order: `back`, `middle`, `front`, then the symbol.
   folders of the XDG data dirs); `LIBRARY` books-vertical (`~/.local/share`). `SHARED` and
   `NETWORK` have no fixed path and are known only by the file manager: not resolved by the service.
 
+## App icons
+
+`AppIcon(s app, u size_px, d scale, u appearance, u accent_rgb) -> s path` composes the icon of
+an app from its `icon/icon.assets` (docs/assets-format.md, "App icon file"), the port of
+`tools/compose.py` of silica-icons (docs/icon-format.md, Format 2):
+
+- `app`: a desktop id (`dev.frascella.Clock`, with or without `.desktop`; its entry's
+  `X-Silica-Icon=` folder) or an absolute icon folder.
+- `appearance`: 0 light, 1 clear, 2 tinted; add 4 for the dark form (4 dark, 5 clear dark,
+  6 tinted dark). Any other value gives "".
+- `accent_rgb`: 0xRRGGBB, used by the tinted looks only (0 is `Accent/Amalfi`, `#0e77e6`).
+- Result: the path of a PNG of exactly `size_px` (at most 2048) pixels, `scale` giving the side
+  in points for `min_size`; "" when the app has no `icon.assets`, it is damaged or the request
+  is invalid, and the client then shows the bundled `icon.png` / `icon-dark.png`.
+- Not in the PNG: layers with `dynamic` data (Clock hands and cap, Calendar date: the host draws
+  them live on top, from the layer data of the same `icon.assets`), the cast shadows of the
+  layers and the rim (the host draws them, as in the reference). The clip is the 824 body with
+  radius 215 (the reference's approximation).
+- Cache: `$XDG_CACHE_HOME/silica/icons/app/<digest>-<appearance>-<px>-<pt*10>[-<accent>].png`;
+  the digest is the icon's, so an updated app regenerates, and the accent is part of the key only
+  for the tinted looks. `Ready(app, size_px, path)` follows a success.
+- Tests: `crates/daemon/tests/appicon_golden.rs` compares the output with PNGs rendered by
+  `compose.py` (`tests/fixtures/appicon/gen.py`): a synthetic icon always, and the pilot icons
+  (Mustache, Terminal, Clock) when `SILICA_ICONS_DIR` points at silica-icons on `amalfi-icons`.
+
 ## What silica_ui and the apps must change
 
 - `SilicaThumbnail` / icon widgets ask `Icon(uri, size_px, scale, flags)` for files and folders

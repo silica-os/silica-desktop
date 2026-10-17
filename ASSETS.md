@@ -98,6 +98,40 @@ generated in code are preferred.
 | `tools/sounds/candidates/alert-pebble-A.wav` | Silica project | MIT OR Apache-2.0 | original, synthesized by `tools/sounds/synth.py` |
 | `tools/sounds/candidates/alert-woodblock-A.wav` | Silica project | MIT OR Apache-2.0 | original, synthesized by `tools/sounds/synth.py` |
 | `tools/sounds/candidates/volume-feedback-A.wav` | Silica project | MIT OR Apache-2.0 | original, synthesized by `tools/sounds/synth.py` |
+| `crates/daemon/tests/fixtures/appicon/golden/clock-128-clear-dark.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/clock-128-clear.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/clock-128-dark.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/clock-128-light.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/clock-128-tinted-dark.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/clock-128-tinted.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/mustache-128-clear-dark.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/mustache-128-clear.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/mustache-128-dark.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/mustache-128-light.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/mustache-128-tinted-dark.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/mustache-128-tinted.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/synthetic-128-clear-dark.png` | Silica project | MIT OR Apache-2.0 | original test icon `synthetic` (or its golden render by `compose.py`), `gen.py` |
+| `crates/daemon/tests/fixtures/appicon/golden/synthetic-128-clear.png` | Silica project | MIT OR Apache-2.0 | original test icon `synthetic` (or its golden render by `compose.py`), `gen.py` |
+| `crates/daemon/tests/fixtures/appicon/golden/synthetic-128-dark.png` | Silica project | MIT OR Apache-2.0 | original test icon `synthetic` (or its golden render by `compose.py`), `gen.py` |
+| `crates/daemon/tests/fixtures/appicon/golden/synthetic-128-light.png` | Silica project | MIT OR Apache-2.0 | original test icon `synthetic` (or its golden render by `compose.py`), `gen.py` |
+| `crates/daemon/tests/fixtures/appicon/golden/synthetic-128-tinted-dark.png` | Silica project | MIT OR Apache-2.0 | original test icon `synthetic` (or its golden render by `compose.py`), `gen.py` |
+| `crates/daemon/tests/fixtures/appicon/golden/synthetic-128-tinted.png` | Silica project | MIT OR Apache-2.0 | original test icon `synthetic` (or its golden render by `compose.py`), `gen.py` |
+| `crates/daemon/tests/fixtures/appicon/golden/synthetic-64-light.png` | Silica project | MIT OR Apache-2.0 | original test icon `synthetic` (or its golden render by `compose.py`), `gen.py` |
+| `crates/daemon/tests/fixtures/appicon/golden/terminal-128-clear-dark.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/terminal-128-clear.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/terminal-128-dark.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/terminal-128-light.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/terminal-128-tinted-dark.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/golden/terminal-128-tinted.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
+| `crates/daemon/tests/fixtures/appicon/synthetic/layers/body-dark.svg` | Silica project | MIT OR Apache-2.0 | original test icon `synthetic` (or its golden render by `compose.py`), `gen.py` |
+| `crates/daemon/tests/fixtures/appicon/synthetic/layers/body.svg` | Silica project | MIT OR Apache-2.0 | original test icon `synthetic` (or its golden render by `compose.py`), `gen.py` |
+| `crates/daemon/tests/fixtures/appicon/synthetic/layers/dot.svg` | Silica project | MIT OR Apache-2.0 | original test icon `synthetic` (or its golden render by `compose.py`), `gen.py` |
+| `crates/daemon/tests/fixtures/appicon/synthetic/layers/fine.svg` | Silica project | MIT OR Apache-2.0 | original test icon `synthetic` (or its golden render by `compose.py`), `gen.py` |
+| `crates/daemon/tests/fixtures/appicon/synthetic/layers/glass.svg` | Silica project | MIT OR Apache-2.0 | original test icon `synthetic` (or its golden render by `compose.py`), `gen.py` |
+| `crates/daemon/tests/fixtures/appicon/synthetic/layers/hidden.svg` | Silica project | MIT OR Apache-2.0 | original test icon `synthetic` (or its golden render by `compose.py`), `gen.py` |
+| `crates/daemon/tests/fixtures/appicon/synthetic/layers/marks.svg` | Silica project | MIT OR Apache-2.0 | original test icon `synthetic` (or its golden render by `compose.py`), `gen.py` |
+| `crates/daemon/tests/fixtures/appicon/synthetic/layers/shade.svg` | Silica project | MIT OR Apache-2.0 | original test icon `synthetic` (or its golden render by `compose.py`), `gen.py` |
+| `crates/daemon/tests/fixtures/appicon/synthetic/layers/sheen.svg` | Silica project | MIT OR Apache-2.0 | original test icon `synthetic` (or its golden render by `compose.py`), `gen.py` |
 
 The wallpapers are not stored here: they come from
 [silica-wallpapers](https://github.com/silica-os/silica-wallpapers) (CC BY-SA 4.0, the Amalfi set:

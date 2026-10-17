@@ -183,6 +183,15 @@ impl Apps {
             .map(|(_, e)| e)
     }
 
+    /// The absolute icon folder (`X-Silica-Icon=`) of the entry `id` (with `.desktop`).
+    pub fn silica_icon_dir(&self, id: &str) -> Option<PathBuf> {
+        self.entry(id)?
+            .silica_icon
+            .as_deref()
+            .filter(|v| v.starts_with('/'))
+            .map(PathBuf::from)
+    }
+
     /// The desktop id of the app that opens `mime`.
     pub fn handler(&self, mime: &str) -> Option<&str> {
         for section in ["Default Applications", "Added Associations"] {

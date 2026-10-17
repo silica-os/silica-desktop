@@ -335,7 +335,7 @@ pub fn bundle(app: &str) -> Result<()> {
     let mut command = flutter_command(&["build", "bundle", "--debug"])?;
     command.current_dir(&dir);
     status(command)?;
-    crate::app_icon::copy_to_bundle(&dir, &dir.join("build"))?;
+    crate::app_icon::bundle_icon(&dir, &dir.join("build"))?;
     eprintln!(
         "xtask: bundle in {}",
         dir.join("build/flutter_assets").display()
@@ -386,7 +386,7 @@ pub fn bundle_release(app: &str) -> Result<()> {
         .arg(&dill);
     status(snapshot)?;
     let _ = std::fs::remove_file(&dill);
-    crate::app_icon::copy_to_bundle(&dir, &out)?;
+    crate::app_icon::bundle_icon(&dir, &out)?;
     eprintln!("xtask: bundle release in {}", out.display());
     Ok(())
 }

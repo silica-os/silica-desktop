@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
 
 use crate::icons::Icons;
+use crate::icons::appicon::AppIcons;
 use zbus::interface;
 use zbus::object_server::SignalEmitter;
 
@@ -298,6 +299,13 @@ enum Request {
         scale: f64,
         flags: u32,
     },
+    AppIcon {
+        app: String,
+        size_px: u32,
+        scale: f64,
+        appearance: u32,
+        accent_rgb: u32,
+    },
 }
 
 type Answer = Option<(PathBuf, bool)>;
@@ -339,13 +347,14 @@ struct Pool {
 }
 
 impl Pool {
-    fn new(root: PathBuf, icons: Option<Arc<Icons>>) -> Self {
+    fn new(root: PathBuf, icons: Option<Arc<Icons>>, app_icons: Arc<AppIcons>) -> Self {
         let (jobs, queue) = mpsc::sync_channel::<Job>(QUEUE);
         let queue = Arc::new(Mutex::new(queue));
         for n in 0..WORKERS {
             let queue = Arc::clone(&queue);
             let root = root.clone();
             let icons = icons.clone();
+            let app_icons = Arc::clone(&app_icons);
             let _ = std::thread::Builder::new()
                 .name(format!("thumbnails-{n}"))
                 .spawn(move || {
@@ -365,6 +374,15 @@ impl Pool {
                                 scale,
                                 flags,
                             } => icon_job(&root, icons.as_deref(), uri, *size_px, *scale, *flags),
+                            Request::AppIcon {
+                                app,
+                                size_px,
+                                scale,
+                                appearance,
+                                accent_rgb,
+                            } => app_icons
+                                .icon(app, *size_px, *scale, *appearance, *accent_rgb)
+                                .map(|p| (p, false)),
                         };
                         let _ = job.reply.send_blocking(out);
                     }
@@ -394,7 +412,12 @@ impl Thumbnails {
     }
 
     pub fn with_icons(root: PathBuf, icons: Option<Arc<Icons>>) -> Self {
-        let pool = Pool::new(root.clone(), icons);
+        let env = |k: &str| std::env::var(k).ok();
+        Self::with_app_icons(root, icons, AppIcons::from_env(&env))
+    }
+
+    pub fn with_app_icons(root: PathBuf, icons: Option<Arc<Icons>>, app_icons: AppIcons) -> Self {
+        let pool = Pool::new(root.clone(), icons, Arc::new(app_icons));
         Self { root, pool }
     }
 
@@ -462,6 +485,42 @@ impl Thumbnails {
         let path = path.to_string_lossy().into_owned();
         let _ = Self::ready(&emitter, &uri, size_px, &path).await;
         (path, preview)
+    }
+
+    /// The icon of an app, composed from its `icon.assets` at `size_px` pixels on a display of
+    /// `scale`. `app` is a desktop id (`dev.frascella.Clock` or `...desktop`, whose entry has
+    /// `X-Silica-Icon=`) or an absolute icon folder. `appearance`: 0 light, 1 clear, 2 tinted;
+    /// add 4 for the dark form (so 4 is dark, 5 clear dark, 6 tinted dark). `accent_rgb` is
+    /// 0xRRGGBB for the tinted looks (0: Accent/Amalfi). Returns the path of a PNG of exactly
+    /// `size_px`, without the layers that move (the host draws Clock hands and Calendar date
+    /// on top) and without shadow and rim; "" when the app has no compiled icon or the request
+    /// is invalid: the client keeps the bundled `icon.png`. Rendering happens off the bus
+    /// thread; `Ready` follows a success with the app as the uri.
+    async fn app_icon(
+        &self,
+        app: String,
+        size_px: u32,
+        scale: f64,
+        appearance: u32,
+        accent_rgb: u32,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) -> String {
+        let request = Request::AppIcon {
+            app: app.clone(),
+            size_px,
+            scale,
+            appearance,
+            accent_rgb,
+        };
+        let Some(answer) = self.pool.submit(request) else {
+            return String::new();
+        };
+        let Ok(Some((path, _))) = answer.recv().await else {
+            return String::new();
+        };
+        let path = path.to_string_lossy().into_owned();
+        let _ = Self::ready(&emitter, &app, size_px, &path).await;
+        path
     }
 
     /// Forgets the cached thumbnails of these files (after they changed).

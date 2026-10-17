@@ -958,7 +958,7 @@ fn deploy_app(app: &Path, share: &Path) -> Result<()> {
         let id = name.strip_suffix(".desktop").unwrap_or(name);
         // The app's icon folder travels with the bundle; the entry points at the guest copy.
         let guest_icon =
-            crate::app_icon::copy_to_bundle(app, &app.join("build/release"))?.map(|folder| {
+            crate::app_icon::bundle_icon(app, &app.join("build/release"))?.map(|folder| {
                 (
                     format!("{GUEST_RUN}/apps/{id}/icon"),
                     crate::app_icon::png_name(&folder),
