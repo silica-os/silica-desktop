@@ -73,8 +73,8 @@ Colors are the same in every theme (no dark layers).
   document #2f7cf6, data #1f9d55, code #ff6a00, archive #8e8e93, media #e8336d, other #636366.
   The complete map (about 150 MIME types, 170 extensions) is `[file.types]` in `compose.toml`.
 - **Fonts**: Inter from `silica.assets` (`Inter-Regular|Medium|SemiBold|Bold|Black`); the face
-  closest to the asked weight is used. Today silica-ui ships no Black, so the label alone is
-  Bold until `Inter-Black.ttf` is added to `silica-ui/fonts`.
+  closest to the asked weight is used. silica-ui ships `Inter-Black.ttf` since the composed-icons change
+  (until that silica_ui is in the image the label alone is Bold).
 
 ## Folders
 
