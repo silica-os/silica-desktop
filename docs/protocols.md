@@ -339,6 +339,41 @@ controlling terminal between fork and exec, is in `ffi/pty.rs`). JSONMethodCodec
   in it (the Terminal confirms closing a busy tab); false otherwise or on error. Errors come back as a PlatformException with code `pty`.
 - To the app: `output {id, data: base64}`, coalesced, at most 64 KiB and one message per frame
   per pty; `exit {id, code?, signal?}` after the last output.
+- **Grid sessions** (`spawn {grid: true, scrollback?: 0–1000000 (default 10000),
+  clipboardWrite?: true, clipboardRead?: false}`): the embedder emulates the terminal
+  (alacritty_terminal on a thread of its own, `termgrid.rs`) and the app receives no `output`.
+  Once per frame, if anything changed, it gets `grid {id, cols, rows, full, lines: [{y, runs:
+  [[text, fg, bg, flags, cells, link?], …]}], cursor: {x, y, visible, shape}, modes, …}`: only
+  the visible rows that really changed, as runs of cells with the same attributes (`cells` is
+  the width, wide characters count two; `link` is the OSC 8 target). Colours are `0xRRGGBB`,
+  -1 for the default, `0x1000000 + i` for entry `i` of the app's 256-colour palette.
+  `flags`: 1 bold, 2 italic, 4 underline, 8 inverse, 16 dim, 32 strikeout, 64 curly underline,
+  128 hidden, 256 wide. `modes` bits: 1 application cursor keys, 2 bracketed paste, 4 mouse
+  reporting on, 8 SGR (1006), 16 focus events (1004), 32 alternate screen, 64 application
+  keypad, 128 report drags (1002), 256 report all motion (1003), 512 UTF-8 mouse (1005), 1024
+  X10 (9), 2048 alternate scroll (1007). Optional keys, present when they changed: `title`;
+  `scroll {offset, history}` (lines scrolled back, lines in the scrollback); `selection
+  [[y, x0, x1], …]` (the selected cells of the visible rows, empty when none); `marks [y, …]`
+  (visible rows that start a prompt: OSC 133 A, or Mark); `cwd` (OSC 7); `command {running,
+  exit?}` (OSC 133 C/D); `bell: true`; `clipboard [{set: text, selection} | {get: true,
+  selection}, …]` (OSC 52; a `get` is answered with `clipboard`).
+- Calls on a grid session (an error on other ptys; rows and columns are of the visible
+  screen): `scroll {id, lines|page|to}` (`lines` > 0 scrolls towards older text; `page` ±1;
+  `to`: `top`, `bottom`, `previousPrompt`, `nextPrompt`, or `row` with `row` counted from the
+  top of the buffer, which centres a row that is out of view); `select {id, op: start|update|
+  clear|all|marks, kind?: simple|semantic|lines|block, x, y, right?}` → bool (`marks` selects
+  the output of the last command; false if there is none); `selectionText {id}` → string or
+  null (soft-wrapped lines joined); `text {id}` → the whole buffer; `search {id, query,
+  caseSensitive?}` → matches in order, each a list of `[row, x0, x1]` pieces (rows from the top
+  of the buffer, more than one piece when the match crosses a soft wrap), at most 10000;
+  `mark {id, op?: add|remove}` → bool; `clear {id, what: scrollback|toStart|toMark|screen}` →
+  bool; `reset {id, hard?}`; `configure {id, scrollback?, clipboardWrite?, clipboardRead?}`;
+  `clipboard {id, text}` (answers an OSC 52 read; one answer per question); `cwd {id}` → the
+  directory of OSC 7, else the shell's from `/proc`, on any pty.
+- The grid also reads OSC 7 and OSC 133 itself (A prompt start, B prompt end, C output start,
+  D finished): prompts are marked on their rows, so marks follow the text through scrolling,
+  reflow and the scrollback; DEC mode 9 (X10 mouse) is read too. A synchronized update (mode
+  2026) that a program never ends is cut after 150 ms.
 - Limits: 64 ptys per window, rows and columns 1–1000, 256 arguments and environment
   variables of at most 4 KiB each. More than 1 MiB of output waiting for the app pauses
   reading from the pty (backpressure); more than 4 MiB of input waiting refuses `write`.
