@@ -1,26 +1,27 @@
-// The parts of the lock screen (kit page "Lock Screen", masters `Lock Screen/...`): the Glass/Lock
-// material, the password field and its states, the help button, the rolling clock, the status
-// items, the collapsed banners and the optional power row. Look and measures from
-// docs/design/amalfi/lock-screen.md; behaviour from docs/spec/lock.md (L-01).
+// The parts of the lock screen (kit page "Lock Screen", masters `Lock Screen/...`): the
+// appearance, the Glass/Lock material, the password field and its states, the help button, the
+// glass clock with its minute roll, the user block, the hint, the collapsed banners and the
+// optional power row. Look and measures from docs/design/amalfi/lock-screen.md; behaviour and
+// timings from docs/spec/lock.md (L-01). The status items are the shared Status Bar
+// (`status/status_items.dart`).
 
 import 'dart:async';
-import 'dart:math' as math;
+import 'dart:typed_data' show Float64List;
 import 'dart:ui' as ui;
 
-import 'package:flutter/services.dart' show TextInputAction;
+import 'package:flutter/services.dart' show LogicalKeyboardKey, TextInputAction;
 import 'package:flutter/widgets.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import 'package:silica_ui/silica_ui.dart';
 
 import '../l10n/l10n.dart';
-import '../menubar/status_icons.dart';
 import '../notifications/model.dart';
 import '../notifications/notifications.dart' show AppIcon;
-import '../system/system_status.dart';
 import 'lock_layout.dart';
 
-/// What the lock screen draws with: the appearance and the accessibility settings. Dark is
-/// the measured one; light, increase contrast and reduce transparency are provisional.
+/// What the lock screen draws with: the appearance and the accessibility settings. The dark
+/// appearance is the measured one; the light one, Increase contrast and Reduce transparency are
+/// Amalfi decisions (provisional).
 class LockLook {
   const LockLook({
     this.dark = true,
@@ -48,123 +49,178 @@ class LockLook {
   final bool reduceTransparency;
   final bool reduceMotion;
 
-  AmalfiColors get colors => dark ? AmalfiColors.dark : AmalfiColors.light;
+  Brightness get brightness => dark ? Brightness.dark : Brightness.light;
 
-  /// Text over the wallpaper (name, hint, link, status items, labels): `Primary` in dark,
-  /// white with a soft shadow in light.
-  Color get ink =>
-      dark ? AmalfiColors.dark.textPrimary : const Color(0xFFFFFFFF);
+  AmalfiColors get colors => AmalfiColors.of(brightness);
 
-  /// The help address: `Secondary` in dark, white 72 % in light.
-  Color get inkSecondary =>
-      dark ? AmalfiColors.dark.textSecondary : const Color(0xB8FFFFFF);
+  /// The Status Bar's treatment (Increase contrast first, as the system's).
+  AmalfiStatusBarLegibility get legibility => increaseContrast
+      ? AmalfiStatusBarLegibility.increaseContrast
+      : reduceTransparency
+      ? AmalfiStatusBarLegibility.reduceTransparency
+      : AmalfiStatusBarLegibility.standard;
 
-  /// What is drawn inside the glass (dots, glyphs, placeholder).
+  /// Text straight on the wallpaper (name, hint, labels): on-photo white, the dark
+  /// appearance's `Text/Primary` (#F4F5F7) in both; solid white under Increase contrast.
+  Color get onPhoto => increaseContrast
+      ? const Color(0xFFFFFFFF)
+      : AmalfiColors.dark.textPrimary;
+
+  /// The help address: `Dark/Text/Secondary` in dark, white 80 % in light.
+  Color get onPhotoSecondary =>
+      dark ? AmalfiColors.dark.textSecondary : const Color(0xCCFFFFFF);
+
+  /// The labels of the action buttons: on-photo white, pure white in light (the kit's).
+  Color get onPhotoLabel => dark ? onPhoto : const Color(0xFFFFFFFF);
+
+  /// `shadows.onPhoto` under every text drawn on the photo in the light appearance.
+  List<Shadow>? get onPhotoShadows => dark ? null : AmalfiShadows.onPhoto;
+
+  /// The 1 pt rim of Increase contrast around text on the photo (name, date).
+  Color? get onPhotoRim => increaseContrast ? const Color(0x66000000) : null;
+
+  /// What is drawn inside the glass (dots, caret, glyphs): `Text/Primary` of the appearance.
   Color get glassInk => colors.textPrimary;
   Color get glassInkSecondary => colors.textSecondary;
 
-  List<Shadow>? get textShadow => dark
-      ? null
-      : const [
-          Shadow(color: Color(0x2E000000), offset: Offset(0, 1), blurRadius: 4),
-        ];
-
-  Color get fill => increaseContrast
-      ? const Color(0xF22A2B30)
+  /// The `Glass/Lock` treatment in effect: null for the frosted glass, else the opaque variant.
+  AmalfiGlassVariant? get glassVariant => increaseContrast
+      ? AmalfiMaterials.lock.increaseContrast(brightness)
       : reduceTransparency
-      ? Color.alphaBlend(
-          dark ? const Color(0x47FFFFFF) : const Color(0x99FFFFFF),
-          colors.surfaceWindow,
-        )
-      : dark
-      ? const Color(0x47FFFFFF)
-      : const Color(0x99FFFFFF);
-
-  Color get edge => increaseContrast
-      ? const Color(0x99FFFFFF)
-      : dark
-      ? const Color(0x3DFFFFFF)
-      : const Color(0x1F000000);
-
-  Color get rimLight =>
-      dark ? const Color(0x38FFFFFF) : const Color(0xB3FFFFFF);
-
-  /// The glass blurs the wallpaper behind it (σ 20, saturation 1.1).
-  bool get blurs => !increaseContrast && !reduceTransparency;
+      ? AmalfiMaterials.lock.reduceTransparency(brightness)
+      : null;
 }
 
-/// The saturation 1.1 of `Glass/Lock` as a colour matrix.
-List<double> _saturation(double s) {
+/// The colour matrix that multiplies the saturation by [s] (Rec. 709 luma weights) and the
+/// brightness by [gain].
+List<double> lockToneMatrix(double s, [double gain = 1]) {
   const r = 0.2126, g = 0.7152, b = 0.0722;
   final i = 1 - s;
   return [
-    r * i + s, g * i, b * i, 0, 0, //
-    r * i, g * i + s, b * i, 0, 0, //
-    r * i, g * i, b * i + s, 0, 0, //
+    (r * i + s) * gain, g * i * gain, b * i * gain, 0, 0, //
+    r * i * gain, (g * i + s) * gain, b * i * gain, 0, 0, //
+    r * i * gain, g * i * gain, (b * i + s) * gain, 0, 0, //
     0, 0, 0, 1, 0,
   ];
 }
 
-/// `Glass/Lock` (tokens.json › materials): background blur σ 20, saturation 1.1, white 28 %
-/// (60 % light), a 1 pt lighter edge inside, a rim light on top, no refraction, no shadow. The
-/// blur radius never animates. Over the wallpaper in the same view (the lock surface is a view
-/// of its own, Flutter draws it).
+/// `Glass/Lock` (tokens.json › materials): the wallpaper blurred (20) and saturated (1.1)
+/// behind white 28 % (dark) or 60 % (light), a 1 pt edge inside and a rim light along the top;
+/// no refraction, no shadow, and its blur never animates. Increase contrast and Reduce
+/// transparency draw the material's opaque variants. Flutter draws it: the wallpaper is in the
+/// same view (the lock surface is a view of its own).
 class LockGlass extends StatelessWidget {
   const LockGlass({
     super.key,
     required this.look,
-    required this.radius,
+    this.shape = const CircleBorder(),
     this.edge,
     this.child,
   });
 
   final LockLook look;
-  final double radius;
 
-  /// The edge colour when it is not the material's (the reduced-motion error flash).
+  /// The outline: a circle, or a capsule (`AmalfiSmoothBorder` of half the height).
+  final ShapeBorder shape;
+
+  /// The edge colour when it is not the material's (the reduce-motion error flash).
   final Color? edge;
   final Widget? child;
 
   @override
   Widget build(BuildContext context) {
-    final borderRadius = BorderRadius.circular(radius);
-    return ClipRRect(
-      borderRadius: borderRadius,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          if (look.blurs)
-            BackdropFilter(
+    final m = AmalfiMaterials.lock;
+    final b = look.brightness;
+    final variant = look.glassVariant;
+    final face = CustomPaint(
+      painter: LockGlassFacePainter(
+        shape: shape,
+        fill: variant?.fill ?? m.tint(b) ?? const Color(0x00000000),
+        rim: edge ?? variant?.rimInside ?? m.rimInside(b),
+        rimLight: variant == null ? m.rimLight(b) : variant.rimLight,
+      ),
+      child: child,
+    );
+    if (variant != null) return face;
+    return Stack(
+      fit: StackFit.passthrough,
+      children: [
+        Positioned.fill(
+          child: ClipPath(
+            clipper: ShapeBorderClipper(shape: shape),
+            child: BackdropFilter(
               filter: ui.ImageFilter.compose(
-                outer: ui.ColorFilter.matrix(_saturation(1.1)),
-                inner: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                outer: ColorFilter.matrix(lockToneMatrix(m.saturation)),
+                inner: ui.ImageFilter.blur(
+                  sigmaX: m.backgroundBlur,
+                  sigmaY: m.backgroundBlur,
+                  tileMode: TileMode.clamp,
+                ),
               ),
-              child: ColoredBox(color: look.fill),
-            )
-          else
-            ColoredBox(color: look.fill),
-          Positioned(
-            left: radius,
-            right: radius,
-            top: 1,
-            height: 1,
-            child: ColoredBox(color: look.rimLight),
-          ),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              borderRadius: borderRadius,
-              border: Border.all(color: edge ?? look.edge),
+              child: const SizedBox.expand(),
             ),
           ),
-          ?child,
-        ],
-      ),
+        ),
+        face,
+      ],
     );
   }
 }
 
-/// A button of the lock screen: hover and press overlay (`fade.quick` in, 60 ms out), a
-/// pointer, Tab focus and Return/Space.
+/// The face of `Glass/Lock` (and of the avatar disc): the fill, the rim light (an inner
+/// shadow 0, 1, blur 1) and the 1 pt edge inside.
+class LockGlassFacePainter extends CustomPainter {
+  const LockGlassFacePainter({
+    required this.shape,
+    required this.fill,
+    required this.rim,
+    required this.rimLight,
+  });
+
+  final ShapeBorder shape;
+  final Color fill;
+  final Color rim;
+  final Color? rimLight;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final outline = shape.getOuterPath(rect);
+    canvas.drawPath(outline, Paint()..color = fill);
+    canvas.save();
+    canvas.clipPath(outline);
+    if (rimLight case final light?) {
+      canvas.drawPath(
+        Path()
+          ..fillType = PathFillType.evenOdd
+          ..addRect(rect.inflate(4))
+          ..addPath(outline, const Offset(0, 1)),
+        Paint()
+          ..color = light
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 0.5),
+      );
+    }
+    canvas.drawPath(
+      outline,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..color = rim,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(LockGlassFacePainter old) =>
+      old.shape != shape ||
+      old.fill != fill ||
+      old.rim != rim ||
+      old.rimLight != rimLight;
+}
+
+/// A button of the lock screen: a hover and press overlay (`fade.quick` in, 60 ms out) over
+/// [overlay] (a circle of that side at the top centre; null: the whole button), a pointer,
+/// Tab focus and Return/Space.
 class LockButton extends StatefulWidget {
   const LockButton({
     super.key,
@@ -172,14 +228,14 @@ class LockButton extends StatefulWidget {
     required this.label,
     required this.child,
     this.overlay,
+    this.overlayColor = const Color(0x1FFFFFFF),
   });
 
   final VoidCallback onTap;
   final String label;
   final Widget child;
-
-  /// The side of the circle the overlay covers, at the top and centred; null: all of it.
   final double? overlay;
+  final Color overlayColor;
 
   @override
   State<LockButton> createState() => _LockButtonState();
@@ -188,10 +244,11 @@ class LockButton extends StatefulWidget {
 class _LockButtonState extends State<LockButton> {
   bool _hover = false;
   bool _down = false;
+  bool _focused = false;
 
   @override
   Widget build(BuildContext context) {
-    final on = _hover || _down;
+    final on = _hover || _down || _focused;
     return Semantics(
       button: true,
       label: widget.label,
@@ -200,6 +257,13 @@ class _LockButtonState extends State<LockButton> {
       child: FocusableActionDetector(
         mouseCursor: SystemMouseCursors.click,
         onShowHoverHighlight: (v) => setState(() => _hover = v),
+        onShowFocusHighlight: (v) => setState(() => _focused = v),
+        // Return and Space press the focused button (the lock view has no app shortcuts).
+        shortcuts: const {
+          SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+          SingleActivator(LogicalKeyboardKey.numpadEnter): ActivateIntent(),
+          SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+        },
         actions: {
           ActivateIntent: CallbackAction<ActivateIntent>(
             onInvoke: (_) {
@@ -227,13 +291,11 @@ class _LockButtonState extends State<LockButton> {
                       height: widget.overlay,
                       child: AnimatedOpacity(
                         opacity: on ? 1 : 0,
-                        duration: on
-                            ? fadeQuick
-                            : const Duration(milliseconds: 60),
-                        child: const DecoratedBox(
+                        duration: on ? fadeQuick : fadeOut,
+                        child: DecoratedBox(
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: Color(0x1FFFFFFF),
+                            color: widget.overlayColor,
                           ),
                         ),
                       ),
@@ -249,8 +311,8 @@ class _LockButtonState extends State<LockButton> {
   }
 }
 
-/// The help button: a 28 `Glass/Lock` disc holding the `question` glyph (28, its circle draws
-/// ~23).
+/// The help button (kit `Lock Screen/Help Button/*`): a 32 `Glass/Lock` circle, `?` in
+/// `Title 3` (16/22, 600) `Text/Primary`, centred.
 class LockHelpButton extends StatelessWidget {
   const LockHelpButton({
     super.key,
@@ -264,30 +326,28 @@ class LockHelpButton extends StatelessWidget {
   final Color? edge;
 
   @override
-  Widget build(BuildContext context) {
-    return SizedBox.square(
-      dimension: 28,
-      child: LockButton(
-        onTap: onTap,
-        label: l10nOf(context).lockHelpButton,
-        child: LockGlass(
-          look: look,
-          radius: 14,
-          edge: edge,
-          child: Center(
-            child: AmalfiSymbol(
-              'question',
-              size: 28,
-              color: look.glassInkSecondary,
-            ),
+  Widget build(BuildContext context) => SizedBox.square(
+    dimension: LockMetrics.help,
+    child: LockButton(
+      onTap: onTap,
+      label: l10nOf(context).lockHelpButton,
+      child: LockGlass(
+        look: look,
+        edge: edge,
+        child: Center(
+          child: Text(
+            '?',
+            key: const ValueKey('lock help glyph'),
+            textAlign: TextAlign.center,
+            style: AmalfiType.title3(color: look.glassInk),
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
 }
 
-/// The password field (kit `Lock Screen/Password Field/<State>`): 160 x 28 and never another
+/// The password field (kit `Lock Screen/Password Field/<State>`): 208 × 32 and never another
 /// size. The characters are typed into a real (hidden) text input; what is seen is the dots,
 /// the caret, the selection and the submit button.
 class LockPasswordField extends StatefulWidget {
@@ -329,6 +389,19 @@ class _LockPasswordFieldState extends State<LockPasswordField> {
   }
 
   @override
+  void didUpdateWidget(LockPasswordField old) {
+    super.didUpdateWidget(old);
+    if (old.focusNode != widget.focusNode) {
+      old.focusNode.removeListener(_focusChanged);
+      widget.focusNode.addListener(_focusChanged);
+    }
+    if (old.controller != widget.controller) {
+      old.controller.removeListener(_typed);
+      widget.controller.addListener(_typed);
+    }
+  }
+
+  @override
   void dispose() {
     _blink?.cancel();
     widget.focusNode.removeListener(_focusChanged);
@@ -356,29 +429,29 @@ class _LockPasswordFieldState extends State<LockPasswordField> {
   @override
   Widget build(BuildContext context) {
     final look = widget.look;
+    final colors = look.colors;
     final l = l10nOf(context);
     final count = widget.controller.text.runes.length;
     final focused = widget.focusNode.hasFocus;
     final state = widget.state;
-    final style = AmalfiType.body(color: look.glassInkSecondary);
-    return SizedBox(
-      width: 160,
-      height: 28,
+    final verifying = state == LockFieldState.verifying;
+    return SizedBox.fromSize(
+      size: LockMetrics.fieldSize,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.focusNode.requestFocus,
         child: LockGlass(
           look: look,
-          radius: 14,
+          shape: const AmalfiSmoothBorder(radius: LockFieldMetrics.radius),
           edge: widget.edge,
           child: Stack(
             children: [
               // The input itself: obscured, nothing of it is seen.
               Positioned(
-                left: 12,
-                top: 6,
-                width: 110,
-                height: 16,
+                left: LockFieldMetrics.caretX,
+                top: LockFieldMetrics.caretY,
+                width: LockFieldMetrics.submitX - LockFieldMetrics.caretX - 4,
+                height: LockFieldMetrics.caretHeight,
                 child: Semantics(
                   label: l.lockPasswordField,
                   child: EditableText(
@@ -407,69 +480,86 @@ class _LockPasswordFieldState extends State<LockPasswordField> {
               Positioned.fill(
                 child: IgnorePointer(
                   child: CustomPaint(
+                    key: const ValueKey('lock field ink'),
                     painter: LockFieldPainter(
                       count: count,
                       dot: look.glassInk,
                       caret:
-                          focused && _caret && state != LockFieldState.verifying
+                          focused &&
+                              _caret &&
+                              !verifying &&
+                              state != LockFieldState.wrong
                           ? look.glassInk
                           : null,
                       selection: state == LockFieldState.wrong
-                          ? look.colors.lineFocus
+                          ? colors.lineFocus
                           : null,
                     ),
                   ),
                 ),
               ),
-              if (count == 0 && state != LockFieldState.verifying)
+              if (count == 0 && !verifying)
                 Positioned(
                   left: LockFieldMetrics.placeholderX,
-                  right: 4,
-                  top: 0,
-                  bottom: 0,
+                  top: LockFieldMetrics.placeholderY,
+                  width: 160,
                   child: IgnorePointer(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        widget.placeholder,
-                        key: const ValueKey('lock placeholder'),
-                        maxLines: 1,
-                        overflow: TextOverflow.clip,
-                        style: style,
-                      ),
+                    child: Text(
+                      widget.placeholder,
+                      key: const ValueKey('lock placeholder'),
+                      maxLines: 1,
+                      softWrap: false,
+                      overflow: TextOverflow.fade,
+                      style: AmalfiType.body(color: look.glassInkSecondary),
                     ),
                   ),
                 ),
-              if (state == LockFieldState.verifying)
+              if (verifying)
                 const Positioned(
                   left: LockFieldMetrics.spinnerX,
                   top: LockFieldMetrics.spinnerY,
-                  child: AmalfiSpinner(size: AmalfiProgressSize.small),
+                  child: AmalfiSpinner(
+                    key: ValueKey('lock spinner'),
+                    size: AmalfiProgressSize.small,
+                  ),
                 )
-              else if (count > 0)
+              else
                 Positioned(
                   left: LockFieldMetrics.submitX,
                   top: LockFieldMetrics.submitY,
-                  child: SizedBox.square(
-                    dimension: LockFieldMetrics.submitRing,
-                    child: LockButton(
-                      key: const ValueKey('lock submit'),
-                      onTap: widget.onSubmit,
-                      label: l.lockSubmit,
-                      child: Stack(
-                        children: [
-                          CustomPaint(
-                            size: const Size.square(24),
-                            painter: _RingPainter(look.glassInkSecondary),
-                          ),
-                          Center(
-                            child: AmalfiSymbol(
-                              'arrow-right',
-                              size: 16,
-                              color: look.glassInkSecondary,
+                  width: LockFieldMetrics.submit,
+                  height: LockFieldMetrics.submit,
+                  // The submit comes with the first character (`fade.quick`) and goes in
+                  // 60 ms when the field is emptied.
+                  child: AnimatedOpacity(
+                    key: const ValueKey('lock submit fade'),
+                    opacity: count > 0 ? 1 : 0,
+                    duration: count > 0 ? fadeQuick : fadeOut,
+                    child: IgnorePointer(
+                      ignoring: count == 0,
+                      // Not in the Tab order (field → help → input source): Return in the
+                      // field submits.
+                      child: ExcludeFocus(
+                        child: LockButton(
+                          key: const ValueKey('lock submit'),
+                          onTap: widget.onSubmit,
+                          label: l.lockSubmit,
+                          overlayColor: const Color(0x29FFFFFF),
+                          child: DecoratedBox(
+                            key: const ValueKey('lock submit disc'),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: colors.accentAmalfi,
+                            ),
+                            child: Center(
+                              child: AmalfiSymbol(
+                                'arrow-right',
+                                size: LockFieldMetrics.submitGlyph,
+                                color: colors.textOnAccent,
+                              ),
                             ),
                           ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -480,27 +570,6 @@ class _LockPasswordFieldState extends State<LockPasswordField> {
       ),
     );
   }
-}
-
-class _RingPainter extends CustomPainter {
-  const _RingPainter(this.color);
-
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawCircle(
-      size.center(Offset.zero),
-      size.shortestSide / 2 - 0.75,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5
-        ..color = color,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_RingPainter old) => old.color != color;
 }
 
 /// The dots, the selection and the caret of the field.
@@ -515,7 +584,7 @@ class LockFieldPainter extends CustomPainter {
   final int count;
   final Color dot;
 
-  /// The caret's colour; null: it is in its off phase or the field has no focus.
+  /// The caret's colour; null: it is in its off phase, hidden, or the field has no focus.
   final Color? caret;
 
   /// The selection capsule's colour (`Line/Focus`) after a failure; null: none.
@@ -523,29 +592,36 @@ class LockFieldPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final shown = math.min(count, LockFieldMetrics.visibleDots);
-    if (selection != null && count > 0) {
+    final shown = LockFieldMetrics.shown(count);
+    if (selection case final color? when count > 0) {
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           LockFieldMetrics.selection(count),
-          const Radius.circular(4),
+          const Radius.circular(LockFieldMetrics.caretHeight / 2),
         ),
-        Paint()..color = selection!,
+        Paint()..color = color,
       );
     }
     final paint = Paint()..color = dot;
     for (var i = 0; i < shown; i++) {
-      canvas.drawCircle(
-        Offset(
-          LockFieldMetrics.dotLeft(i) + LockFieldMetrics.dot / 2,
-          size.height / 2,
+      canvas.drawOval(
+        Rect.fromLTWH(
+          LockFieldMetrics.dotLeft(i),
+          LockFieldMetrics.dotY,
+          LockFieldMetrics.dot,
+          LockFieldMetrics.dot,
         ),
-        LockFieldMetrics.dot / 2,
         paint,
       );
     }
-    if (caret != null && selection == null) {
-      canvas.drawRect(LockFieldMetrics.caret(count), Paint()..color = caret!);
+    if (caret case final color?) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          LockFieldMetrics.caret(count),
+          const Radius.circular(1),
+        ),
+        Paint()..color = color,
+      );
     }
   }
 
@@ -557,94 +633,301 @@ class LockFieldPainter extends CustomPainter {
       old.selection != selection;
 }
 
-// ---- Clock ------------------------------------------------------------------------------
+// ---- Clock --------------------------------------------------------------------------------
 
-/// The date: `Inter 40 Semibold`, white 84 %.
-TextStyle lockDateStyle(LockLook look) => AmalfiType.title1().copyWith(
-  fontSize: 40,
-  fontWeight: FontWeight.w600,
-  height: 1,
-  color: look.increaseContrast
-      ? const Color(0xFFFFFFFF)
-      : const Color(0xD6FFFFFF),
-  shadows: look.textShadow,
-);
-
-const TextStyle _digits = TextStyle(
-  fontFamily: 'Inter',
-  package: 'silica_ui',
-  fontSize: 200,
-  fontWeight: FontWeight.w700,
-  height: 1,
-  leadingDistribution: TextLeadingDistribution.even,
-  fontFeatures: [FontFeature.tabularFigures()],
-);
-
-/// The clock digits (`Inter 200 Bold`, tabular): white 78 % with a 1 pt white 90 % line inside
-/// and a 1 pt black 24 % rim outside (the backdrop blur through the glyphs is not drawn: the
-/// fill is translucent over the wallpaper). Reduce transparency: white 92 %. Increase contrast:
-/// solid white, a 2 pt black 40 % rim, no inner line.
-class _DigitText extends StatelessWidget {
-  const _DigitText(this.text, this.look);
+/// Text on the photo: [style] in [color], with the light appearance's `shadows.onPhoto` and,
+/// under Increase contrast, a 1 pt black 40 % rim outside the glyphs ([rimWidth] for others).
+class LockPhotoText extends StatelessWidget {
+  const LockPhotoText(
+    this.text, {
+    super.key,
+    required this.style,
+    required this.look,
+    this.color,
+    this.maxLines = 1,
+    this.textAlign = TextAlign.center,
+    this.rimWidth = 1,
+  });
 
   final String text;
+  final TextStyle style;
   final LockLook look;
+
+  /// The ink; null: on-photo white.
+  final Color? color;
+  final int maxLines;
+  final TextAlign textAlign;
+  final double rimWidth;
 
   @override
   Widget build(BuildContext context) {
-    final contrast = look.increaseContrast;
-    final fill = contrast
-        ? const Color(0xFFFFFFFF)
-        : look.reduceTransparency
-        ? const Color(0xEBFFFFFF)
-        : const Color(0xC7FFFFFF);
-    final rim = contrast
-        ? const Color(0x66000000)
-        : look.dark
-        ? const Color(0x3D000000)
-        : const Color(0x52000000);
-    Widget layer(TextStyle s) => Text(text, style: s, softWrap: false);
+    final ink = style.copyWith(
+      color: color ?? look.onPhoto,
+      shadows: look.onPhotoShadows,
+    );
+    Widget line(TextStyle s, {Key? key}) => Text(
+      text,
+      key: key,
+      maxLines: maxLines,
+      softWrap: maxLines > 1,
+      overflow: TextOverflow.ellipsis,
+      textAlign: textAlign,
+      style: s,
+    );
+    final rim = look.onPhotoRim;
+    if (rim == null) return line(ink);
     return Stack(
+      alignment: Alignment.center,
       children: [
-        layer(
-          _digits.copyWith(
-            foreground: Paint()
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = contrast ? 4 : 2
-              ..color = rim,
-          ),
-        ),
-        layer(_digits.copyWith(color: fill)),
-        if (!contrast)
-          layer(
-            _digits.copyWith(
+        // A 2 × width stroke under the solid fill: only its outer half shows.
+        ExcludeSemantics(
+          child: line(
+            style.copyWith(
               foreground: Paint()
                 ..style = PaintingStyle.stroke
-                ..strokeWidth = 1
-                ..color = const Color(0xE6FFFFFF),
+                ..strokeWidth = rimWidth * 2
+                ..strokeJoin = StrokeJoin.round
+                ..color = rim,
             ),
           ),
+        ),
+        line(ink),
       ],
     );
   }
 }
 
-/// The distance from the top of a 200 pt line to the top of its digits, from the font itself.
-double digitInset(String sample) {
+/// The date (`Lock Date` 32/40, 600): white 84 % (92 % under Reduce transparency, solid white
+/// with a 1 pt rim under Increase contrast), with the light appearance's on-photo shadow.
+class LockDate extends StatelessWidget {
+  const LockDate({super.key, required this.date, required this.look});
+
+  final String date;
+  final LockLook look;
+
+  @override
+  Widget build(BuildContext context) => LockPhotoText(
+    date,
+    look: look,
+    style: AmalfiType.lockDate(),
+    color: look.increaseContrast
+        ? const Color(0xFFFFFFFF)
+        : look.reduceTransparency
+        ? AmalfiGlyphMaterials.clock.reduceTransparencyFill
+        : const Color(0xD6FFFFFF),
+  );
+}
+
+/// The text style of the clock: `Lock Clock` (Inter 200/200 Semibold, tracking −6, tabular).
+TextStyle get lockClockStyle => AmalfiType.lockClock();
+
+/// One string of the clock in `Glass/Clock` (tokens.json): the wallpaper under the glyphs,
+/// blurred (8), saturated (1.3) and brightened (1.3), under a white 76 % fill, a 1 pt white 80 %
+/// line inside the outline and a 1 pt black 32 % rim outside it. Reduce transparency: white
+/// 92 % and the rim, no glass. Increase contrast: solid white with a 2 pt black 40 % rim (and
+/// the on-photo shadow in light). The text starts [inset] from the box's left edge, so that ink
+/// running past the advance (tracking −6) keeps its glass. The edge refraction and the specular
+/// highlights of the token are not drawn yet (provisional: the glass shader works on shapes,
+/// not glyphs).
+class LockGlyphGlass extends StatelessWidget {
+  const LockGlyphGlass(
+    this.text, {
+    super.key,
+    required this.look,
+    this.inset = 0,
+  });
+
+  final String text;
+  final LockLook look;
+  final double inset;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = AmalfiGlyphMaterials.clock;
+    final style = lockClockStyle;
+    Widget layer(TextStyle s) => Positioned(
+      left: inset,
+      top: 0,
+      child: Text(text, style: s, softWrap: false, maxLines: 1),
+    );
+    Paint stroke(double width, Color color) => Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = width * 2
+      ..strokeJoin = StrokeJoin.round
+      ..color = color;
+    if (look.increaseContrast) {
+      return Stack(
+        clipBehavior: Clip.none,
+        children: [
+          layer(
+            style.copyWith(
+              foreground: stroke(
+                m.increaseContrastRimWidth,
+                m.increaseContrastRim,
+              ),
+              shadows: look.onPhotoShadows,
+            ),
+          ),
+          layer(style.copyWith(color: m.increaseContrastFill)),
+        ],
+      );
+    }
+    final rim = layer(
+      style.copyWith(
+        foreground: stroke(m.rimOutsideWidth, m.rimOutside(look.brightness)),
+      ),
+    );
+    if (look.reduceTransparency) {
+      return Stack(
+        clipBehavior: Clip.none,
+        children: [
+          rim,
+          layer(style.copyWith(color: m.reduceTransparencyFill)),
+        ],
+      );
+    }
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        rim,
+        Positioned.fill(
+          child: _GlyphMask(
+            text: text,
+            style: style,
+            inset: inset,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: ClipRect(
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.compose(
+                        outer: ColorFilter.matrix(
+                          lockToneMatrix(m.saturation, m.brightness),
+                        ),
+                        inner: ui.ImageFilter.blur(
+                          sigmaX: m.backgroundBlur,
+                          sigmaY: m.backgroundBlur,
+                          tileMode: TileMode.clamp,
+                        ),
+                      ),
+                      child: ColoredBox(color: m.fill),
+                    ),
+                  ),
+                ),
+                layer(
+                  style.copyWith(
+                    foreground: stroke(m.lineInsideWidth, m.lineInside),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Keeps [child] only inside the glyphs of [text] (destination-in with an image of the glyphs,
+/// drawn at the display's resolution): the glass clipped to the digits.
+class _GlyphMask extends StatefulWidget {
+  const _GlyphMask({
+    required this.text,
+    required this.style,
+    required this.inset,
+    required this.child,
+  });
+
+  final String text;
+  final TextStyle style;
+  final double inset;
+  final Widget child;
+
+  @override
+  State<_GlyphMask> createState() => _GlyphMaskState();
+}
+
+class _GlyphMaskState extends State<_GlyphMask> {
+  ui.Image? _mask;
+  Object? _maskFor;
+
+  @override
+  void dispose() {
+    _mask?.dispose();
+    super.dispose();
+  }
+
+  ui.Image? _maskOf(Size size, double dpr) {
+    final key = (widget.text, widget.style, widget.inset, size, dpr);
+    if (key == _maskFor) return _mask;
+    final width = (size.width * dpr).ceil();
+    final height = (size.height * dpr).ceil();
+    if (width <= 0 || height <= 0 || !size.isFinite) return null;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder)..scale(dpr);
+    final painter = TextPainter(
+      text: TextSpan(
+        text: widget.text,
+        style: widget.style.copyWith(color: const Color(0xFFFFFFFF)),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    painter.paint(canvas, Offset(widget.inset, 0));
+    painter.dispose();
+    final picture = recorder.endRecording();
+    _mask?.dispose();
+    _mask = picture.toImageSync(width, height);
+    picture.dispose();
+    _maskFor = key;
+    return _mask;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dpr = MediaQuery.maybeDevicePixelRatioOf(context) ?? 1;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final mask = _maskOf(constraints.biggest, dpr);
+        // Without a mask (no room) nothing of the glass shows.
+        if (mask == null) return const SizedBox.shrink();
+        final scale = 1 / dpr;
+        return ShaderMask(
+          blendMode: BlendMode.dstIn,
+          shaderCallback: (_) => ImageShader(
+            mask,
+            TileMode.decal,
+            TileMode.decal,
+            Float64List.fromList([
+              scale, 0, 0, 0, //
+              0, scale, 0, 0, //
+              0, 0, 1, 0, //
+              0, 0, 0, 1,
+            ]),
+          ),
+          child: widget.child,
+        );
+      },
+    );
+  }
+}
+
+/// The distance from the top of the 200 pt time box to the top of its digits, from the font.
+double digitInset() {
   final p = TextPainter(
-    text: TextSpan(text: sample, style: _digits),
+    text: TextSpan(text: '0', style: lockClockStyle),
     textDirection: TextDirection.ltr,
   )..layout();
   final inset =
       p.computeDistanceToActualBaseline(TextBaseline.alphabetic) -
       LockMetrics.digitHeight;
   p.dispose();
-  return inset.isFinite ? math.max(0, inset) : 0;
+  return inset.isFinite && inset > 0 ? inset : 0;
 }
 
 double _advance(String text) {
   final p = TextPainter(
-    text: TextSpan(text: text, style: _digits),
+    text: TextSpan(text: text, style: lockClockStyle),
     textDirection: TextDirection.ltr,
   )..layout();
   final w = p.width;
@@ -652,11 +935,12 @@ double _advance(String text) {
   return w;
 }
 
-/// The time. A minute change rolls only the digits that change, upwards, ~900 ms decelerating:
-/// the old digit goes up and fades out, the new one comes up from below and fades in, through
-/// a 24 pt vertical fade mask; the ones digit starts 60 ms after the tens. Reduce motion: a
-/// 150 ms cross-fade. The cells have the digit height (145) and the tabular width, so that the
-/// other digits never move.
+/// The time (kit `Lock Clock` in `Glass/Clock`), centred in the 960 × 200 time box. A minute
+/// change rolls only the digits that change, upwards, ~900 ms decelerating: the old digit goes
+/// up by the digit height and fades out, the new one comes up from below and fades in, through
+/// a soft mask 24 pt beyond the top and the bottom of the digit box; the ones digit starts
+/// 60 ms after the tens. Reduce motion: a `fade.quick` cross-fade. The cells have the tabular
+/// width, so that the other digits never move.
 class LockClock extends StatefulWidget {
   const LockClock({super.key, required this.time, required this.look});
 
@@ -671,9 +955,13 @@ class LockClockState extends State<LockClock>
     with SingleTickerProviderStateMixin {
   late final AnimationController _roll = AnimationController(vsync: this);
   String _old = '';
-  late final double _inset = digitInset('0');
+  late final double _inset = digitInset();
 
-  /// The progress 0-1 of the roll of a cell, [index] counting the digits of the time.
+  /// The room around a cell's glyphs that the glass may use (tracking −6 lets the ink run past
+  /// the advance).
+  static const double _bleed = 24;
+
+  /// The progress 0–1 of the roll of the cell of digit [index] (counting digits only).
   double progressOf(int index) => _progress(_roll.value, index);
 
   /// Whether a roll is running.
@@ -720,6 +1008,8 @@ class LockClockState extends State<LockClock>
   Widget build(BuildContext context) {
     final look = widget.look;
     final time = widget.time;
+    final digitTop = _inset;
+    final digitBottom = _inset + LockMetrics.digitHeight;
     return Semantics(
       label: time,
       excludeSemantics: true,
@@ -740,59 +1030,69 @@ class LockClockState extends State<LockClock>
                 old[i] != c &&
                 _roll.isAnimating;
             final width = _advance(isDigit ? '0' : c);
-            Widget cell(String s, {double dy = 0, double opacity = 1}) =>
+            Widget glyph(String s, {double dy = 0, double opacity = 1}) =>
                 Positioned(
-                  left: 0,
-                  top: -_inset + dy,
-                  child: Opacity(opacity: opacity, child: _DigitText(s, look)),
+                  left: -_bleed,
+                  top: dy,
+                  width: width + 2 * _bleed,
+                  height: LockMetrics.timeHeight,
+                  child: Opacity(
+                    opacity: opacity,
+                    child: LockGlyphGlass(s, look: look, inset: _bleed),
+                  ),
                 );
             Widget inner;
             if (!changing) {
-              inner = Stack(clipBehavior: Clip.none, children: [cell(c)]);
+              inner = Stack(clipBehavior: Clip.none, children: [glyph(c)]);
             } else {
               final p = _progress(_roll.value, index);
-              final e = look.reduceMotion ? p : minuteRollCurve.transform(p);
-              final travel = look.reduceMotion ? 0.0 : LockMetrics.digitHeight;
-              inner = ShaderMask(
-                blendMode: BlendMode.dstIn,
-                shaderCallback: (r) => ui.Gradient.linear(
-                  Offset(0, r.top),
-                  Offset(0, r.bottom),
-                  const [
-                    Color(0x00000000),
-                    Color(0xFF000000),
-                    Color(0xFF000000),
-                    Color(0x00000000),
-                  ],
-                  [
-                    0,
-                    minuteRollMask / LockMetrics.digitHeight,
-                    1 - minuteRollMask / LockMetrics.digitHeight,
-                    1,
-                  ],
-                ),
-                child: Stack(
+              if (look.reduceMotion) {
+                inner = Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    cell(old[i], dy: -travel * e, opacity: 1 - e),
-                    cell(c, dy: travel * (1 - e), opacity: e),
-                  ],
-                ),
-              );
-              if (look.reduceMotion)
-                inner = Stack(
-                  children: [
-                    cell(old[i], opacity: 1 - e),
-                    cell(c, opacity: e),
+                    glyph(old[i], opacity: 1 - p),
+                    glyph(c, opacity: p),
                   ],
                 );
+              } else {
+                final e = minuteRollCurve.transform(p);
+                const travel = LockMetrics.digitHeight;
+                const h = LockMetrics.timeHeight;
+                inner = ShaderMask(
+                  key: ValueKey('lock roll mask $i'),
+                  blendMode: BlendMode.dstIn,
+                  shaderCallback: (r) => ui.Gradient.linear(
+                    Offset(0, r.top),
+                    Offset(0, r.bottom),
+                    const [
+                      Color(0x00000000),
+                      Color(0xFF000000),
+                      Color(0xFF000000),
+                      Color(0x00000000),
+                    ],
+                    [
+                      ((digitTop - minuteRollMask) / h).clamp(0.0, 1.0),
+                      (digitTop / h).clamp(0.0, 1.0),
+                      (digitBottom / h).clamp(0.0, 1.0),
+                      ((digitBottom + minuteRollMask) / h).clamp(0.0, 1.0),
+                    ],
+                  ),
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      glyph(old[i], dy: -travel * e, opacity: 1 - e),
+                      glyph(c, dy: travel * (1 - e), opacity: e),
+                    ],
+                  ),
+                );
+              }
             }
             cells.add(
               SizedBox(
                 key: ValueKey('lock digit $i'),
                 width: width,
-                height: LockMetrics.digitHeight,
-                child: ClipRect(child: inner),
+                height: LockMetrics.timeHeight,
+                child: inner,
               ),
             );
           }
@@ -803,81 +1103,50 @@ class LockClockState extends State<LockClock>
   }
 }
 
-// ---- Status items -----------------------------------------------------------------------
+// ---- User ---------------------------------------------------------------------------------
 
-/// The status items at the top right (kit `Lock Screen/Status Items`): Wi-Fi and Battery, 36 x 28
-/// each, glyph 20, 4 apart, white over the wallpaper. The input source item is not drawn: the
-/// shell has no input source data.
-class LockStatusItems extends StatelessWidget {
-  const LockStatusItems({super.key, required this.system, required this.look});
+/// The avatar (kit `Lock Screen/User/*`): a 72 `Accent/Amalfi` disc with a 1 pt white 24 % edge
+/// inside (60 % under Increase contrast) and a white 22 % rim light, and `person-fill` 40
+/// `Text/On Accent` centred. No pictures are kept yet; the lock glyph when the user is not
+/// shown.
+class LockAvatar extends StatelessWidget {
+  const LockAvatar({super.key, required this.look, required this.showUser});
 
-  final SystemSource? system;
   final LockLook look;
+  final bool showUser;
 
   @override
   Widget build(BuildContext context) {
-    final source = system;
-    if (source == null) return const SizedBox.shrink();
-    return ValueListenableBuilder<SystemSnapshot>(
-      valueListenable: source,
-      builder: (context, s, _) {
-        final items = <Widget>[
-          if (s.wired && s.wifiSsid.isEmpty)
-            _item(StatusKind.wired, const ValueKey('lock status wired'))
-          else if (s.wifiAvailable)
-            _item(
-              StatusKind.network,
-              const ValueKey('lock status wifi'),
-              level: s.wifiStrength / 100,
-              dim: !s.wifiEnabled || s.wifiSsid.isEmpty,
-            ),
-          if (s.batteryPresent)
-            _item(
-              StatusKind.battery,
-              const ValueKey('lock status battery'),
-              level: s.batteryPercent / 100,
-              charging: s.batteryCharging,
-            ),
-        ];
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (var i = 0; i < items.length; i++) ...[
-              if (i > 0) const SizedBox(width: 4),
-              items[i],
-            ],
-          ],
-        );
-      },
+    final colors = look.colors;
+    return SizedBox.square(
+      dimension: LockMetrics.avatar,
+      child: CustomPaint(
+        key: const ValueKey('lock avatar disc'),
+        painter: LockGlassFacePainter(
+          shape: const CircleBorder(),
+          fill: colors.accentAmalfi,
+          rim: look.increaseContrast
+              ? const Color(0x99FFFFFF)
+              : const Color(0x3DFFFFFF),
+          rimLight: const Color(0x38FFFFFF),
+        ),
+        child: Center(
+          child: AmalfiSymbol(
+            showUser ? 'person-fill' : 'lock',
+            size: 40,
+            color: colors.textOnAccent,
+          ),
+        ),
+      ),
     );
   }
-
-  Widget _item(
-    StatusKind kind,
-    Key key, {
-    double level = 1,
-    bool dim = false,
-    bool charging = false,
-  }) => SizedBox(
-    key: key,
-    width: 36,
-    height: 28,
-    child: Center(
-      child: StatusIcon(
-        kind: kind,
-        color: look.ink,
-        level: level,
-        dim: dim,
-        charging: charging,
-      ),
-    ),
-  );
 }
 
-// ---- Banners ----------------------------------------------------------------------------
+// ---- Banners ------------------------------------------------------------------------------
 
-/// A collapsed banner (kit `Lock Screen/Notification/Collapsed`): 360 x 60, `Glass/Regular`
-/// radius 18, the app's icon 36 at 12, the app name, "N notifications", the time. The body is
+/// A collapsed banner (kit `Lock Screen/Notification/Collapsed`): 360 × 60, `Glass/Regular`
+/// radius 18, the app's icon 36 at 12, the app name (`Headline`) at x 56, "N notifications"
+/// (`Callout`, secondary) under it, the time (`Caption`, tertiary) at the right. The body is
 /// never shown. It slides in from the right edge (exponential, tau 71 ms) with a 210 ms fade.
 class LockBanner extends StatefulWidget {
   const LockBanner({
@@ -941,16 +1210,17 @@ class _LockBannerState extends State<LockBanner>
                 : (ms / bannerFade.inMilliseconds).clamp(0.0, 1.0),
             child: Transform.translate(
               offset: Offset(
-                widget.look.reduceMotion ? 0 : 376 * bannerSlideLeft(ms),
+                widget.look.reduceMotion
+                    ? 0
+                    : (LockMetrics.bannerSize.width + 16) * bannerSlideLeft(ms),
                 0,
               ),
               child: child,
             ),
           );
         },
-        child: SizedBox(
-          width: 360,
-          height: 60,
+        child: SizedBox.fromSize(
+          size: LockMetrics.bannerSize,
           child: AmalfiGlass(
             material: AmalfiMaterials.regular,
             radius: 18,
@@ -964,9 +1234,9 @@ class _LockBannerState extends State<LockBanner>
                   child: AppIcon(n),
                 ),
                 Positioned(
-                  left: 60,
-                  right: 64,
-                  top: 10,
+                  left: 56,
+                  top: 12,
+                  width: 240,
                   child: Text(
                     app,
                     maxLines: 1,
@@ -975,9 +1245,9 @@ class _LockBannerState extends State<LockBanner>
                   ),
                 ),
                 Positioned(
-                  left: 60,
-                  right: 64,
+                  left: 56,
                   top: 30,
+                  width: 240,
                   child: Text(
                     count,
                     maxLines: 1,
@@ -986,10 +1256,15 @@ class _LockBannerState extends State<LockBanner>
                   ),
                 ),
                 Positioned(
-                  right: 12,
+                  left: 300,
                   top: 12,
+                  width: 48,
                   child: Text(
                     time,
+                    maxLines: 1,
+                    textAlign: TextAlign.right,
+                    overflow: TextOverflow.fade,
+                    softWrap: false,
                     style: AmalfiType.caption(color: colors.textTertiary),
                   ),
                 ),
@@ -1004,8 +1279,9 @@ class _LockBannerState extends State<LockBanner>
 
 // ---- Power row (provisional) --------------------------------------------------------------
 
-/// One action of the power row (kit `Lock Screen/Action Button`): a 48 `Glass/Lock` circle,
-/// a 24 glyph, the label 12 below. 80 x 72.
+/// One action of the power row (kit `Lock Screen/Action Button`): 80 × 72, a 48 `Glass/Lock`
+/// circle at x 16, a 24 glyph in `Text/Primary` at its centre, the label (`Callout` 12) on the
+/// photo 8 below.
 class LockActionButton extends StatelessWidget {
   const LockActionButton({
     super.key,
@@ -1021,37 +1297,41 @@ class LockActionButton extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 80,
-      height: 72,
-      child: LockButton(
-        onTap: onTap,
-        label: label,
-        overlay: 48,
-        child: Column(
-          children: [
-            SizedBox.square(
-              dimension: 48,
-              child: LockGlass(
-                look: look,
-                radius: 24,
-                child: Center(
-                  child: AmalfiSymbol(symbol, size: 24, color: look.glassInk),
-                ),
+  Widget build(BuildContext context) => SizedBox(
+    width: 80,
+    height: 72,
+    child: LockButton(
+      onTap: onTap,
+      label: label,
+      overlay: 48,
+      child: Stack(
+        children: [
+          Positioned(
+            left: 16,
+            top: 0,
+            width: 48,
+            height: 48,
+            child: LockGlass(
+              look: look,
+              child: Center(
+                child: AmalfiSymbol(symbol, size: 24, color: look.glassInk),
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
+          ),
+          Positioned(
+            left: 0,
+            top: 56,
+            width: 80,
+            height: 16,
+            child: LockPhotoText(
               label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AmalfiType.callout(color: look.ink)
-                  .copyWith(shadows: look.textShadow),
+              look: look,
+              color: look.onPhotoLabel,
+              style: AmalfiType.callout(),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
-    );
-  }
+    ),
+  );
 }

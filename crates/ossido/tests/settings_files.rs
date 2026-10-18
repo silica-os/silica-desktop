@@ -163,6 +163,16 @@ fn keyboard_settings_set_repeat_and_sources_live() {
         .call("keyboard.next_source", Value::Null)
         .unwrap();
     assert_eq!(next, json!({"switched": true, "active": 1}));
+    // The input menu chooses a source by its index; past the last one nothing changes.
+    let select = |index: u64| {
+        ossido
+            .client()
+            .call("keyboard.select_source", json!({ "index": index }))
+            .unwrap()
+    };
+    assert_eq!(select(0), json!({"switched": true, "active": 0}));
+    assert_eq!(select(3), json!({"switched": false, "active": 0}));
+    assert_eq!(select(1), json!({"switched": true, "active": 1}));
 
     // A layout xkb does not know keeps the keymap; the repeat still applies.
     bus.set(

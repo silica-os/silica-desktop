@@ -77,8 +77,12 @@ Finder labelled(String label) => find.byWidgetPredicate(
 
 final DateTime fixedNow = DateTime(2026, 10, 18, 9, 5);
 
-Future<void> pumpApp(WidgetTester tester, Widget child) async {
-  tester.view.physicalSize = const Size(1280, 800);
+Future<void> pumpApp(
+  WidgetTester tester,
+  Widget child, {
+  Size size = const Size(1280, 800),
+}) async {
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -104,6 +108,8 @@ Future<MemorySettingsBackend> pump(
   NotificationsSource? notifications,
   void Function(PowerAction)? onPower,
   DateTime Function()? now,
+  Size size = const Size(1280, 800),
+  LockLook? look,
 }) async {
   final settings = await useSettings({
     'lockscreen.showUser': showUser,
@@ -117,7 +123,9 @@ Future<MemorySettingsBackend> pump(
       notifications: notifications,
       onPower: onPower,
       now: now ?? () => fixedNow,
+      look: look,
     ),
+    size: size,
   );
   return settings;
 }
@@ -185,10 +193,10 @@ void main() {
   ) async {
     await pump(tester, FakeLock());
     await tester.pump();
-    expect(find.text('Enter password'), findsOneWidget);
+    expect(find.text('Enter Password'), findsOneWidget);
     await tester.enterText(find.byKey(const ValueKey('lock password')), 'abc');
     await tester.pump();
-    expect(find.text('Enter password'), findsNothing);
+    expect(find.text('Enter Password'), findsNothing);
     final field = tester.widget<EditableText>(
       find.descendant(
         of: find.byKey(const ValueKey('lock password')),
@@ -387,31 +395,40 @@ void main() {
       tester.state<LockScreenState>(find.byType(LockScreen));
 
   test('the layout is placed from the edges (1920 x 1200 and 2560 x 1440)', () {
+    // lock-screen.md › Screen layout, at the kit's size.
     const a = Size(1920, 1200);
-    expect(LockMetrics.field(a), const Rect.fromLTWH(880, 1064, 160, 28));
-    expect(LockMetrics.help(a), const Rect.fromLTWH(1048, 1064, 28, 28));
-    expect(LockMetrics.userBlock(a), const Rect.fromLTWH(800, 942, 320, 108));
-    expect(LockMetrics.avatar(a), const Rect.fromLTWH(924, 942, 72, 72));
-    expect(LockMetrics.name(a).top, 1026);
-    expect(LockMetrics.name(a).height, 22);
-    expect(LockMetrics.clock(a), const Rect.fromLTWH(480, 128, 960, 264));
-    expect(LockMetrics.statusItems(a), const Rect.fromLTWH(1740, 0, 164, 32));
-    expect(LockMetrics.hint(a), const Rect.fromLTWH(832, 952, 256, 84));
-    expect(LockMetrics.helpAddress(a), const Rect.fromLTWH(832, 1104, 256, 16));
+    expect(LockMetrics.clock(a), const Rect.fromLTWH(480, 104, 960, 240));
+    expect(LockMetrics.userBlock(a), const Rect.fromLTWH(800, 916, 320, 108));
+    expect(LockMetrics.avatarIn(a), const Rect.fromLTWH(924, 916, 72, 72));
+    expect(LockMetrics.name(a), const Rect.fromLTWH(800, 1000, 320, 22));
+    expect(LockMetrics.field(a), const Rect.fromLTWH(856, 1040, 208, 32));
+    expect(LockMetrics.helpButton(a), const Rect.fromLTWH(1072, 1040, 32, 32));
+    expect(LockMetrics.hint(a), const Rect.fromLTWH(800, 948, 320, 68));
+    expect(LockMetrics.helpAddress(a), const Rect.fromLTWH(800, 1084, 320, 16));
     expect(LockMetrics.banner(a, 0), const Rect.fromLTWH(1544, 48, 360, 60));
     expect(LockMetrics.banner(a, 1).top, 116);
-    expect(LockMetrics.powerRow(a), const Rect.fromLTWH(816, 1112, 288, 72));
-    // The same rule at the reference size: the field's bottom is 108 above the edge.
+    expect(LockMetrics.powerRow(a), const Rect.fromLTWH(816, 1104, 288, 72));
+    // The spacing of the doc: avatar to name 12, name box to field 18, hint to field 24,
+    // field to address 12, field to power row 32; the field's bottom 128 above the edge.
+    expect(LockMetrics.name(a).top - LockMetrics.avatarIn(a).bottom, 12);
+    expect(LockMetrics.field(a).top - LockMetrics.name(a).bottom, 18);
+    expect(LockMetrics.field(a).top - LockMetrics.hint(a).bottom, 24);
+    expect(LockMetrics.helpAddress(a).top - LockMetrics.field(a).bottom, 12);
+    expect(LockMetrics.powerRow(a).top - LockMetrics.field(a).bottom, 32);
+    expect(a.height - LockMetrics.field(a).bottom, 128);
+    // The same rule at the reference size (the doc's check table).
     const b = Size(2560, 1440);
-    expect(b.height - LockMetrics.field(b).bottom, 108);
-    expect(LockMetrics.field(b).center.dx, 1280);
+    expect(LockMetrics.clock(b).topLeft, const Offset(800, 104));
+    expect(LockMetrics.userBlock(b).topLeft, const Offset(1120, 1156));
+    expect(LockMetrics.field(b).topLeft, const Offset(1176, 1280));
+    expect(LockMetrics.helpButton(b).left, 1392);
     // The help button hangs outside the centring.
-    expect(LockMetrics.help(b).left - LockMetrics.field(b).right, 8);
-    expect(LockMetrics.help(b).center.dy, LockMetrics.field(b).center.dy);
-    // Wake, step 2: the user block is 36 pt higher.
+    expect(LockMetrics.field(b).center.dx, 1280);
+    expect(LockMetrics.helpButton(b).top, LockMetrics.field(b).top);
+    // Wake, step 2: the user block is one field row (48 pt) higher.
     expect(
       LockMetrics.userBlock(a).top - LockMetrics.userBlock(a, raised: true).top,
-      36,
+      48,
     );
   });
 
@@ -420,11 +437,11 @@ void main() {
     await tester.pumpAndSettle();
     const s = Size(1280, 800);
     expect(rectOf(tester, 'lock password'), LockMetrics.field(s));
-    expect(rectOf(tester, 'lock help'), LockMetrics.help(s));
+    expect(rectOf(tester, 'lock help'), LockMetrics.helpButton(s));
     expect(rectOf(tester, 'lock user block'), LockMetrics.userBlock(s));
     expect(rectOf(tester, 'lock clock block'), LockMetrics.clock(s));
-    expect(rectOf(tester, 'lock user').center.dx, 640);
-    expect(rectOf(tester, 'lock user').height, lessThanOrEqualTo(22));
+    expect(rectOf(tester, 'lock user'), LockMetrics.name(s));
+    expect(rectOf(tester, 'lock avatar'), LockMetrics.avatarIn(s));
     // The wallpaper is dimmed by 6 % and nothing blurs it.
     final dim = tester.widget<ColoredBox>(
       find.byKey(const ValueKey('lock dim')),
@@ -463,33 +480,53 @@ void main() {
     final source = FakeLock();
     await pump(tester, source);
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('lock submit')), findsNothing);
+    AnimatedOpacity fade() => tester.widget<AnimatedOpacity>(
+      find.byKey(const ValueKey('lock submit fade')),
+    );
+    expect(fade().opacity, 0);
     expect(find.byKey(const ValueKey('lock placeholder')), findsOneWidget);
     await tester.enterText(find.byKey(const ValueKey('lock password')), 'x');
     await tester.pump();
-    expect(find.byKey(const ValueKey('lock submit')), findsOneWidget);
+    // In with `fade.quick` (150 ms), with the first character.
+    expect(fade().opacity, 1);
+    expect(fade().duration, const Duration(milliseconds: 150));
     expect(find.byKey(const ValueKey('lock placeholder')), findsNothing);
+    await tester.pumpAndSettle();
     // The button submits.
     await tester.tap(find.byKey(const ValueKey('lock submit')));
     await tester.pumpAndSettle();
     expect(source.tries, ['x']);
-    // Esc empties the field and the button goes away.
+    // Esc empties the field and the button goes away in 60 ms.
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pump();
-    expect(find.byKey(const ValueKey('lock submit')), findsNothing);
+    expect(fade().opacity, 0);
+    expect(fade().duration, const Duration(milliseconds: 60));
     expect(stateOf(tester).fieldState, LockFieldState.placeholder);
+    // Hidden, it takes no clicks.
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('lock submit fade')),
+      warnIfMissed: false,
+    );
+    await tester.pumpAndSettle();
+    expect(source.tries, ['x']);
   });
 
-  test(
-    'the dots: 8 pt, 12 pitch, first at 16; the selection and the caret',
-    () {
-      expect(LockFieldMetrics.dotLeft(0), 16);
-      expect(LockFieldMetrics.dotLeft(3), 52);
-      expect(LockFieldMetrics.caret(0), const Rect.fromLTWH(12, 6, 2, 16));
-      expect(LockFieldMetrics.caret(2), const Rect.fromLTWH(40, 6, 2, 16));
-      expect(LockFieldMetrics.selection(2), const Rect.fromLTRB(12, 6, 36, 22));
-    },
-  );
+  test('the dots: 8 pt, 12 pitch, first at 16; the selection and the caret', () {
+    expect(LockFieldMetrics.dotLeft(0), 16);
+    expect(LockFieldMetrics.dotLeft(3), 52);
+    expect(LockFieldMetrics.caret(0), const Rect.fromLTWH(16, 8, 2, 16));
+    expect(LockFieldMetrics.caret(2), const Rect.fromLTWH(40, 8, 2, 16));
+    // Six dots (the kit's Typing and Wrong): the caret at 88, the selection 10 to 90.
+    expect(LockFieldMetrics.caret(6), const Rect.fromLTWH(88, 8, 2, 16));
+    expect(LockFieldMetrics.selection(6), const Rect.fromLTRB(10, 8, 90, 24));
+    // More than 13 dots scroll inside the field: the caret stays before the submit.
+    expect(LockFieldMetrics.caret(40), LockFieldMetrics.caret(13));
+    expect(
+      LockFieldMetrics.caret(13).right,
+      lessThan(LockFieldMetrics.submitX),
+    );
+  });
 
   testWidgets('typing replaces the selected dots after a failure', (
     tester,
@@ -524,9 +561,15 @@ void main() {
     expect(find.text('Anna Rossi'), findsNothing);
     expect(find.text('My cat'), findsOneWidget);
     expect(find.text('help@example.org'), findsOneWidget);
+    // The hint stands on the hint block's bottom, 24 above the field, 320 wide.
+    final hint = rectOf(tester, 'lock hint');
+    final block = LockMetrics.hint(const Size(1280, 800));
+    expect(hint.bottom, block.bottom);
+    expect(hint.left, block.left);
+    expect(hint.width, 320);
     expect(
-      rectOf(tester, 'lock hint'),
-      LockMetrics.hint(const Size(1280, 800)),
+      rectOf(tester, 'lock help address'),
+      LockMetrics.helpAddress(const Size(1280, 800)),
     );
     // The field does not move.
     expect(rectOf(tester, 'lock password'), field);
@@ -573,20 +616,24 @@ void main() {
     },
   );
 
-  test('the shake keyframes: -10, +14, -11, +10, -7, +6 pt in ~400 ms', () {
-    expect(lockShake, const Duration(milliseconds: 400));
-    expect(lockShakeOffset(0), 0);
-    expect(lockShakeOffset(31), closeTo(-10, 1e-9));
-    expect(lockShakeOffset(94), closeTo(14, 1e-9));
-    expect(lockShakeOffset(156), closeTo(-11, 1e-9));
-    expect(lockShakeOffset(219), closeTo(10, 1e-9));
-    expect(lockShakeOffset(281), closeTo(-7, 1e-9));
-    expect(lockShakeOffset(344), closeTo(6, 1e-9));
-    expect(lockShakeOffset(400), 0);
-    // First to the left, sine-like between the peaks.
-    expect(lockShakeOffset(10), lessThan(0));
-    expect(lockShakeOffset(62.5), closeTo(2, 0.5));
-  });
+  test(
+    'the shake keyframes: the measured ones scaled by 208 / 160 in ~400 ms',
+    () {
+      expect(lockShake, const Duration(milliseconds: 400));
+      expect(lockShakeOffset(0), 0);
+      // −10, +14, −11, +10, −7, +6 measured, × 1.3 (lock-screen.md › Motion).
+      expect(lockShakeOffset(31), closeTo(-13, 1e-9));
+      expect(lockShakeOffset(94), closeTo(18, 1e-9));
+      expect(lockShakeOffset(156), closeTo(-14, 1e-9));
+      expect(lockShakeOffset(219), closeTo(13, 1e-9));
+      expect(lockShakeOffset(281), closeTo(-9, 1e-9));
+      expect(lockShakeOffset(344), closeTo(8, 1e-9));
+      expect(lockShakeOffset(400), 0);
+      // First to the left, sine-like between the peaks.
+      expect(lockShakeOffset(10), lessThan(0));
+      expect(lockShakeOffset(62.5), closeTo(2.5, 0.5));
+    },
+  );
 
   testWidgets('a wrong password shakes the field and the help button only', (
     tester,
@@ -603,12 +650,12 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 31));
     final moved = rectOf(tester, 'lock password').left - field.left;
-    expect(moved, closeTo(-10, 2.5));
+    expect(moved, closeTo(-13, 3));
     expect(rectOf(tester, 'lock help').left - help.left, closeTo(moved, 1e-9));
     expect(rectOf(tester, 'lock help').top, help.top);
     expect(rectOf(tester, 'lock user block'), block);
     await tester.pump(const Duration(milliseconds: 63));
-    expect(rectOf(tester, 'lock password').left - field.left, closeTo(14, 2.5));
+    expect(rectOf(tester, 'lock password').left - field.left, closeTo(18, 3));
     await tester.pumpAndSettle();
     expect(rectOf(tester, 'lock password'), field);
   });
@@ -699,7 +746,7 @@ void main() {
     expect(stateOf(tester).wakeStage, LockWakeStage.clock);
     expect(find.byKey(const ValueKey('lock date')), findsOneWidget);
     expect(find.byKey(const ValueKey('lock password')), findsNothing);
-    // The user block is 36 pt higher.
+    // The user block is 48 pt higher (one field row), as the doc scales the measured 36.
     expect(
       rectOf(tester, 'lock user block').top,
       LockMetrics.userBlock(const Size(1280, 800), raised: true).top,
@@ -723,7 +770,7 @@ void main() {
       for (var i = 0; i < 5; i++)
         i: tester.getRect(find.byKey(ValueKey('lock digit $i'))),
     };
-    expect(rest[0]!.height, LockMetrics.digitHeight);
+    expect(rest[0]!.height, LockMetrics.timeHeight);
     now = DateTime(2026, 10, 18, 9, 6);
     // The seconds timer rebuilds the screen with the new minute.
     await tester.pump(const Duration(seconds: 1));
@@ -790,32 +837,38 @@ void main() {
     ]);
   });
 
-  testWidgets('status items: Wi-Fi and battery at the top right', (
-    tester,
-  ) async {
-    final system = FakeSystem(
-      const SystemSnapshot(
-        wifiAvailable: true,
-        wifiEnabled: true,
-        wifiSsid: 'home',
-        wifiStrength: 80,
-        batteryPresent: true,
-        batteryPercent: 60,
-      ),
-    );
-    await pump(tester, FakeLock(), system: system);
-    await tester.pumpAndSettle();
-    final wifi = rectOf(tester, 'lock status wifi');
-    final battery = rectOf(tester, 'lock status battery');
-    expect(wifi.size, const Size(36, 28));
-    expect(battery.right, 1280 - 16);
-    expect(battery.left - wifi.right, 4);
-    expect(battery.top, 2);
-    system.value = const SystemSnapshot();
-    await tester.pump();
-    expect(find.byKey(const ValueKey('lock status wifi')), findsNothing);
-    expect(find.byKey(const ValueKey('lock status battery')), findsNothing);
-  });
+  testWidgets(
+    'the Status Bar: Wi-Fi and battery where the menu bar keeps them',
+    (tester) async {
+      final system = FakeSystem(
+        const SystemSnapshot(
+          wifiAvailable: true,
+          wifiEnabled: true,
+          wifiSsid: 'home',
+          wifiStrength: 80,
+          batteryPresent: true,
+          batteryPercent: 60,
+        ),
+      );
+      await pump(tester, FakeLock(), system: system);
+      await tester.pumpAndSettle();
+      final bar = rectOf(tester, 'lock status bar');
+      expect(bar.right, 1280 - 8);
+      expect(bar.top, 0);
+      expect(bar.height, 32);
+      final wifi = rectOf(tester, 'status wifi');
+      final battery = rectOf(tester, 'status battery');
+      // Items touch, 36 wide for a glyph, the hit area the bar's full height.
+      expect(wifi.size, const Size(36, 32));
+      expect(battery.left, wifi.right);
+      expect(battery.right, 1280 - 8);
+      expect(find.text('60%'), findsOneWidget);
+      system.value = const SystemSnapshot();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('status wifi')), findsNothing);
+      expect(find.byKey(const ValueKey('status battery')), findsNothing);
+    },
+  );
 
   testWidgets('collapsed banners: the app and the count, never the text', (
     tester,

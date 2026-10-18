@@ -38,7 +38,9 @@ use silica_control::commands::{
 use silica_control::commands::{
     DOCK_ICONS, DockIconsParams, MinimizeEffectParams, WINDOW_MINIMIZE_EFFECT,
 };
-use silica_control::commands::{IDLE_STATE, INPUT_STATE, KEYBOARD_NEXT_SOURCE, KEYBOARD_STATE};
+use silica_control::commands::{
+    IDLE_STATE, INPUT_STATE, KEYBOARD_NEXT_SOURCE, KEYBOARD_SELECT_SOURCE, KEYBOARD_STATE,
+};
 use silica_control::commands::{
     IndexParams, MoveToSpaceParams, SPACE_ADD, SPACE_GOTO, SPACE_LIST, SPACE_NEXT, SPACE_PREVIOUS,
     SPACE_REMOVE, SpaceInfo, WINDOW_MOVE_TO_SPACE,
@@ -148,6 +150,15 @@ impl State {
             }
             KEYBOARD_NEXT_SOURCE => {
                 let switched = self.next_input_source();
+                Ok(json!({ "switched": switched, "active": self.active_layout() }))
+            }
+            KEYBOARD_SELECT_SOURCE => {
+                let index = params
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .and_then(|i| u32::try_from(i).ok())
+                    .ok_or("index: 0–3")?;
+                let switched = self.select_input_source(index);
                 Ok(json!({ "switched": switched, "active": self.active_layout() }))
             }
             SCREENSHOT_SCREEN => {

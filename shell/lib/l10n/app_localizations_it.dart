@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -1156,7 +1157,7 @@ class AppLocalizationsIt extends AppLocalizations {
       'Per questo account non è stato impostato un suggerimento per la password.';
 
   @override
-  String get lockSleep => 'Stop';
+  String get lockSleep => 'Standby';
 
   @override
   String get lockRestart => 'Riavvia';
@@ -1174,4 +1175,61 @@ class AppLocalizationsIt extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get statusWifi => 'Wi-Fi';
+
+  @override
+  String get statusWifiOff => 'disattivato';
+
+  @override
+  String get statusWifiNotConnected => 'non connesso';
+
+  @override
+  String statusWifiConnected(String network) {
+    return 'connesso a $network';
+  }
+
+  @override
+  String get statusEthernet => 'Ethernet';
+
+  @override
+  String get statusBattery => 'Batteria';
+
+  @override
+  String statusBatteryLevel(int percent) {
+    return '$percent percento';
+  }
+
+  @override
+  String statusBatteryCharging(int percent) {
+    return '$percent percento, in carica';
+  }
+
+  @override
+  String get statusInputSource => 'Sorgente di input';
+
+  @override
+  String get statusInputSettings => 'Impostazioni Tastiera…';
+
+  @override
+  String get statusBluetooth => 'Bluetooth';
+
+  @override
+  String get statusSound => 'Suono';
+
+  @override
+  String get statusSearch => 'Cerca';
+
+  @override
+  String get statusClock => 'Orologio';
+
+  @override
+  String get statusControlCenter => 'Centro di Controllo';
+
+  @override
+  String get statusFocus => 'Full immersion';
+
+  @override
+  String get statusNowPlaying => 'In riproduzione';
 }

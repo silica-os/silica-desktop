@@ -112,12 +112,12 @@ void main() {
           .widgetList<StatusIcon>(find.byType(StatusIcon))
           .any((i) => i.kind == kind);
       expect(shown(StatusKind.bluetooth), isFalse);
-      expect(find.text('64 %'), findsNothing);
+      expect(find.text('64%'), findsNothing);
       backend.emit('menubar.bluetooth', true);
       backend.emit('menubar.batteryPercent', true);
       await tester.pump();
       expect(shown(StatusKind.bluetooth), isTrue);
-      expect(find.text('64 %'), findsOneWidget);
+      expect(find.text('64%'), findsOneWidget);
       backend.emit('menubar.battery', false);
       await tester.pump();
       expect(shown(StatusKind.battery), isFalse);

@@ -466,6 +466,10 @@ impl State {
                 }
             },
         );
+        // An xkb option (grp:…) may have moved to another source: the shell shows the active one.
+        if !one_source {
+            self.announce_input_sources();
+        }
         if command == Some(VT_SWITCH) {
             if let Some(n) = vt.get() {
                 self.change_vt(n);
