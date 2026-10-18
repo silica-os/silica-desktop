@@ -179,4 +179,30 @@ void main() {
     expect(box.color, const Color(0xFF102030));
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets(
+    'the layer follows an atomic write (temporary file, then rename)',
+    (tester) async {
+      final dir = Directory.systemTemp.createTempSync('wallpaper-rename');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final env = {...noSet, 'XDG_CONFIG_HOME': dir.path};
+      await tester.runAsync(() async {
+        await tester.pumpWidget(
+          Directionality(
+            textDirection: TextDirection.ltr,
+            child: WallpaperLayer(env: env),
+          ),
+        );
+        File('${dir.path}/silica/wallpaper.json.tmp')
+          ..parent.createSync(recursive: true)
+          ..writeAsStringSync('{"color": "#203040"}')
+          ..renameSync('${dir.path}/silica/wallpaper.json');
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        await tester.pump();
+      });
+      final box = tester.widget<ColoredBox>(find.byType(ColoredBox).first);
+      expect(box.color, const Color(0xFF203040));
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 }

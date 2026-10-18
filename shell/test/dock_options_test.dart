@@ -30,6 +30,23 @@ void main() {
     expect(DockOptions.read(env: env).position, DockPosition.bottom);
   });
 
+  test(
+    'the watcher reloads after an atomic write (temp file + rename)',
+    () async {
+      final dir = Directory.systemTemp.createTempSync('dock-rename');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final env = {'XDG_CONFIG_HOME': dir.path};
+      final watcher = DockOptionsWatcher(env: env);
+      addTearDown(watcher.dispose);
+      expect(watcher.value.value.autohide, isFalse);
+      File('${dir.path}/silica/dock.json.tmp')
+        ..writeAsStringSync('{"autohide": true}')
+        ..renameSync('${dir.path}/silica/dock.json');
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(watcher.value.value.autohide, isTrue);
+    },
+  );
+
   testWidgets(
     'auto-hide: only the last row reveals it, after ~190 ms; leaving hides it',
     (tester) async {

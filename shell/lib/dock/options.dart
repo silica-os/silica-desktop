@@ -7,6 +7,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../system/config_events.dart';
 import 'apps.dart';
 import 'model.dart';
 
@@ -135,7 +136,7 @@ class DockOptionsWatcher {
     try {
       if (!dir.existsSync()) dir.createSync(recursive: true);
       _events = dir.watch().listen((event) {
-        if (!event.path.endsWith('dock.json')) return;
+        if (!eventTouchesFile(event, 'dock.json')) return;
         // Writers replace the file in a few steps: read once they are done.
         _debounce?.cancel();
         _debounce = Timer(const Duration(milliseconds: 50), reload);

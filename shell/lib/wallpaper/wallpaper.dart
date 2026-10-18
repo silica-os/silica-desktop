@@ -11,6 +11,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart';
 
+import '../system/config_events.dart';
 import '../system/shell_channel.dart';
 import 'amalfi_wallpapers.dart';
 
@@ -164,7 +165,7 @@ class _WallpaperLayerState extends State<WallpaperLayer> {
     try {
       if (!dir.existsSync()) dir.createSync(recursive: true);
       _events = dir.watch().listen((event) {
-        if (!event.path.endsWith('wallpaper.json')) return;
+        if (!eventTouchesFile(event, 'wallpaper.json')) return;
         _debounce?.cancel();
         _debounce = Timer(const Duration(milliseconds: 50), _reload);
       });
