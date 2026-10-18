@@ -179,13 +179,38 @@ List<AmalfiMenuEntry> popupEntries(
             );
           }
         case PopupRowKind.submenuEnd:
-          if (depth > 0) return out;
+          if (depth > 0) return _aligned(out);
       }
     }
-    return out;
+    return _aligned(out);
   }
 
   return level(0);
+}
+
+/// When some rows of a menu have an icon, the others get an empty box of the same size, so
+/// that every label starts at the same place (an app without an icon in Open With, as the
+/// app's own menus draw it).
+List<AmalfiMenuEntry> _aligned(List<AmalfiMenuEntry> entries) {
+  final anyIcon = entries.any((e) => e is AmalfiMenuAction && e.icon != null);
+  if (!anyIcon) return entries;
+  return [
+    for (final e in entries)
+      if (e is AmalfiMenuAction && e.icon == null)
+        AmalfiMenuAction(
+          e.label,
+          shortcut: e.shortcut,
+          icon: const SizedBox.square(dimension: 16),
+          checked: e.checked,
+          enabled: e.enabled,
+          destructive: e.destructive,
+          onSelected: e.onSelected,
+          submenu: e.submenu,
+          submenuWidth: e.submenuWidth,
+        )
+      else
+        e,
+  ];
 }
 
 /// A symbol name of the Silica set, or the path of an image file, at 16 pt in the row's
