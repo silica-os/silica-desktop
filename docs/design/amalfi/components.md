@@ -175,7 +175,60 @@ and Back/Forward have none.
   first row level with the parent item (submenu top = item top − 4); the parent item stays highlighted.
   Open With: the default app with "(default)", separator, other apps, separator, Other….
 
-## Component inventory (3007 symbols, every one in Light and Dark)
+## Settings Tabs (pane switcher of settings windows)
+
+An app's settings window switches its panes with **Settings Tabs**, never with toolbar buttons
+(user decision 2026-10-19). Kit masters `Settings Tabs/Item/<State>/<Light|Dark>` and
+`Settings Tabs/Bar/<N> Panes/<Light|Dark>` (N = 2–7); sheet `Settings tabs / <Light|Dark>` on the
+Segmented Controls page.
+
+Anatomy: a glass track (the Segmented Control's: `Glass/Regular` + `Fill/Glass/Tint`, rim, shadow 0/4/12)
+holding N equal panes in a row; each pane is an icon over a label.
+
+| Part | Value |
+|---|---|
+| Placement | centred horizontally in the window, top at y 52 (directly under the 52 pt title bar, which keeps only the window controls; no title text) |
+| Track | height 52, padding 4, radius 26 (capsule; concentric with the panes: 22 + 4), smooth 0.6 |
+| Pane | height 44, radius 22; width W for every pane |
+| Pane width W | longest label (Caption, 11/14) + 24, rounded up to a multiple of 8; at least 72. Bar width = N × W + 8 |
+| Icon | Silica Symbols 20 (line height 21 in Sketch), centred, top at 4 in the pane |
+| Label | `Caption/Primary` 11/14, centred, top at 26 (1 below the icon), never truncated or wrapped |
+| Content | the pane's content starts 20–24 below the bar (Terminal 20, Mustache 24: the window's own padding); the window grows by 52 compared with a toolbar-tab layout |
+
+States (per pane, the bar has no state of its own):
+
+| State | Background | Icon | Label |
+|---|---|---|---|
+| Rest | none | `Text/Primary` | `Text/Primary` |
+| Selected | `Surface/Control`, border 1 `Line/Border` inside, shadow `Shadow/1` 0/1/2 (the Segmented Control's selected item) | `Accent/Amalfi` | `Text/Primary` |
+| Hover | `Line/Separator` (light `#1D1E211A`, dark `#F4F5F71F`) | `Text/Primary` | `Text/Primary` |
+| Pressed | `Line/Border` (light `#1D1E2124`, dark `#F4F5F729`) | `Text/Primary` | `Text/Primary` |
+| Disabled | none, whole pane at 35 % | — | — |
+
+The Segmented Control has no Increase Contrast variant, so Settings Tabs has none either. Hover and press
+appear in one frame, no fade; the selection moves in one frame when the pane changes (the window then resizes
+to the new pane's height).
+
+Segment count: 2–7 panes. With more than 7, or labels so long that N × W + 8 exceeds the window width
+minus 2 × 24, use a sidebar settings window (the Settings app) instead.
+
+Building instances: the bar masters are stacks whose panes fill the width equally, so an instance is resized
+to N × W + 8 and every pane follows; choose the selected pane by swapping its nested symbol to
+`Settings Tabs/Item/Selected/…`, and set icon and label through the overrides.
+
+Which control to use:
+
+- **Settings Tabs**: switching the panes of an app's settings window (General, Profiles, Advanced…). Icon
+  and label, one row, top of the window.
+- **Segmented Control** (`Segments/Control/One <N> Text|Icon`, 2–6 segments): switching views or sub-pages
+  inside content, such as the Terminal profile sub-tabs or list/grid views. Text or icon only.
+- **Toolbar buttons** (`Buttons/Toolbar/*`): actions and views of a document or browser window's toolbar.
+  Never as pane tabs.
+
+Used in: Terminal settings (4 panes, W 112: General, Profiles, Window Groups, Encodings), Mustache settings
+(4 panes, W 80: General, Tags, Sidebar, Advanced).
+
+## Component inventory (3047 symbols, every one in Light and Dark)
 
 Names follow `Category/Component/Variant/Size/State/Appearance`. States are always
 Rest · Hover · Pressed · Disabled · Focused unless listed. Sizes: Mini 20 · Small 24 · Regular 28 · Large 32.
@@ -203,7 +256,8 @@ Read each one from the kit for exact geometry (see README, "How to read the kit"
 | Popovers | Popover: Form, List, Text × Top/Bottom/Leading/Trailing × Start/Center/End + Detached; Content | ~204–268 wide |
 | Progress | Bar: Determinate (25/60/100/Disabled), Indeterminate (3 phases) × Small/Regular/Large; Circular; Spinner | bar 4/8 tall; spinner 16/24/32 |
 | Scrollbars | Overlay: Thin, Expanded, Dragging × V/H; Legacy: Rest, Hover, Disabled × V/H; Corner; Area | overlay 12; legacy 16 |
-| Segmented | Action segments (toolbar, glass): Icon 2–5, Text 2–3 × Large/Small × Rest/Hover/Pressed/Disabled/Inactive (240); Control (select one/any): 2–5 Text/Icon × Small/Regular/Large × Rest/Pressed/Disabled (176); Icon Item; Text Item; Align | segments 32 (Large), 24 (Small) |
+| Segmented | Action segments (toolbar, glass): Icon 2–5, Text 2–3 × Large/Small × Rest/Hover/Pressed/Disabled/Inactive (240); Control (select one/any): 2–5 Text/Icon and 6 Text × Small/Regular/Large × Rest/Pressed/Disabled (+ Mini Rest); segments fill the width equally, so instances can be widened; Icon Item; Text Item; Align | segments 32 (Large), 24 (Small) |
+| Settings Tabs | Item: Rest, Selected, Hover, Pressed, Disabled; Bar: 2–7 Panes (see Settings Tabs above) | pane 44 tall, bar 52 tall, width N × W + 8 |
 | Sidebars | Panel; Row: Plain, Badge × Rest/Hover/Selected/Disabled; Header; Group Open/Closed; Badge; Footer | panel 240; rows 216×32, icon 20 |
 | Sliders | Horizontal: Plain, Ticks, Glyphs × states + Dragging; Vertical; Circular dial; Thumb: Round × states, Lens Dragging | 200×20/28/36 |
 | Steppers | Stepper × 4 sizes × Rest/Hover Up/Down/Pressed Up/Down/Disabled/Focused; Value Field; With Field | 16×20 … 28×32 |
