@@ -508,6 +508,8 @@ pub struct TestWindow {
     xdg_surface: Option<XdgSurface>,
     /// An open popup: its surface, xdg role objects and buffer.
     popup: Option<(WlSurface, XdgSurface, XdgPopup, WlBuffer)>,
+    /// A second popup of the window, grabbed after `popup` (not hanging from it).
+    sibling_popup: Option<(WlSurface, XdgSurface, XdgPopup, WlBuffer)>,
     /// A popup hanging from `popup` (a submenu).
     child_popup: Option<(WlSurface, XdgSurface, XdgPopup, WlBuffer)>,
     /// The glass object of `popup`.
@@ -638,6 +640,7 @@ impl TestWindow {
             xdg_surface: Some(xdg_surface),
             popup: None,
             child_popup: None,
+            sibling_popup: None,
             popup_glass: None,
             _toplevel: Some(toplevel),
             _layer: None,
@@ -740,6 +743,7 @@ impl TestWindow {
             xdg_surface: None,
             popup: None,
             child_popup: None,
+            sibling_popup: None,
             popup_glass: None,
             _toplevel: None,
             _layer: Some(layer),
@@ -790,6 +794,45 @@ impl TestWindow {
         surface.commit();
         self.queue.roundtrip(&mut self.app).unwrap();
         self.popup = Some((surface, xdg_surface, popup, buffer));
+    }
+
+    /// Opens a second popup with a grab, beside the first one (it does not hang from it): an
+    /// app opening another menu while one is open.
+    #[allow(dead_code)]
+    pub fn open_sibling_grabbing_popup(&mut self, at: (i32, i32), (w, h): (u32, u32)) {
+        self.queue.roundtrip(&mut self.app).unwrap();
+        let qh = self.queue.handle();
+        let compositor = self.app.compositor.clone().expect("wl_compositor");
+        let shm = self.app.shm.clone().expect("wl_shm");
+        let wm_base = self.app.wm_base.clone().expect("xdg_wm_base");
+        let seat = self.app.seat.clone().expect("wl_seat");
+        let serial = self.app.press_serial.expect("no press on the window");
+        let positioner = wm_base.create_positioner(&qh, ());
+        positioner.set_size(w as i32, h as i32);
+        positioner.set_anchor_rect(at.0, at.1, 1, 1);
+        let surface = compositor.create_surface(&qh, ());
+        let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
+        let popup = xdg_surface.get_popup(self.xdg_surface.as_ref(), &positioner, &qh, ());
+        popup.grab(&seat, serial);
+        surface.commit();
+        self.queue.roundtrip(&mut self.app).unwrap();
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(&RED_BGRA.repeat((w * h) as usize)).unwrap();
+        let pool = shm.create_pool(file.as_fd(), (w * h * 4) as i32, &qh, ());
+        let buffer = pool.create_buffer(
+            0,
+            w as i32,
+            h as i32,
+            (w * 4) as i32,
+            wl_shm::Format::Argb8888,
+            &qh,
+            (),
+        );
+        surface.attach(Some(&buffer), 0, 0);
+        surface.damage_buffer(0, 0, w as i32, h as i32);
+        surface.commit();
+        self.queue.roundtrip(&mut self.app).unwrap();
+        self.sibling_popup = Some((surface, xdg_surface, popup, buffer));
     }
 
     /// Opens a popup as `spec` says (the first one hangs from the window, the second from the

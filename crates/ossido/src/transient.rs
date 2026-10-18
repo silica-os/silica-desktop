@@ -559,12 +559,29 @@ impl State {
             None => OwnerApp::None,
         };
         // A popup replaces the other grabs of its window, except the popups it hangs from (a
-        // submenu opens over its menu, which stays open and grabbed).
+        // submenu opens over its menu, which stays open and grabbed). The replaced ones are
+        // dismissed, not forgotten: a popup that lost its grab would never get its
+        // `popup_done` from a press outside, and stay on the screen for good.
         let ancestors = popup_ancestors(&self.popups, &popup);
-        self.transients.retain(|t| match &t.source {
-            Source::Popup { popup: p, root: r } => r != &root || ancestors.contains(p.wl_surface()),
-            Source::Shell { .. } => true,
-        });
+        let (keep, replaced): (Vec<_>, Vec<_>) = std::mem::take(&mut self.transients)
+            .into_iter()
+            .partition(|t| match &t.source {
+                Source::Popup { popup: p, root: r } => {
+                    r != &root || ancestors.contains(p.wl_surface())
+                }
+                Source::Shell { .. } => true,
+            });
+        self.transients = keep;
+        for transient in replaced {
+            if let Source::Popup {
+                popup: old,
+                root: old_root,
+            } = &transient.source
+                && let Err(err) = PopupManager::dismiss_popup(old_root, old)
+            {
+                tracing::warn!("popup dismiss: {err}");
+            }
+        }
         self.transients.push(Transient {
             source: Source::Popup { popup, root },
             region: Vec::new(),

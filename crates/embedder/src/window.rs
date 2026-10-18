@@ -2111,6 +2111,11 @@ impl App {
     /// view stays) and the app keeps running. When it was the `last` window on screen the
     /// app becomes windowless (`became_windowless`).
     fn hide_main(&mut self, last: bool) {
+        // The menus and popovers of the window go with it: hidden, they would come back with
+        // the window when it is shown again (silica-os/mustache#25).
+        for child in self.popups_of(MAIN_VIEW) {
+            self.remove_view(child);
+        }
         let Some(View {
             surface: Shell::Window(window),
             appearance,
