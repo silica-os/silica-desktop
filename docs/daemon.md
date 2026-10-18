@@ -292,7 +292,9 @@ files (`dock.json`, `menubar.json`, `wallpaper.json`, `lockscreen.json`, `screen
 `notifications.json`, `controlcenter.json`, `screenshot.json`) are imported once; they are left
 in place. Ossido still reads its own keys from JSON (`input.json`, `theme.json`, `hotcorners.json`,
 `shortcuts.json`, `dock.json` `titleBarDoubleClick` and `minimizeToApp`, `lockscreen.json`
-`passwordDelay`, `screensaver.json`): moving them is open (#236).
+`passwordDelay`, `screensaver.json`): moving them is open (#236). Until then the daemon writes
+the four keys Ossido reads (`dock.minimizeToApp`, `lockscreen.passwordDelay`,
+`screensaver.minutes`, `screensaver.saver`) into those files as well, keeping their other keys.
 
 ## dev.frascella.Silica.Sound1
 

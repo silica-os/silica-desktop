@@ -213,6 +213,19 @@ pub const KEYS: &[KeyDef] = &[
     k("screenshot.recentFolders", Kind::Texts, Dflt::Empty),
 ];
 
+/// Keys Ossido still reads from JSON (`key`, file, JSON key); the store keeps the files in
+/// step until Ossido reads the service. A `passwordDelay` of -1 is `null` there.
+const MIRRORED: &[(&str, &str, &str)] = &[
+    ("dock.minimizeToApp", "dock.json", "minimizeToApp"),
+    (
+        "lockscreen.passwordDelay",
+        "lockscreen.json",
+        "passwordDelay",
+    ),
+    ("screensaver.minutes", "screensaver.json", "minutes"),
+    ("screensaver.saver", "screensaver.json", "saver"),
+];
+
 const APP_PREFIX: &str = "notifications.apps.";
 const APP_STYLE: &[&str] = &["banners", "alerts", "none"];
 const APP_PREVIEWS: &[&str] = &["default", "always", "unlocked", "never"];
@@ -430,6 +443,9 @@ impl SettingsStore {
         }
         if !changed.is_empty() {
             let _ = self.save();
+            for key in &changed {
+                self.mirror(key);
+            }
         }
         Ok(changed)
     }
@@ -440,8 +456,44 @@ impl SettingsStore {
         let had = self.values.remove(key).is_some();
         if had {
             let _ = self.save();
+            self.mirror(key);
         }
         Ok(had)
+    }
+
+    /// Keeps the JSON file Ossido reads in step with [`MIRRORED`] keys: the value when it
+    /// differs from the default, otherwise no key (Ossido's default is the same).
+    fn mirror(&self, key: &str) {
+        let Some((_, file, name)) = MIRRORED.iter().find(|(k, ..)| *k == key) else {
+            return;
+        };
+        let Some(dir) = self.file.as_deref().and_then(Path::parent) else {
+            return;
+        };
+        let mut map = read_json(dir, file).unwrap_or_default();
+        match self.values.get(key) {
+            Some(Setting::Bool(b)) => {
+                map.insert((*name).to_owned(), Json::Bool(*b));
+            }
+            Some(Setting::Int(-1)) => {
+                map.insert((*name).to_owned(), Json::Null);
+            }
+            Some(Setting::Int(i)) => {
+                map.insert((*name).to_owned(), Json::from(*i));
+            }
+            Some(Setting::Text(s)) => {
+                map.insert((*name).to_owned(), Json::from(s.as_str()));
+            }
+            _ => {
+                map.remove(*name);
+            }
+        }
+        let path = dir.join(file);
+        let temporary = path.with_extension("json.tmp");
+        let text = Json::Object(map).to_string();
+        if std::fs::write(&temporary, text).is_ok() {
+            let _ = std::fs::rename(&temporary, &path);
+        }
     }
 
     fn save(&self) -> std::io::Result<()> {
@@ -1134,6 +1186,30 @@ mod tests {
         drop(s);
         let s = SettingsStore::open(&d);
         assert_eq!(s.get("dock.autohide"), Ok(Setting::Bool(true)));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn mirrors_the_keys_ossido_reads() {
+        let d = dir("mirror");
+        std::fs::write(d.join("lockscreen.json"), r#"{"showUser": false}"#).unwrap();
+        let mut s = SettingsStore::open(&d);
+        let json = |name: &str| {
+            serde_json::from_str::<Json>(&std::fs::read_to_string(d.join(name)).unwrap()).unwrap()
+        };
+        s.set("lockscreen.passwordDelay", Setting::Int(-1)).unwrap();
+        assert_eq!(json("lockscreen.json")["passwordDelay"], Json::Null);
+        // The other keys of the file stay.
+        assert_eq!(json("lockscreen.json")["showUser"], Json::Bool(false));
+        s.set("lockscreen.passwordDelay", Setting::Int(60)).unwrap();
+        assert_eq!(json("lockscreen.json")["passwordDelay"], Json::from(60));
+        s.reset("lockscreen.passwordDelay").unwrap();
+        assert!(json("lockscreen.json").get("passwordDelay").is_none());
+        s.set("dock.minimizeToApp", Setting::Bool(true)).unwrap();
+        assert_eq!(json("dock.json")["minimizeToApp"], Json::Bool(true));
+        s.set("screensaver.saver", Setting::Text("clock".into()))
+            .unwrap();
+        assert_eq!(json("screensaver.json")["saver"], Json::from("clock"));
         let _ = std::fs::remove_dir_all(&d);
     }
 
