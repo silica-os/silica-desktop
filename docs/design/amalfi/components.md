@@ -115,7 +115,7 @@ bar, and then you choose item heights so the centring lands on whole points: 52 
   divider); each row shows the operation (Callout, secondary) with the result below it (Inter Semibold 16/20),
   both right-aligned. No divider against the keypad; the sidebar toggle moves into the sidebar
   when it is open (see Calculator history sidebar above).
-- Terminal: content padding 12, line height 16 (Mono 12/16).
+- Terminal: content padding 12, line height 16 (Mono 12/16). Settings window: [`terminal-settings.md`](terminal-settings.md).
 - Text baselines: put text frames on whole points, with the line height from the text style.
 - Push buttons: the label is centred in the button on both axes (text centre = button centre); the
   kit's text frames are auto-width, centre-aligned and centred in all 200 masters. Do not take the frame x

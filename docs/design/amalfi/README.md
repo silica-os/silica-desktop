@@ -12,6 +12,7 @@ which the shell (`shell/`), the compositor's glass (`crates/ossido`), `silica_ui
 | [`components.md`](components.md) | binding layout metrics, the full component inventory, Faro and Launcher specs |
 | [`lock-screen.md`](lock-screen.md) | the lock screen: behaviour from `docs/spec/lock.md`, Amalfi layout on the grid, masters and states, Glass/Lock and Glass/Clock, motion geometry, accessibility, provisional values |
 | [`status-bar.md`](status-bar.md) | the shared Status Bar: the status cluster of the menu bar and the lock screen, items, metrics, hit areas, variants per context (Menu Bar, Lock Screen × Default, Increase Contrast, Reduce Transparency) |
+| [`terminal-settings.md`](terminal-settings.md) | Terminal's settings window: size, pane tabs, profile list and sub-tabs, every control with its kit component and range, light/dark, settings not in the app yet |
 
 ## Sources of truth, in order
 
