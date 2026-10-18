@@ -294,6 +294,44 @@ pub fn rotated_rounded_distance(p: (f32, f32), rect: [f32; 4], r: f32, rotation:
     outside + dx.max(dy).min(0.0) - r
 }
 
+/// The exponent of the superellipse that stands for a continuous corner of `smoothing`
+/// (0–1): 2 (a circle) without smoothing, 3.53 at the body's 0.6 (the least-squares fit of the
+/// Sketch body path, `tools/body.svg` of silica-icons: within 2.2 units of 824 of the curve),
+/// linear in between.
+pub fn continuous_exponent(smoothing: f32) -> f32 {
+    2.0 + 2.55 * smoothing.clamp(0.0, 1.0)
+}
+
+/// Signed distance (pixels, negative inside) of `p` from a rectangle `[x, y, width, height]`
+/// whose corners are continuous curves: the corner starts `r × (1 + smoothing)` from the
+/// corner point along each edge and is a superellipse of [`continuous_exponent`] over that
+/// extent (silica-glass-v1 `add_continuous_region`). The shader's `continuous_distance`, rotated
+/// by `rotation` about the centre like [`rotated_rounded_distance`].
+pub fn rotated_continuous_distance(
+    p: (f32, f32),
+    rect: [f32; 4],
+    r: f32,
+    smoothing: f32,
+    rotation: f32,
+) -> f32 {
+    let [x, y, w, h] = rect;
+    let (cx, cy) = (x + w * 0.5, y + h * 0.5);
+    let (lx, ly) = to_frame((p.0 - cx, p.1 - cy), rotation);
+    let smoothing = smoothing.clamp(0.0, 1.0);
+    let a = (r.max(0.0) * (1.0 + smoothing)).min(w * 0.5).min(h * 0.5);
+    let dx = lx.abs() - (w * 0.5 - a);
+    let dy = ly.abs() - (h * 0.5 - a);
+    if a > 0.0 && dx > 0.0 && dy > 0.0 {
+        let n = continuous_exponent(smoothing);
+        let (qx, qy) = (dx / a, dy / a);
+        let f = (qx.powf(n) + qy.powf(n)).powf(1.0 / n);
+        // The gradient of f in units of q: the distance is (f - 1) / |grad| in units of a.
+        let grad = (qx.powf(2.0 * n - 2.0) + qy.powf(2.0 * n - 2.0)).sqrt() / f.powf(n - 1.0);
+        return (f - 1.0) * a / grad.max(1e-3);
+    }
+    dx.max(dy).min(0.0) + dx.max(0.0).hypot(dy.max(0.0)) - a
+}
+
 impl MaterialParams {
     /// The fill over the reference gray (`#7a7b80`), 0–1 luminance: the level the edge
     /// offsets were measured against.
@@ -574,6 +612,9 @@ impl TipProfile {
 pub struct PhysicalRegion {
     pub rect: Rectangle<i32, Physical>,
     pub radius: f64,
+    /// Continuous corners (`add_continuous_region`): 0–1, how far the corner spreads along the
+    /// edges; 0 is a circular arc of `radius`.
+    pub smoothing: f64,
     pub material: MaterialParams,
     /// Compositing opacity (0–1): it does not change the blurred background, only the drawing.
     pub opacity: f32,
@@ -636,6 +677,7 @@ impl PhysicalRegion {
     fn same_shape(&self, other: &Self) -> bool {
         self.rect == other.rect
             && self.radius == other.radius
+            && self.smoothing == other.smoothing
             && self.material == other.material
             && self.scale == other.scale
             && self.tip == other.tip
@@ -1409,6 +1451,14 @@ impl RenderElement<GlesRenderer> for GlassElement {
                     slot.copy_from_slice(&profile.uniform(scale));
                 }
             }
+            // A rounded shape carries its smoothing in the (otherwise unused) tip column.
+            if shape.tip.is_none()
+                && let Some(slot) = tips
+                    .get_mut(i / 4)
+                    .and_then(|matrix| matrix.get_mut((i % 4) * 4..(i % 4) * 4 + 1))
+            {
+                slot.copy_from_slice(&[shape.smoothing.clamp(0.0, 1.0) as f32]);
+            }
             let thickness = shape.rect.size.w.min(shape.rect.size.h) as f32;
             if let Some(slot) = lens_widths.get_mut(i) {
                 *slot = if profile.depth > 0.0 {
@@ -1658,6 +1708,7 @@ mod tests {
         let region = |rotation: f64| PhysicalRegion {
             rect: Rectangle::new((100, 50).into(), (120, 28).into()),
             radius: 14.0,
+            smoothing: 0.0,
             material: MaterialParams::amalfi(16.0, 0.0, MERGE_PT, Lens::NONE),
             opacity: 1.0,
             scale: 1.0,
@@ -1738,6 +1789,106 @@ mod tests {
             // Exact, or the measured outline that the whole-point size rounds.
             assert!(close(p.depth(), d, 0.5), "{w}×{d}: depth {}", p.depth());
             assert!(p.half_width() <= w / 2.0 + 0.5 + 1e-6, "{w}×{d}: {p:?}");
+        }
+    }
+
+    /// The outline of `tools/body.svg` (silica-icons; a copy is in silica-assets): sampled
+    /// points of its lines and cubic curves, on the 1024 canvas.
+    fn body_outline() -> Vec<(f32, f32)> {
+        let svg = include_str!("../../silica-assets/src/compose/body.svg");
+        let d = svg
+            .split(" d=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap_or_default();
+        let mut numbers = Vec::new();
+        let mut ops = Vec::new();
+        let mut token = String::new();
+        for c in d.chars().chain(std::iter::once(' ')) {
+            if c.is_ascii_alphabetic() {
+                ops.push((c, numbers.len()));
+            }
+            if c.is_ascii_digit() || c == '.' || c == '-' {
+                token.push(c);
+            } else {
+                if let Ok(v) = token.parse::<f32>() {
+                    numbers.push(v);
+                }
+                token.clear();
+            }
+        }
+        let mut points = Vec::new();
+        let mut at = (0.0_f32, 0.0_f32);
+        for (k, &(op, first)) in ops.iter().enumerate() {
+            let end = ops.get(k + 1).map_or(numbers.len(), |next| next.1);
+            let v = &numbers[first..end];
+            match op {
+                'M' => at = (v[0], v[1]),
+                'L' => {
+                    let to = (v[0], v[1]);
+                    for t in 0..=20 {
+                        let t = t as f32 / 20.0;
+                        points.push((at.0 + (to.0 - at.0) * t, at.1 + (to.1 - at.1) * t));
+                    }
+                    at = to;
+                }
+                'C' => {
+                    for c in v.as_chunks::<6>().0.iter() {
+                        let (p1, p2, p3) = ((c[0], c[1]), (c[2], c[3]), (c[4], c[5]));
+                        for t in 0..=200 {
+                            let t = t as f32 / 200.0;
+                            let u = 1.0 - t;
+                            let w = [u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t];
+                            points.push((
+                                w[0] * at.0 + w[1] * p1.0 + w[2] * p2.0 + w[3] * p3.0,
+                                w[0] * at.1 + w[1] * p1.1 + w[2] * p2.1 + w[3] * p3.1,
+                            ));
+                        }
+                        at = p3;
+                    }
+                }
+                _ => {}
+            }
+        }
+        points
+    }
+
+    /// The mask of a continuous region is the body of the icons: its edge is within 0.5 px of
+    /// the outline of body.svg (radius 214, smoothing 0.6 on a side of 824) at 60 and 128 pt,
+    /// and a circular corner of the same radius is not (it would leave slivers of unblurred
+    /// body at the corners).
+    #[test]
+    fn a_continuous_region_follows_the_body_outline() {
+        let outline = body_outline();
+        assert!(outline.len() > 1000);
+        for side in [60.0_f32, 128.0] {
+            let k = side / 824.0;
+            let rect = [0.0, 0.0, side, side];
+            let at = |(x, y): (f32, f32)| ((x - 100.0) * k, (y - 100.0) * k);
+            let mut worst = 0.0_f32;
+            let mut circular = 0.0_f32;
+            for p in &outline {
+                let p = at(*p);
+                worst = worst.max(rotated_continuous_distance(p, rect, 214.0 * k, 0.6, 0.0).abs());
+                circular = circular.max(rotated_rounded_distance(p, rect, 214.0 * k, 0.0).abs());
+            }
+            assert!(worst < 0.5, "{side} pt: {worst} px from the body outline");
+            assert!(
+                circular > worst,
+                "{side} pt: circular {circular} vs {worst}"
+            );
+            // Inside is negative, outside positive; the middle and the corner point.
+            let mid = (side / 2.0, side / 2.0);
+            assert!(
+                rotated_continuous_distance(mid, rect, 214.0 * k, 0.6, 0.0) < -side / 2.0 + 0.5
+            );
+            assert!(rotated_continuous_distance((0.0, 0.0), rect, 214.0 * k, 0.6, 0.0) > 1.0);
+        }
+        // Without smoothing it is the circular corner.
+        for p in [(1.0, 1.0), (5.0, 3.0), (20.0, 2.0), (-3.0, 40.0)] {
+            let a = rotated_continuous_distance(p, [0.0, 0.0, 60.0, 60.0], 12.0, 0.0, 0.0);
+            let b = rotated_rounded_distance(p, [0.0, 0.0, 60.0, 60.0], 12.0, 0.0);
+            assert!((a - b).abs() < 1e-3, "{p:?}: {a} vs {b}");
         }
     }
 }

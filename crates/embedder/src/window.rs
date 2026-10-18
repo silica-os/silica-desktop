@@ -809,7 +809,7 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     // The glass regions travel with the frames of the raster thread, window by window.
     let glass = Arc::new(GlassViews::default());
     let glass_manager = globals
-        .bind::<SilicaGlassManagerV1, App, ()>(&qh, 1..=8, ())
+        .bind::<SilicaGlassManagerV1, App, ()>(&qh, 1..=9, ())
         .ok();
     glass.insert(
         MAIN_VIEW,

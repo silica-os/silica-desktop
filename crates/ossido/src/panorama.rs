@@ -1897,6 +1897,7 @@ pub fn bar_region(
     ossido_render::glass::PhysicalRegion {
         rect,
         radius: 0.0,
+        smoothing: 0.0,
         material: kind.material(dark),
         opacity,
         scale,

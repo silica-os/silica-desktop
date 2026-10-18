@@ -1273,3 +1273,41 @@ fn a_rotated_region_keeps_its_edge_light_on_its_own_top_edge() {
         "light on the turned side edge: {side:.1} over {fill:.1}"
     );
 }
+
+#[test]
+fn a_continuous_region_is_listed_and_clips_its_corners() {
+    common::client::GLASS_VERSION.with(|v| v.set(9));
+    let ossido = start_at_32("glass-continuous", SHOT, &["--background", "7a7b80"]);
+    let size = (320, 320);
+    let mut glass = TestWindow::open_pixels(&ossido.wayland, "icon", size, &transparent(size));
+    // The body of an app icon: 200 pt, radius 214/824, smoothing 0.6.
+    glass
+        .set_glass_with(|g| {
+            g.add_continuous_region(60, 60, 200, 200, 52.0, 0.6, Material::Regular, 1.0);
+        })
+        .unwrap();
+    let list = glass_list(&ossido);
+    let region = &list[0]["regions"][0];
+    assert_eq!(region["radius"], 52.0, "{list}");
+    assert!(
+        (region["smoothing"].as_f64().unwrap() - 0.6).abs() < 0.01,
+        "{list}"
+    );
+    let image = shot(&ossido, "glass-continuous.png");
+    let lift = |x: u32, y: u32| {
+        let [r, g, b] = rgb(&image, 32 + x, 32 + y);
+        (f64::from(r) + f64::from(g) + f64::from(b)) / 3.0 - f64::from(0x7b)
+    };
+    let fill = lift(160, 160);
+    assert!(fill.abs() > 5.0, "no glass in the middle: {fill:.1}");
+    // The corner point is outside; so is a point on the diagonal 12 px in, where a square
+    // corner would be glass; 30 px along the diagonal is inside.
+    assert!(
+        lift(61, 61).abs() < 0.2 * fill.abs(),
+        "glass at the corner point"
+    );
+    assert!(
+        lift(75, 75).abs() > 0.6 * fill.abs(),
+        "no glass inside the corner"
+    );
+}

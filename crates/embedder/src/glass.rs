@@ -27,6 +27,10 @@ pub struct Region {
     pub width: i32,
     pub height: i32,
     pub radius: f64,
+    /// Continuous corners (0–1, `smoothing` in the JSON; version 9, `add_continuous_region`):
+    /// how far the corner spreads along the edges. 0: a circular arc of `radius`. An Ossido
+    /// without version 9 gets a circular corner of [`Region::circular_radius`].
+    pub smoothing: f64,
     pub material: Material,
     /// 0–1: the glass is composed with this opacity (silica-glass-v1 version 3).
     pub opacity: f64,
@@ -150,7 +154,18 @@ impl Tip {
     }
 }
 
+/// How much of the smoothing a circular corner takes on to stand for a continuous one: the
+/// radius of the circle through the same edge points is `radius × (1 + 0.26 × smoothing)`
+/// (0.3 / 0.26 on the app icon body, with its 0.6).
+const CIRCULAR_PER_SMOOTHING: f64 = 0.26;
+
 impl Region {
+    /// The radius of the circular corner an Ossido without continuous corners (before version
+    /// 9) draws instead.
+    pub fn circular_radius(radius: f64, smoothing: f64) -> f64 {
+        radius * (1.0 + CIRCULAR_PER_SMOOTHING * smoothing)
+    }
+
     /// A region from the JSON of `setRegions`, if valid.
     fn from_json(value: &Value) -> Option<Self> {
         let int = |name: &str| {
@@ -165,6 +180,11 @@ impl Region {
             .and_then(Value::as_f64)
             .filter(|r| r.is_finite() && *r >= 0.0)
             .unwrap_or(0.0);
+        let smoothing = value
+            .get("smoothing")
+            .and_then(Value::as_f64)
+            .filter(|s| s.is_finite())
+            .map_or(0.0, |s| s.clamp(0.0, 1.0));
         let material = match value.get("material").and_then(Value::as_str) {
             Some("thick") => Material::Thick,
             Some("regular") => Material::Regular,
@@ -183,6 +203,7 @@ impl Region {
             width: int("width")?,
             height: int("height")?,
             radius,
+            smoothing,
             material,
             opacity,
             tip: match value.get("shape").and_then(Value::as_str) {
@@ -418,6 +439,7 @@ fn send_regions(object: &SilicaGlassV1, regions: &[Region]) {
     let groups = object.version() >= 4;
     let profiles = object.version() >= 7;
     let rotations = object.version() >= 8;
+    let continuous = object.version() >= 9;
     // After `clear` the regions are upright.
     let mut rotation = 0.0;
     let mut group = regions.first().map_or(0, |r| r.group);
@@ -466,6 +488,17 @@ fn send_regions(object: &SilicaGlassV1, regions: &[Region]) {
             ),
         };
         let opacity = region.opacity;
+        let smoothing = region.smoothing;
+        if region.tip.is_none() && smoothing > 0.0 && continuous {
+            object.add_continuous_region(x, y, w, h, radius, smoothing, material, opacity);
+            continue;
+        }
+        // Before version 9: a circular corner that stands for the continuous one.
+        let radius = if region.tip.is_none() && smoothing > 0.0 {
+            Region::circular_radius(radius, smoothing)
+        } else {
+            radius
+        };
         if let Some(tip) = region.tip {
             match tip {
                 Tip::Down => object.add_tip(x, y, w, h, material, opacity),
@@ -647,5 +680,24 @@ mod tests {
         ]));
         let groups: Vec<i32> = regions.iter().map(|r| r.group).collect();
         assert_eq!(groups, [i32::MIN, -1000, -900, 0, 1, i32::MAX]);
+    }
+
+    #[test]
+    fn smoothing_is_parsed_clamped_and_has_a_circular_stand_in() {
+        let args = json!([
+            {"x": 0, "y": 0, "width": 100, "height": 100, "radius": 26, "smoothing": 0.6},
+            {"x": 0, "y": 0, "width": 100, "height": 100, "radius": 26, "smoothing": 7},
+            {"x": 0, "y": 0, "width": 100, "height": 100, "radius": 26, "smoothing": "x"},
+            {"x": 0, "y": 0, "width": 100, "height": 100, "radius": 26}
+        ]);
+        let regions = parse_regions(&args);
+        let smoothing: Vec<f64> = regions.iter().map(|r| r.smoothing).collect();
+        assert_eq!(smoothing, [0.6, 1.0, 0.0, 0.0]);
+        // An Ossido before version 9 gets the circle through the same edge points: 0.3 of the
+        // side for the app icon body (radius 214 / 824, smoothing 0.6).
+        let side = 824.0;
+        let stand_in = Region::circular_radius(214.0, 0.6);
+        assert!((stand_in / side - 0.30).abs() < 0.005, "{stand_in}");
+        assert_eq!(Region::circular_radius(26.0, 0.0), 26.0);
     }
 }

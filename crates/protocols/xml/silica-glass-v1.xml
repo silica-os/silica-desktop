@@ -13,7 +13,7 @@
     (text, icons) on top, with transparent pixels where the glass must show.
   </description>
 
-  <interface name="silica_glass_manager_v1" version="8">
+  <interface name="silica_glass_manager_v1" version="9">
     <description summary="creates the glass object of a surface"/>
 
     <request name="destroy" type="destructor">
@@ -35,7 +35,7 @@
     </request>
   </interface>
 
-  <interface name="silica_glass_v1" version="8">
+  <interface name="silica_glass_v1" version="9">
     <description summary="glass regions of a surface">
       The state is double-buffered: clear and add_region change the pending state, which
       becomes current on the next wl_surface.commit. Coordinates are in the surface
@@ -135,6 +135,26 @@
         close or overlapping, and are drawn on top of them: a submenu over its menu.
         clear goes back to the first group.
       </description>
+    </request>
+
+    <request name="add_continuous_region" since="9">
+      <description summary="adds a region with continuous corners">
+        Like add_translucent_region, with the corners drawn as a continuous curve instead of a
+        circular arc (the shape of an app icon's body). `radius` is the radius of the equivalent
+        circular corner, `smoothing` (0–1) how far the curve spreads along the edges: the corner
+        starts radius × (1 + smoothing) from the corner point along each edge. With a smoothing
+        of 0 it is a circular corner. The compositor draws a superellipse fitted to the Sketch
+        body path (radius 214 and smoothing 0.6 on 824) within 0.5 px at 60 and 128 pt. Applies
+        with set_rotation like the other regions.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+      <arg name="radius" type="fixed"/>
+      <arg name="smoothing" type="fixed"/>
+      <arg name="material" type="uint" enum="material"/>
+      <arg name="opacity" type="fixed"/>
     </request>
 
     <request name="add_tip" since="4">
