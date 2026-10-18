@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:silica_shell/menubar/bar_menu_host.dart';
 import 'package:silica_shell/menubar/menubar.dart';
+import 'package:silica_shell/system/popup_menu_model.dart';
 import 'package:silica_shell/system/shell_channel.dart';
 import 'package:silica_ui/silica_ui.dart';
 
@@ -340,5 +341,126 @@ void main() {
         expect(layer.last, 'setSize');
       },
     );
+
+    group('the menu of a control', () {
+      const rows = [
+        PopupRow(kind: PopupRowKind.item, id: 1, label: 'One'),
+        PopupRow(kind: PopupRowKind.item, id: 2, label: 'Two'),
+        PopupRow(kind: PopupRowKind.item, id: 3, label: 'Three'),
+      ];
+
+      Future<void> open(
+        WidgetTester tester,
+        Rect control, {
+        bool popUp = true,
+        int selected = 2,
+        VoidCallback? onDismissed,
+        List<int>? chosen,
+        Size screen = const Size(800, 600),
+      }) async {
+        tester.view
+          ..devicePixelRatio = 1
+          ..physicalSize = screen;
+        addTearDown(tester.view.reset);
+        final request = PopupMenuRequest(
+          serial: 1,
+          appId: '',
+          popUp: popUp,
+          anchor: control,
+          selected: selected,
+          rows: rows,
+        );
+        await tester.pumpWidget(
+          _scene(
+            BarMenuHost(
+              entries: popupEntries(rows, (id) => chosen?.add(id)),
+              anchor: Offset.zero,
+              control: popupMenuLayout(request),
+              onDismissed: onDismissed,
+            ),
+          ),
+        );
+        await tester.pump();
+      }
+
+      testWidgets('a pop-up button: the chosen row is over the control', (
+        tester,
+      ) async {
+        await open(tester, const Rect.fromLTWH(300, 300, 120, 24));
+        final menu = tester.getRect(find.byType(AmalfiMenu));
+        expect(menu.left, 288);
+        expect(menu.top + 5 + 24, 300);
+        expect(menu.width, 120);
+        // The text of the row: 5 pt right of the control's label (12 + 1 in).
+        expect(
+          tester.getTopLeft(find.text('Two')).dx,
+          greaterThanOrEqualTo(288 + 28),
+        );
+      });
+
+      testWidgets('a pull-down: 3 below, 5 left, 4 narrower', (tester) async {
+        await open(
+          tester,
+          const Rect.fromLTWH(300, 300, 120, 24),
+          popUp: false,
+        );
+        final menu = tester.getRect(find.byType(AmalfiMenu));
+        expect((menu.left, menu.top, menu.width), (295, 327, 116));
+      });
+
+      testWidgets('near the bottom the rows scroll and keep the alignment', (
+        tester,
+      ) async {
+        await open(tester, const Rect.fromLTWH(300, 590, 120, 24), selected: 2);
+        final menu = tester.getRect(find.byType(AmalfiMenu));
+        expect(menu.bottom, 594);
+        expect(find.byType(AmalfiGlyph), findsWidgets);
+      });
+
+      testWidgets('it opens in one frame, Esc fades it ease-out in 190 ms', (
+        tester,
+      ) async {
+        var gone = 0;
+        await open(
+          tester,
+          const Rect.fromLTWH(300, 300, 120, 24),
+          onDismissed: () => gone++,
+        );
+        double opacity() => tester
+            .widget<FadeTransition>(find.byType(FadeTransition).first)
+            .opacity
+            .value;
+        expect(opacity(), 1);
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 80));
+        expect(opacity(), inInclusiveRange(0.25, 0.5));
+        await tester.pump(const Duration(milliseconds: 120));
+        expect(gone, 1);
+      });
+
+      testWidgets('a choice goes out 150 ms after the click, then it fades', (
+        tester,
+      ) async {
+        final chosen = <int>[];
+        var gone = 0;
+        await open(
+          tester,
+          const Rect.fromLTWH(300, 300, 120, 24),
+          chosen: chosen,
+          onDismissed: () => gone++,
+        );
+        await tester.tap(find.text('Three'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 140));
+        expect(chosen, isEmpty);
+        await tester.pump(const Duration(milliseconds: 15));
+        expect(chosen, [3]);
+        await tester.pump(const Duration(milliseconds: 180));
+        expect(gone, 0);
+        await tester.pump(const Duration(milliseconds: 20));
+        expect(gone, 1);
+      });
+    });
   });
 }

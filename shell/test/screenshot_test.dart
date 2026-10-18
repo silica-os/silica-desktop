@@ -1144,11 +1144,16 @@ image/png=missing.desktop;org.example.Viewer.desktop;
     await tester.tap(find.byKey(const ValueKey('options')));
     await tester.pump(const Duration(milliseconds: 300));
     var menu = tester.getRect(optionsMenu());
-    // No room below the bar (it sits at the bottom): 4 pt above the button, its left edge on
-    // the button's, at least 200 wide (silica_ui's pull-down).
-    expect(menu.left, button.left);
-    expect(menu.bottom, button.top - AmalfiPopUpButtonMetrics.menuDistance);
-    expect(menu.width, greaterThanOrEqualTo(200));
+    // No room below the bar (it sits at the bottom): its bottom edge on the button's top, its
+    // left edge 5 pt left of the button's, 4 pt narrower at least (silica_ui's pull-down).
+    expect(menu.left, button.left - AmalfiPopUpMenuMetrics.pullDownLeft);
+    expect(menu.bottom, button.top);
+    expect(
+      menu.width,
+      greaterThanOrEqualTo(
+        button.width - AmalfiPopUpMenuMetrics.pullDownNarrower,
+      ),
+    );
     // Thick glass of the `menu` kind with radius 12, declared by the menu itself; Flutter
     // paints no tint of its own.
     final glass = tester.widget<Glass>(
@@ -1173,7 +1178,7 @@ image/png=missing.desktop;org.example.Viewer.desktop;
     await tester.tap(find.byKey(const ValueKey('options')));
     await tester.pump(const Duration(milliseconds: 300));
     menu = tester.getRect(optionsMenu());
-    expect(menu.top, button.bottom + AmalfiPopUpButtonMetrics.menuDistance);
+    expect(menu.top, button.bottom + AmalfiPopUpMenuMetrics.pullDownGap);
   });
 
   testWidgets(

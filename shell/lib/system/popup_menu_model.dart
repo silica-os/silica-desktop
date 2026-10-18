@@ -210,42 +210,109 @@ Widget? _icon(String icon) {
   );
 }
 
-/// The space between a pull-down's control and its menu.
-const double pullDownGap = 4;
-
-/// The top left corner of the menu on the output.
-///
-/// A context menu: the first row under the pointer (11 pt above it), as the desktop menu. A
-/// pop-up button: the selected top-level row centred on the control (the text baselines
-/// line up) and its row edge 5 pt left of the control's (docs/spec/menus.md, provisional).
+/// The top left corner of a context menu on the output: the first row under the pointer (11 pt
+/// above it), as the desktop menu. Pop-up buttons and pull-downs go through [popupMenuLayout].
 Offset popupMenuTopLeft(PopupMenuRequest request, {double above = 11}) {
   final a = request.anchor;
-  if (!request.popUp) {
-    // A pull-down: below its control. A context menu: the pointer, a 0 x 0 rectangle.
-    return a.height > 0
-        ? Offset(a.left, a.bottom + pullDownGap)
-        : Offset(a.left, a.top - above);
+  return Offset(a.left, a.top - above);
+}
+
+/// What the shell needs to place the menu of a control (a pop-up button or a pull-down):
+/// the measured rules are `AmalfiMenuPlacement` and `AmalfiPopUpMenuMetrics` of silica_ui
+/// (docs/spec/menus.md, "Pop-up button"), the one source of the numbers.
+@immutable
+class PopupMenuLayout {
+  const PopupMenuLayout({
+    required this.control,
+    required this.popUp,
+    required this.height,
+    required this.selectedTop,
+    required this.first,
+    required this.rowHeight,
+    required this.minWidth,
+  });
+
+  final Rect control;
+
+  /// A pop-up button's menu (the chosen row over the control), else a pull-down's.
+  final bool popUp;
+
+  /// The menu's height with every row shown, and the top of the chosen row in it.
+  final double height;
+  final double selectedTop;
+
+  /// Whether the chosen row is the first one (or none is chosen).
+  final bool first;
+  final double rowHeight;
+
+  /// The menu is at least this wide: the control's width, 4 pt less for a pull-down.
+  final double minWidth;
+
+  /// Where the menu goes on an output of [screen]; [width] is the menu's own width (0 while
+  /// only the vertical placement is needed).
+  AmalfiMenuPlacement place(Size screen, double width) {
+    final bounds = Offset.zero & screen;
+    return popUp
+        ? AmalfiMenuPlacement.popUp(
+            control: control,
+            bounds: bounds,
+            width: width,
+            height: height,
+            selectedTop: selectedTop,
+            first: first,
+          )
+        : AmalfiMenuPlacement.pullDown(
+            control: control,
+            bounds: bounds,
+            width: width,
+            height: height,
+          );
   }
-  const padding = AmalfiMenuMetrics.padding;
-  var offset = padding;
-  var found = false;
-  for (final row in request.rows) {
-    if (row.kind == PopupRowKind.item && row.id == request.selected) {
-      found = true;
-      break;
-    }
-    if (row.kind == PopupRowKind.separator) {
-      offset += AmalfiMenuMetrics.separatorHeight;
-    } else if (row.kind == PopupRowKind.submenuBegin) {
-      // Skip its rows: they belong to the submenu.
-      offset += AmalfiMenuMetrics.itemHeight;
-    } else if (row.kind != PopupRowKind.submenuEnd) {
-      offset += AmalfiMenuMetrics.itemHeight;
+}
+
+/// The layout of the menu of a pop-up button or a pull-down; null for a context menu (a
+/// 0 x 0 anchor, the pointer).
+PopupMenuLayout? popupMenuLayout(PopupMenuRequest request) {
+  final control = request.anchor;
+  if (!request.popUp && control.height <= 0) return null;
+  final row = AmalfiPopUpMenuMetrics.rowHeight(
+    AmalfiPopUpControl.ofHeight(control.height),
+  );
+  const padding = AmalfiPopUpMenuMetrics.padding;
+  var y = padding;
+  double? selected;
+  var depth = 0;
+  for (final r in request.rows) {
+    switch (r.kind) {
+      case PopupRowKind.submenuBegin:
+        if (depth == 0) y += row;
+        depth++;
+      case PopupRowKind.submenuEnd:
+        if (depth > 0) depth--;
+      case _ when depth > 0:
+        break;
+      case PopupRowKind.separator:
+        y += AmalfiMenuMetrics.separatorHeight;
+      case PopupRowKind.item:
+        if (request.popUp && selected == null && r.id == request.selected) {
+          selected = y;
+        }
+        y += row;
+      default:
+        y += row;
     }
   }
-  if (!found) offset = padding;
-  return Offset(
-    a.left - 5 - padding,
-    a.center.dy - offset - AmalfiMenuMetrics.itemHeight / 2,
+  return PopupMenuLayout(
+    control: control,
+    popUp: request.popUp,
+    height: y + padding,
+    selectedTop: selected ?? padding,
+    first: selected == null || selected == padding,
+    rowHeight: row,
+    minWidth: request.popUp
+        ? control.width
+        : (control.width - AmalfiPopUpMenuMetrics.pullDownNarrower)
+              .clamp(0, double.infinity)
+              .toDouble(),
   );
 }

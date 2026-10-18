@@ -85,47 +85,152 @@ void main() {
     expect(request.anchor, const Rect.fromLTWH(100, 200, 80, 22));
   });
 
+  PopupMenuRequest request({
+    required Rect anchor,
+    bool popUp = true,
+    int selected = 0,
+    int count = 5,
+  }) => PopupMenuRequest(
+    serial: 1,
+    appId: '',
+    popUp: popUp,
+    anchor: anchor,
+    selected: selected,
+    rows: [
+      for (var i = 1; i <= count; i++)
+        PopupRow(kind: PopupRowKind.item, id: i, label: 'Item $i'),
+    ],
+  );
+
+  const screen = Size(1000, 800);
+
   test('a context menu opens with its first row under the pointer', () {
-    final request = PopupMenuRequest(
-      serial: 1,
-      appId: '',
-      popUp: false,
+    final r = request(
       anchor: const Rect.fromLTWH(300, 400, 0, 0),
-      selected: 0,
-      rows: rows,
-    );
-    expect(popupMenuTopLeft(request), const Offset(300, 389));
-  });
-
-  test('a pull-down opens below its control', () {
-    final request = PopupMenuRequest(
-      serial: 1,
-      appId: '',
       popUp: false,
-      anchor: const Rect.fromLTWH(100, 200, 80, 24),
-      selected: 0,
-      rows: rows,
     );
-    expect(popupMenuTopLeft(request), const Offset(100, 228));
+    expect(popupMenuTopLeft(r), const Offset(300, 389));
+    expect(popupMenuLayout(r), isNull);
   });
 
-  test('a pop-up button aligns the selected row on the control', () {
-    final items = [
-      PopupRow(kind: PopupRowKind.item, id: 1, label: 'A'),
-      PopupRow(kind: PopupRowKind.separator),
-      PopupRow(kind: PopupRowKind.item, id: 2, label: 'B'),
-    ];
-    final request = PopupMenuRequest(
-      serial: 1,
-      appId: '',
-      popUp: true,
-      anchor: const Rect.fromLTWH(100, 200, 80, 24),
-      selected: 2,
-      rows: items,
+  group('a pop-up button', () {
+    const control = Rect.fromLTWH(300, 300, 120, 24);
+
+    test('puts the selected row on the control: first, middle, last', () {
+      for (final id in [1, 3, 5]) {
+        final layout = popupMenuLayout(request(anchor: control, selected: id))!;
+        final place = layout.place(screen, 150);
+        // 5 of padding, 24 per row.
+        expect(place.top + 5 + 24.0 * (id - 1), 300, reason: 'item $id');
+        expect(place.left, 288);
+        expect(layout.height, 130);
+        expect(layout.minWidth, 120);
+      }
+    });
+
+    test('counts separators and sections, and skips submenu rows', () {
+      final r = PopupMenuRequest(
+        serial: 1,
+        appId: '',
+        popUp: true,
+        anchor: control,
+        selected: 2,
+        rows: const [
+          PopupRow(kind: PopupRowKind.section, label: 'S'),
+          PopupRow(kind: PopupRowKind.separator),
+          PopupRow(kind: PopupRowKind.submenuBegin, label: 'More'),
+          PopupRow(kind: PopupRowKind.item, id: 9, label: 'Inner'),
+          PopupRow(kind: PopupRowKind.submenuEnd),
+          PopupRow(kind: PopupRowKind.item, id: 2, label: 'B'),
+        ],
+      );
+      final layout = popupMenuLayout(r)!;
+      // 5 + section 24 + separator 8 + submenu 24.
+      expect(layout.selectedTop, 61);
+      expect(layout.height, 5 + 24 + 8 + 24 + 24 + 5);
+    });
+
+    test('no selected row aligns the first', () {
+      final layout = popupMenuLayout(request(anchor: control, selected: 0))!;
+      expect(layout.first, isTrue);
+      expect(layout.place(screen, 150).top, 295);
+    });
+
+    test('the first item flips above without room below', () {
+      final layout = popupMenuLayout(
+        request(anchor: const Rect.fromLTWH(300, 770, 120, 24), selected: 1),
+      )!;
+      final place = layout.place(screen, 150);
+      expect(place.flipped, isTrue);
+      expect(place.top + place.height, 770);
+    });
+
+    test('a middle item near the bottom scrolls with an arrow strip', () {
+      final layout = popupMenuLayout(
+        request(anchor: const Rect.fromLTWH(300, 760, 120, 24), selected: 3),
+      )!;
+      final place = layout.place(screen, 150);
+      expect(place.flipped, isFalse);
+      expect(place.top + place.height, 794);
+      expect(place.arrowBottom, isTrue);
+    });
+
+    test('the last item near the top scrolls instead of flipping', () {
+      final layout = popupMenuLayout(
+        request(anchor: const Rect.fromLTWH(300, 20, 120, 24), selected: 5),
+      )!;
+      final place = layout.place(screen, 150);
+      expect(place.flipped, isFalse);
+      expect(place.top, 6);
+      expect(place.arrowTop, isTrue);
+      expect(place.top - place.scroll + 5 + 24 * 4, 20);
+    });
+
+    test(
+      'past the right edge it slides left and keeps the row on the control',
+      () {
+        final layout = popupMenuLayout(
+          request(anchor: const Rect.fromLTWH(940, 300, 120, 24), selected: 3),
+        )!;
+        final place = layout.place(screen, 200);
+        expect(place.left, 1000 - 6 - 200);
+        expect(place.top + 5 + 48, 300);
+      },
     );
-    final top = popupMenuTopLeft(request);
-    // 4 padding + 24 + 8 above the selected row: its centre is on the control's.
-    expect(top.dy + 4 + 24 + 8 + 12, 212);
-    expect(top.dx, 100 - 5 - 4);
+
+    test('small and mini controls use 22 and 19 pt rows', () {
+      final small = popupMenuLayout(
+        request(anchor: const Rect.fromLTWH(300, 300, 100, 20), selected: 2),
+      )!;
+      expect(small.rowHeight, 22);
+      expect(small.height, 5 + 5 * 22 + 5);
+      expect(small.place(screen, 120).left, 289);
+      final mini = popupMenuLayout(
+        request(anchor: const Rect.fromLTWH(300, 300, 100, 16), selected: 2),
+      )!;
+      expect(mini.rowHeight, 19);
+      expect(mini.place(screen, 120).top + 5 + 19, 303);
+    });
+  });
+
+  group('a pull-down', () {
+    const control = Rect.fromLTWH(100, 200, 80, 24);
+
+    test('opens 3 below its control, 5 left of it and 4 narrower', () {
+      final layout = popupMenuLayout(request(anchor: control, popUp: false))!;
+      final place = layout.place(screen, 76);
+      expect(place.top, 227);
+      expect(place.left, 95);
+      expect(layout.minWidth, 76);
+    });
+
+    test('opens above without room below', () {
+      final layout = popupMenuLayout(
+        request(anchor: const Rect.fromLTWH(100, 760, 80, 24), popUp: false),
+      )!;
+      final place = layout.place(screen, 76);
+      expect(place.flipped, isTrue);
+      expect(place.top + place.height, 760);
+    });
   });
 }

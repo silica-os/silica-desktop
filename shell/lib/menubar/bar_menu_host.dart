@@ -13,6 +13,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:silica_ui/silica_ui.dart';
 
+import '../system/popup_menu_model.dart';
+
 /// The Amalfi rows of a menu of the shell's model. A custom row (`MenuCustom`) has no Amalfi
 /// counterpart and is left out: the menus of the bar have none.
 List<AmalfiMenuEntry> amalfiEntries(List<MenuEntry> entries) => [
@@ -80,6 +82,32 @@ class _MenuLayout extends SingleChildLayoutDelegate {
       old.anchor != anchor || old.flip != flip;
 }
 
+/// Where the menu of a control goes (`PopupMenuLayout`): the measured placement, cut to the
+/// output with the rows scrolled when it does not fit.
+class _ControlMenuLayout extends SingleChildLayoutDelegate {
+  const _ControlMenuLayout(this.control);
+
+  final PopupMenuLayout control;
+
+  @override
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) {
+    final height = control.place(constraints.biggest, 0).height;
+    return BoxConstraints(
+      maxWidth: (constraints.maxWidth - 2 * AmalfiPopUpMenuMetrics.screenMargin)
+          .clamp(0, double.infinity),
+      minHeight: height,
+      maxHeight: height,
+    );
+  }
+
+  @override
+  Offset getPositionForChild(Size size, Size childSize) =>
+      control.place(size, childSize.width).topLeft;
+
+  @override
+  bool shouldRelayout(_ControlMenuLayout old) => old.control != control;
+}
+
 /// A menu of the bar, shown inside the bar's surface (which covers the screen while a menu is
 /// open).
 class BarMenuHost extends StatefulWidget {
@@ -90,6 +118,7 @@ class BarMenuHost extends StatefulWidget {
     this.entryKey,
     this.highlightFirst = false,
     this.flip = false,
+    this.control,
     this.onDismissed,
     this.onNext,
     this.onPrevious,
@@ -111,6 +140,11 @@ class BarMenuHost extends StatefulWidget {
 
   /// Whether the menu opens to the left of the anchor when it does not fit on the right.
   final bool flip;
+
+  /// The menu of a pop-up button or a pull-down: placed by the measured rules over (or
+  /// below) the control instead of at [anchor]; it appears in one frame, fades out ease-out
+  /// and closes 150 ms after a choice (docs/spec/menus.md).
+  final PopupMenuLayout? control;
 
   /// The menu is gone: after a choice, Esc, or a press outside, once it has faded out.
   final VoidCallback? onDismissed;
@@ -136,7 +170,9 @@ class BarMenuHostState extends State<BarMenuHost>
     duration: fadeOut,
     value: 1,
   );
-  late final Animation<double> _opacity = _fade;
+  late final Animation<double> _opacity = widget.control == null
+      ? _fade
+      : CurvedAnimation(parent: _fade, curve: AmalfiPopUpMenuMetrics.fadeCurve);
   final GlobalKey _overlayKey = GlobalKey();
   late final OverlayEntry _entry = OverlayEntry(builder: _buildMenu);
   GlobalKey _menuKey = GlobalKey();
@@ -238,22 +274,49 @@ class BarMenuHostState extends State<BarMenuHost>
     return true;
   }
 
-  Widget _buildMenu(BuildContext context) => CustomSingleChildLayout(
-    delegate: _MenuLayout(widget.anchor, flip: widget.flip),
-    child: KeyedSubtree(
-      key: _menuKey,
-      child: AmalfiMenu(
+  Widget _buildMenu(BuildContext context) {
+    final control = widget.control;
+    if (control == null) {
+      return CustomSingleChildLayout(
+        delegate: _MenuLayout(widget.anchor, flip: widget.flip),
+        child: KeyedSubtree(key: _menuKey, child: _menu()),
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, box) {
+        final place = control.place(box.biggest, 0);
+        return CustomSingleChildLayout(
+          delegate: _ControlMenuLayout(control),
+          child: KeyedSubtree(
+            key: _menuKey,
+            child: _menu(control: control, place: place),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _menu({PopupMenuLayout? control, AmalfiMenuPlacement? place}) =>
+      AmalfiMenu(
         entries: widget.entries,
         autofocus: true,
         highlightFirst: widget.highlightFirst,
         onDismiss: close,
+        minWidth: control?.minWidth ?? AmalfiMenuMetrics.minWidth,
+        padding: control == null
+            ? AmalfiMenuMetrics.padding
+            : AmalfiPopUpMenuMetrics.padding,
+        itemHeight: control?.rowHeight ?? AmalfiMenuMetrics.itemHeight,
+        chooseDelay: control == null
+            ? AmalfiMenuMetrics.chooseClose
+            : AmalfiPopUpMenuMetrics.chooseFadeDelay,
+        initialScrollOffset: place?.scroll ?? 0,
+        scrollArrows: control != null,
         onSubmenusChanged: (rects) {
           _submenus = rects;
           _scan();
         },
-      ),
-    ),
-  );
+      );
 
   @override
   Widget build(BuildContext context) => FadeTransition(

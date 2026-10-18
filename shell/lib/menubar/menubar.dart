@@ -1157,6 +1157,7 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
                             request,
                             above: desktopMenuAbove,
                           ),
+                          control: popupMenuLayout(request),
                           flip: !request.popUp,
                           highlightFirst: false,
                           onDismissed: _closeService,
