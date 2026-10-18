@@ -950,7 +950,7 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         ),
         shell: ShellLink::new(
             globals
-                .bind::<SilicaShellManagerV1, App, ()>(&qh, 1..=8, ())
+                .bind::<SilicaShellManagerV1, App, ()>(&qh, 1..=9, ())
                 .ok(),
             globals
                 .bind::<ExtForeignToplevelListV1, App, ()>(&qh, 1..=1, ())
@@ -2842,6 +2842,30 @@ impl App {
                     .get("owner")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or_default();
+                // A popup menu of an app (#241): Ossido owns its transient, this says where
+                // the shell drew it.
+                if let Some(serial) = args
+                    .get("popupMenu")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|n| u32::try_from(n).ok())
+                {
+                    let sent = self
+                        .shell
+                        .manager()
+                        .filter(|m| wayland_client::Proxy::version(*m) >= 9)
+                        .is_some_and(|manager| {
+                            manager.popup_menu_transient(
+                                serial,
+                                surface.wl_surface(),
+                                region.as_ref().map(Region::wl_region),
+                            );
+                            true
+                        });
+                    if sent {
+                        surface.commit();
+                    }
+                    return text_input::success(serde_json::json!(sent));
+                }
                 match self
                     .shell
                     .manager()
@@ -4158,6 +4182,51 @@ impl wayland_client::Dispatch<SilicaShellManagerV1, ()> for App {
                 app.shell.remember_app_menu(&message);
                 message
             }
+            // A context menu or pop-up button's menu of an app, drawn by the shell (#241).
+            Event::PopupMenu {
+                serial,
+                app_id,
+                kind,
+                x,
+                y,
+                width,
+                height,
+                selected,
+                appearance,
+            } => {
+                app.shell.begin_popup_menu(
+                    serial,
+                    app_id,
+                    kind,
+                    [x, y, width, height],
+                    selected,
+                    appearance,
+                );
+                return;
+            }
+            Event::PopupMenuRow {
+                serial,
+                kind,
+                id,
+                label,
+                flags,
+                icon,
+                key,
+                modifiers,
+            } => {
+                app.shell
+                    .popup_menu_row(serial, kind, id, label, flags, icon, key, modifiers);
+                return;
+            }
+            Event::PopupMenuEnd { serial } => match app.shell.end_popup_menu(serial) {
+                Some(message) => message,
+                None => return,
+            },
+            Event::PopupMenuClosed { serial } => serde_json::to_vec(&serde_json::json!({
+                "method": "popupMenuClosed",
+                "args": serial,
+            }))
+            .unwrap_or_default(),
             // Long press on the green button: the arrangement popover.
             Event::WindowMenu { identifier, x, y } => serde_json::to_vec(&serde_json::json!({
                 "method": "windowMenu",

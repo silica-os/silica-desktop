@@ -22,6 +22,7 @@ import '../l10n/l10n.dart';
 import '../system/desktop_entries.dart';
 import '../system/open_app.dart';
 import '../system/app_menu_model.dart';
+import '../system/popup_menu_model.dart';
 import '../system/shell_channel.dart';
 import '../system/layer_control.dart';
 import '../system/media.dart';
@@ -463,6 +464,14 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
   /// region is the bar plus the menus, and Ossido tells about a press outside. Without that
   /// support (an older Ossido) the surface takes every click, as before.
   Future<void> _menuRegion(List<Rect> rects) async {
+    if (_service case final request?) {
+      final menus = [for (final r in rects) r.inflate(2)];
+      final supported = await _layer.popupMenuRegion(request.serial, menus);
+      if (mounted && _service != null) {
+        _layer.inputRegion(supported ? [_barRect, ...menus] : null);
+      }
+      return;
+    }
     // Already closed (a late report of a menu that went away): no transient again.
     if (_open == null && _windowMenuTip == null && _desktopMenuAt == null) {
       return;
@@ -543,6 +552,8 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
     if (_desktopMenuAt != null) {
       _desktopKey.currentState?.pointerDown(e.localPosition);
     }
+    if (_service != null)
+      _serviceKey.currentState?.pointerDown(e.localPosition);
     final popover = _windowKey.currentState;
     if (_windowMenuTip != null &&
         popover != null &&
@@ -591,12 +602,75 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
       (menu) => _openWindowMenu(menu.tip, menu.brightness),
     );
     _dismissed = _layer.transientDismissed.listen((_) => _transientDismissed());
+    _serviceOpened = ShellChannel.instance.popupMenus.listen(_openService);
+    _serviceEnded = ShellChannel.instance.popupMenusClosed.listen(
+      _serviceClosedByOssido,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _syncAutohide();
     });
   }
 
   StreamSubscription<void>? _dismissed;
+
+  /// The context menu or pop-up button of an app (#241): Ossido hands over the rows and owns
+  /// the menu's life, the bar draws it with the same widgets as its own menus.
+  StreamSubscription<PopupMenuRequest>? _serviceOpened;
+  StreamSubscription<int>? _serviceEnded;
+  PopupMenuRequest? _service;
+  List<AmalfiMenuEntry>? _serviceEntries;
+  final GlobalKey<BarMenuHostState> _serviceKey = GlobalKey();
+
+  /// Whether Ossido already knows the menu is over (a choice, or it ended it itself).
+  bool _serviceOver = false;
+
+  Future<void> _openService(PopupMenuRequest request) async {
+    _closeMenu();
+    _closeWindowMenu();
+    _closeDesktopMenu();
+    final entries = popupEntries(request.rows, (id) {
+      _serviceOver = true;
+      unawaited(ShellChannel.instance.popupMenuChoose(request.serial, id));
+    });
+    if (entries.isEmpty) {
+      unawaited(ShellChannel.instance.popupMenuClose(request.serial));
+      return;
+    }
+    final screen = await LayerControl.outputSize();
+    if (!mounted) return;
+    setState(() {
+      _service = request;
+      _serviceEntries = entries;
+      _serviceOver = false;
+    });
+    _layer.size(0, screen?.height ?? request.anchor.bottom + 600);
+    _layer.inputRegion([_barRect]);
+    _layer.keyboard('exclusive');
+  }
+
+  /// Ossido ended the menu: a press outside, a change of context.
+  void _serviceClosedByOssido(int serial) {
+    if (_service?.serial != serial) return;
+    _serviceOver = true;
+    final menu = _serviceKey.currentState;
+    menu == null ? _closeService() : menu.close();
+  }
+
+  void _closeService() {
+    final request = _service;
+    if (request == null) return;
+    // Esc or a click on nothing: Ossido has not been told yet.
+    if (!_serviceOver) {
+      unawaited(ShellChannel.instance.popupMenuClose(request.serial));
+    }
+    setState(() {
+      _service = null;
+      _serviceEntries = null;
+    });
+    _layer.keyboard('none');
+    _layer.inputRegion(_restRegion());
+    _layer.size(0, barHeight);
+  }
 
   /// The arrangement popover of a window (long press on the green button): the tip at the
   /// point given by Ossido. While it is open the surface covers the screen but takes the
@@ -797,6 +871,8 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
     widget.system?.removeListener(_changed);
     _windowMenus?.cancel();
     _dismissed?.cancel();
+    _serviceOpened?.cancel();
+    _serviceEnded?.cancel();
     HardwareKeyboard.instance.removeHandler(_keyChanged);
     widget.media?.removeListener(_changed);
     super.dispose();
@@ -812,6 +888,7 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
   bool get _busy {
     final states = ShellChannel.instance.states.value;
     return _open != null ||
+        _service != null ||
         _windowMenuTip != null ||
         _power != null ||
         _desktopMenuAt != null ||
@@ -1065,6 +1142,25 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
                               ),
                             ),
                           ],
+                        ),
+                      ),
+                    ),
+                  if (_service case final request?)
+                    Positioned.fill(
+                      child: _withBrightness(
+                        request.brightness,
+                        BarMenuHost(
+                          key: _serviceKey,
+                          entryKey: request.serial,
+                          entries: _serviceEntries ?? const [],
+                          anchor: popupMenuTopLeft(
+                            request,
+                            above: desktopMenuAbove,
+                          ),
+                          flip: !request.popUp,
+                          highlightFirst: false,
+                          onDismissed: _closeService,
+                          onRectsChanged: _menuRegion,
                         ),
                       ),
                     ),
