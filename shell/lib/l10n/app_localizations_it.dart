@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -165,6 +166,9 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get dockRemove => 'Rimuovi';
+
+  @override
+  String get dockRemoveFromDock => 'Rimuovi dal Dock';
 
   @override
   String stackMoreInFolder(int count) {

@@ -212,6 +212,10 @@
   "@dockRemove": {
     "description": "Capsule over an icon dragged out of the Dock"
   },
+  "dockRemoveFromDock": "Remove from Dock",
+  "@dockRemoveFromDock": {
+    "description": "Label over the Trash while an app or folder icon of the Dock is dragged onto it"
+  },
   "stackMoreInFolder": "{count, plural, =1{1 more in the folder} other{{count} more in the folder}}",
   "@stackMoreInFolder": {
     "description": "Last item of a fan stack when files are left out",
