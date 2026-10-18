@@ -54,6 +54,8 @@ pub struct Look {
     pub reduce_transparency: bool,
     /// Animations skipped (Accessibility › Display).
     pub reduce_motion: bool,
+    /// The high-contrast palette (Accessibility › Display).
+    pub increase_contrast: bool,
 }
 
 impl Default for Look {
@@ -72,6 +74,7 @@ impl Default for Look {
             double_click_ms: DOUBLE_CLICK_DEFAULT_MS,
             reduce_transparency: false,
             reduce_motion: false,
+            increase_contrast: false,
         }
     }
 }
@@ -111,6 +114,7 @@ impl Look {
                 "keyboardNavigation" => value.as_bool().map(|b| next.keyboard_navigation = b),
                 "reduceTransparency" => value.as_bool().map(|b| next.reduce_transparency = b),
                 "reduceMotion" => value.as_bool().map(|b| next.reduce_motion = b),
+                "increaseContrast" => value.as_bool().map(|b| next.increase_contrast = b),
                 "doubleClickMs" => value
                     .as_f64()
                     .filter(|n| n.fract() == 0.0 && n.is_finite())
@@ -169,6 +173,7 @@ impl Look {
             Value::Bool(self.reduce_transparency),
         );
         put("look.reduceMotion", Value::Bool(self.reduce_motion));
+        put("look.increaseContrast", Value::Bool(self.increase_contrast));
     }
 }
 
@@ -205,6 +210,9 @@ mod tests {
         assert!(look.merge(&json!({"reduceMotion": true, "reduceTransparency": true})));
         assert!(look.reduce_motion && look.reduce_transparency);
         assert!(!look.merge(&json!({"reduceMotion": "yes"})));
+        assert!(look.merge(&json!({"increaseContrast": true})));
+        assert!(look.increase_contrast);
+        assert!(!look.merge(&json!({"increaseContrast": 1})));
         assert!(!look.merge(&json!({"doubleClickMs": 50})));
         assert!(!look.merge(&json!({"doubleClickMs": 400.5})));
         assert_eq!(look.double_click_ms, 500);
