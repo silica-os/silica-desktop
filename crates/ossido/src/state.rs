@@ -135,6 +135,9 @@ pub struct State {
     pub config_dir: Option<std::path::PathBuf>,
     /// The keyboard settings applied (`keyboard.json`).
     pub keyboard_config: crate::config::KeyboardConfig,
+    /// The input sources and the active one last told to the shell (`keyboard.sources`,
+    /// `keyboard.source`).
+    pub announced_sources: Option<(String, u32)>,
     /// The night light's colour temperature in kelvin (6500: off), `output.color_temperature`.
     pub color_temperature: u32,
     /// Energy (`power.json`, `idle.rs`): the last input, whether the display is off, whether
@@ -457,6 +460,7 @@ impl State {
             keys_for: None,
             config_dir: None,
             keyboard_config: crate::config::KeyboardConfig::parse(None, key_repeat()),
+            announced_sources: None,
             input_config: crate::config::InputConfig::default(),
             power_config: crate::config::PowerConfig::default(),
             theme_config: crate::config::ThemeConfig::default(),

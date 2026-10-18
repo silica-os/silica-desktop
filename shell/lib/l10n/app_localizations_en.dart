@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -1133,7 +1134,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get notificationsNow => 'now';
 
   @override
-  String get lockPassword => 'Enter password';
+  String get lockPassword => 'Enter Password';
 
   @override
   String get lockIncorrect => 'Incorrect password.';
@@ -1172,4 +1173,61 @@ class AppLocalizationsEn extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get statusWifi => 'Wi-Fi';
+
+  @override
+  String get statusWifiOff => 'off';
+
+  @override
+  String get statusWifiNotConnected => 'not connected';
+
+  @override
+  String statusWifiConnected(String network) {
+    return 'connected to $network';
+  }
+
+  @override
+  String get statusEthernet => 'Ethernet';
+
+  @override
+  String get statusBattery => 'Battery';
+
+  @override
+  String statusBatteryLevel(int percent) {
+    return '$percent percent';
+  }
+
+  @override
+  String statusBatteryCharging(int percent) {
+    return '$percent percent, charging';
+  }
+
+  @override
+  String get statusInputSource => 'Input source';
+
+  @override
+  String get statusInputSettings => 'Keyboard Settings…';
+
+  @override
+  String get statusBluetooth => 'Bluetooth';
+
+  @override
+  String get statusSound => 'Sound';
+
+  @override
+  String get statusSearch => 'Search';
+
+  @override
+  String get statusClock => 'Clock';
+
+  @override
+  String get statusControlCenter => 'Control Center';
+
+  @override
+  String get statusFocus => 'Focus';
+
+  @override
+  String get statusNowPlaying => 'Now Playing';
 }

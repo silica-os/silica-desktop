@@ -1,9 +1,11 @@
 // The menu bar (Amalfi, kit `Menu Bar/*`): a 32 pt transparent strip on the wallpaper (no
-// material), 28 pt items at y 2 with their text 8 pt from the edges, the Silica mark and the
-// status glyphs at 20 pt in 36 pt items. Text and glyphs are Text/Primary of the appearance
-// (dark on the light desktop, light on the dark one); the item of an open menu or panel has
-// a translucent white capsule (`Menu Bar/Selection`, radius 12); label and glyph stay Text/Primary. Menus open on
-// press below their title (bar_menu_host.dart) and follow the pointer to the next title.
+// material), 28 pt items at y 2 with their text 8 pt from the edges, the Silica mark in a 36 pt
+// item. Text and glyphs are Text/Primary of the appearance (dark on the light desktop, light on
+// the dark one); the item of an open menu or panel has a translucent white capsule
+// (`Menu Bar/Selection`, radius 14); label and glyph stay Text/Primary. The status cluster at the
+// trailing end is the shared Status Bar (silica_ui `AmalfiStatusBar`, status-bar.md), the same
+// component the lock screen shows. Menus open on press below their title (bar_menu_host.dart)
+// and follow the pointer to the next title.
 
 import 'dart:async';
 import 'dart:io';
@@ -35,6 +37,7 @@ import 'menubar_config.dart';
 import 'power.dart';
 import 'menus.dart';
 import 'status_icons.dart';
+import '../status/status_items.dart';
 import 'window_menu.dart';
 
 const double barHeight = 32;
@@ -85,10 +88,10 @@ Color barBackgroundColor(BuildContext context) => AmalfiTheme.of(context).isDark
     ? const Color(0x8C1C1C1E)
     : const Color(0x8CF2F2F7);
 
-/// The bar's text, like the kit: titles Body, the app name Headline, the clock Body Emphasis.
+/// The bar's text, like the kit: titles Body, the app name Headline (the clock is the Status
+/// Bar's).
 TextStyle barTitleStyle(Color color) => AmalfiType.body(color: color);
 TextStyle barNameStyle(Color color) => AmalfiType.headline(color: color);
-TextStyle barClockStyle(Color color) => AmalfiType.bodyEmphasis(color: color);
 
 /// The menus of an app that published none (silica-menu-v1, #25): generic ids, shown with
 /// `menuTitle`.
@@ -146,7 +149,9 @@ Future<void>? _dates;
   bool desktopMenu = false,
   String frontmost = '',
 }) {
-  if (open == 'logo') return (policy: TransientPolicy.menu, owner: systemOwner);
+  if (open == 'logo' || open == 'input') {
+    return (policy: TransientPolicy.menu, owner: systemOwner);
+  }
   if (open == 'battery') {
     return (policy: TransientPolicy.panel, owner: systemOwner);
   }
@@ -324,6 +329,8 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
 
   List<MenuEntry> _systemEntries(String name) => name == 'battery'
       ? _batteryMenu()
+      : name == 'input'
+      ? _inputMenu()
       : name == 'logo'
       ? logoMenu(
           l: l10nOf(context),
@@ -377,6 +384,25 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
       ),
     ];
   }
+
+  /// The input menu (status-bar.md, lock.md › Status items): the input sources, the current
+  /// one checked, then Keyboard Settings.
+  List<MenuEntry> _inputMenu() {
+    final l = l10nOf(context);
+    final settings = _settingsApp;
+    return [
+      ...inputSourceMenu(_inputSources, l.localeName),
+      const MenuDivider(),
+      MenuAction(
+        l.statusInputSettings,
+        enabled: settings != null,
+        onSelected: settings == null ? null : () => _launch(settings),
+      ),
+    ];
+  }
+
+  /// The input sources Ossido announces (the input source item and its menu).
+  final InputSources _inputSources = InputSources();
 
   /// ⌥ held: the logo menu shows its alternate items (SH-MB-04).
   bool _option = false;
@@ -859,6 +885,7 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
     _config.removeListener(_changed);
     _config.removeListener(_scheduleTick);
     _ownConfig?.dispose();
+    _inputSources.dispose();
     _timer?.cancel();
     _switchTimer?.cancel();
     _autohideTimer?.cancel();
@@ -1016,42 +1043,43 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
               ],
             ),
           ),
+          // The shared Status Bar (status-bar.md): the same component as on the lock screen.
           Positioned(
             right: barSide,
             top: 0,
             height: barHeight,
-            child: Row(
-              children: [
+            child: AmalfiStatusBar(
+              key: const ValueKey('menubar status bar'),
+              placement: AmalfiStatusBarPlacement.menuBar,
+              items: [
                 ..._systemIcons(on),
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: widget.onSearch,
-                  child: _glyphItem(
-                    key: _keyFor('search'),
-                    active: false,
-                    child: const StatusIcon(kind: StatusKind.search),
+                AmalfiStatusItem(
+                  boxKey: _keyFor('search'),
+                  label: l10nOf(context).statusSearch,
+                  width: AmalfiStatusBarMetrics.glyphItemWidth,
+                  onPressed: widget.onSearch,
+                  child: const Center(
+                    child: StatusIcon(kind: StatusKind.search),
                   ),
                 ),
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: widget.onClock,
-                  child: _titleItem(
-                    clockText(
-                      widget.now ?? DateTime.now(),
-                      l10nOf(context).localeName,
-                      _config.value.clock,
-                    ),
-                    barClockStyle,
-                    key: _keyFor('clock'),
-                    active: clockOpen,
+                AmalfiStatusClockItem(
+                  boxKey: _keyFor('clock'),
+                  text: clockText(
+                    widget.now ?? DateTime.now(),
+                    l10nOf(context).localeName,
+                    _config.value.clock,
                   ),
+                  label: l10nOf(context).statusClock,
+                  active: clockOpen,
+                  onPressed: widget.onClock,
                 ),
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: widget.onControls,
-                  child: _glyphItem(
-                    key: _keyFor('controls'),
-                    active: controlsOpen,
+                AmalfiStatusItem(
+                  boxKey: _keyFor('controls'),
+                  label: l10nOf(context).statusControlCenter,
+                  width: AmalfiStatusBarMetrics.glyphItemWidth,
+                  active: controlsOpen,
+                  onPressed: widget.onControls,
+                  child: const Center(
                     child: StatusIcon(kind: StatusKind.controls),
                   ),
                 ),
@@ -1205,108 +1233,104 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
     );
   }
 
-  /// Battery (if any) and network, from the system state; without it, the full Wi-Fi icon.
-  /// `on` tells whether the item of a name has its menu or panel open.
+  /// The status items before Search, from the system state (the shared builders of
+  /// `status/status_items.dart` for the network, the battery and the input source); without
+  /// the system state, the full Wi-Fi glyph. `on` tells whether the item of a name has its menu
+  /// or panel open.
   List<Widget> _systemIcons(bool Function(String name) on) {
+    final l = l10nOf(context);
     final s = widget.system?.value;
     final config = _config.value;
-    Widget item(
+    Widget glyph(
       String name,
-      StatusKind kind, {
+      StatusKind kind,
+      String label, {
       double level = 1,
       bool dim = false,
-      bool charging = false,
       VoidCallback? onTap,
-      String? caption,
-    }) {
-      final open = on(name);
-      final glyph = StatusIcon(
-        kind: kind,
-        level: level,
-        dim: dim,
-        charging: charging,
-      );
-      final child = caption == null
-          ? glyph
-          : Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(caption, style: barTitleStyle(barTextColor(context))),
-                const SizedBox(width: 4),
-                glyph,
-              ],
-            );
-      return GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: _glyphItem(
-          key: _keyFor(name),
-          active: open,
-          wide: caption != null,
-          child: child,
-        ),
-      );
-    }
+    }) => AmalfiStatusItem(
+      boxKey: _keyFor(name),
+      label: label,
+      active: on(name),
+      onPressed: onTap,
+      width: AmalfiStatusBarMetrics.glyphItemWidth,
+      child: Center(
+        child: StatusIcon(kind: kind, level: level, dim: dim),
+      ),
+    );
 
     if (s == null) {
-      return [item('wifi', StatusKind.network)];
+      return [glyph('wifi', StatusKind.network, l.statusWifi)];
     }
+    final playing = widget.media?.now?.playing ?? false;
     return [
       // While media plays (SH-MB-33): the play glyph; the menu is the Now Playing panel.
-      if (widget.media?.now?.playing ?? false)
-        item(
+      if (playing)
+        glyph(
           'media',
           StatusKind.nowPlaying,
+          l.statusNowPlaying,
           onTap: () => _toggleStatusMenu('media'),
         ),
       // While a Focus is on, its moon (SH-MB-26); the menu is the Focus panel.
       if (s.doNotDisturb || config.focus)
-        item('dnd', StatusKind.focus, onTap: () => _toggleStatusMenu('dnd')),
+        glyph(
+          'dnd',
+          StatusKind.focus,
+          l.statusFocus,
+          onTap: () => _toggleStatusMenu('dnd'),
+        ),
+      // With two or more input sources: the input menu (status-bar.md › Contexts).
+      ?inputSourceStatusItem(
+        l,
+        _inputSources.value,
+        boxKey: _keyFor('input'),
+        active: on('input'),
+        onPressed: () => _open == 'input' ? _closeMenu() : _openMenu('input'),
+      ),
       // Bluetooth and Sound when Settings › Menu Bar asks for them (SH-MB-24, SH-MB-25):
       // their menus are the Control Center's detail panels, like Wi-Fi. Sound "when
       // active" shows while media plays (provisional reading of the setting).
       if (config.bluetooth && s.bluetoothAvailable)
-        item(
+        glyph(
           'bluetooth',
           StatusKind.bluetooth,
+          l.statusBluetooth,
           dim: !s.bluetoothPowered,
           onTap: () => _toggleStatusMenu('bluetooth'),
         ),
-      if (s.wired && s.wifiSsid.isEmpty)
-        item('wired', StatusKind.wired)
-      else if (s.wifiAvailable)
-        item(
-          'wifi',
-          StatusKind.network,
-          level: s.wifiStrength / 100,
-          dim: !s.wifiEnabled || s.wifiSsid.isEmpty,
-          onTap: () => _toggleStatusMenu('wifi'),
-        ),
+      ?networkStatusItem(
+        l,
+        s,
+        boxKey: _keyFor(s.wired && s.wifiSsid.isEmpty ? 'wired' : 'wifi'),
+        active: on('wifi'),
+        onPressed: () => _toggleStatusMenu('wifi'),
+      ),
       if (s.audioAvailable &&
           switch (config.sound) {
             SoundItem.always => true,
-            SoundItem.active => widget.media?.now?.playing ?? false,
+            SoundItem.active => playing,
             SoundItem.never => false,
           })
-        item(
+        glyph(
           'sound',
           StatusKind.sound,
+          l.statusSound,
           level: s.muted ? 0 : s.volume,
           dim: s.muted,
           onTap: () => _toggleStatusMenu('sound'),
         ),
       // The battery menu (SH-MB-27): a standard menu with the charge, the power source and
       // Battery Settings.
-      if (s.batteryPresent && config.battery)
-        item(
-          'battery',
-          StatusKind.battery,
-          level: s.batteryPercent / 100,
-          charging: s.batteryCharging,
-          caption: config.batteryPercent
-              ? '${s.batteryPercent.round()} %'
-              : null,
-          onTap: () => _open == 'battery' ? _closeMenu() : _openMenu('battery'),
+      if (config.battery)
+        ?batteryStatusItem(
+          l,
+          s,
+          percentage: config.batteryPercent,
+          boxKey: _keyFor('battery'),
+          active: on('battery'),
+          onPressed: () =>
+              _open == 'battery' ? _closeMenu() : _openMenu('battery'),
         ),
     ];
   }
@@ -1353,25 +1377,12 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
     );
   }
 
-  /// A glyph item (the Silica mark, a status icon): 32 wide, the glyph at its centre; with a
-  /// caption (the battery's percentage) as wide as its content plus 8 on each side.
-  Widget _glyphItem({
-    Key? key,
-    required bool active,
-    required Widget child,
-    bool wide = false,
-  }) => wide
-      ? _box(
-          key: key,
-          active: active,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: itemPadding),
-            child: child,
-          ),
-        )
-      : _box(key: key, active: active, width: statusCell, child: child);
+  /// The Silica mark's item: 36 wide, the mark at its centre (the status items are the shared
+  /// Status Bar's).
+  Widget _glyphItem({Key? key, required bool active, required Widget child}) =>
+      _box(key: key, active: active, width: statusCell, child: child);
 
-  /// A text item (a menu title, the app name, the clock): the text 8 pt from the edges, in
+  /// A text item (a menu title, the app name): the text 8 pt from the edges, in
   /// `Text/Primary` also while the item is open.
   Widget _titleItem(
     String text,

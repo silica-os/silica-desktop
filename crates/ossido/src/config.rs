@@ -752,6 +752,7 @@ impl State {
                 }
             }
         }
+        self.announce_input_sources();
     }
 
     /// The index of the active input source.
@@ -777,7 +778,53 @@ impl State {
             return false;
         };
         keyboard.with_xkb_state(self, |mut context| context.cycle_next_layout());
+        self.announce_input_sources();
         true
+    }
+
+    /// Makes the input source at `index` the active one; false without two or more sources or
+    /// past the last one.
+    pub fn select_input_source(&mut self, index: u32) -> bool {
+        let count = self.keyboard_config.layouts.len();
+        if count < 2 || usize::try_from(index).map_or(true, |i| i >= count) {
+            return false;
+        }
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return false;
+        };
+        keyboard.with_xkb_state(self, |mut context| {
+            context.set_layout(smithay::input::keyboard::Layout(index));
+        });
+        self.announce_input_sources();
+        true
+    }
+
+    /// Tells the shell the input sources when they or the active one changed: `keyboard.sources`
+    /// holds their xkb names, comma-separated (empty with fewer than two: there is nothing to
+    /// choose), `keyboard.source` the index of the active one.
+    pub fn announce_input_sources(&mut self) {
+        let layouts = &self.keyboard_config.layouts;
+        let sources = if layouts.len() < 2 {
+            String::new()
+        } else {
+            layouts
+                .iter()
+                .map(Layout::name)
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let active = if sources.is_empty() {
+            0
+        } else {
+            self.active_layout()
+        };
+        let announced = (sources, active);
+        if self.announced_sources.as_ref() == Some(&announced) {
+            return;
+        }
+        self.broadcast_to_shell("keyboard.sources".to_owned(), announced.0.clone());
+        self.broadcast_to_shell("keyboard.source".to_owned(), active.to_string());
+        self.announced_sources = Some(announced);
     }
 
     /// `input.state`: the settings in use, by kind of device, and the kinds connected.

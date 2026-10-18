@@ -97,7 +97,7 @@ void main() {
     expect(shown(StatusKind.bluetooth), isFalse);
     expect(shown(StatusKind.sound), isFalse);
     expect(shown(StatusKind.battery), isTrue);
-    expect(find.text('64 %'), findsNothing);
+    expect(find.text('64%'), findsNothing);
 
     config.value = const MenubarConfig(
       sound: SoundItem.always,
@@ -107,7 +107,7 @@ void main() {
     await tester.pump();
     expect(shown(StatusKind.bluetooth), isTrue);
     expect(shown(StatusKind.sound), isTrue);
-    expect(find.text('64 %'), findsOneWidget);
+    expect(find.text('64%'), findsOneWidget);
     final sound = tester
         .widgetList<StatusIcon>(find.byType(StatusIcon))
         .firstWhere((i) => i.kind == StatusKind.sound);

@@ -115,6 +115,7 @@ pub const SYSTEM_DARK: &str = "system.dark";
 pub const SYSTEM_DARK_TOGGLE: &str = "system.dark_toggle";
 pub const KEYBOARD_STATE: &str = "keyboard.state";
 pub const KEYBOARD_NEXT_SOURCE: &str = "keyboard.next_source";
+pub const KEYBOARD_SELECT_SOURCE: &str = "keyboard.select_source";
 pub const INPUT_STATE: &str = "input.state";
 pub const IDLE_STATE: &str = "idle.state";
 pub const OUTPUT_LIST: &str = "output.list";
@@ -1125,6 +1126,20 @@ pub const CATALOG: &[CommandSpec] = &[
         description: "Switches to the next input source of keyboard.json (the shortcut works only with two or more).",
         shortcut: Some("Ctrl+space"),
         params: no_params,
+    },
+    CommandSpec {
+        id: KEYBOARD_SELECT_SOURCE,
+        label: "Choose input source",
+        description: "Makes the input source at an index of keyboard.json the active one (the input menu of the menu bar and of the lock screen).",
+        shortcut: None,
+        params: || {
+            json!({
+                "type": "object",
+                "properties": {"index": {"type": "integer", "minimum": 0, "maximum": 3}},
+                "required": ["index"],
+                "additionalProperties": false
+            })
+        },
     },
     CommandSpec {
         id: INPUT_STATE,

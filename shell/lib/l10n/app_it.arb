@@ -355,5 +355,22 @@
   "lockSleep": "Standby",
   "lockRestart": "Riavvia",
   "lockShutDown": "Spegni",
-  "lockNotificationCount": "{count, plural, =1{1 notifica} other{{count} notifiche}}"
+  "lockNotificationCount": "{count, plural, =1{1 notifica} other{{count} notifiche}}",
+  "statusWifi": "Wi-Fi",
+  "statusWifiOff": "disattivato",
+  "statusWifiNotConnected": "non connesso",
+  "statusWifiConnected": "connesso a {network}",
+  "statusEthernet": "Ethernet",
+  "statusBattery": "Batteria",
+  "statusBatteryLevel": "{percent} percento",
+  "statusBatteryCharging": "{percent} percento, in carica",
+  "statusInputSource": "Sorgente di input",
+  "statusInputSettings": "Impostazioni Tastiera…",
+  "statusBluetooth": "Bluetooth",
+  "statusSound": "Suono",
+  "statusSearch": "Cerca",
+  "statusClock": "Orologio",
+  "statusControlCenter": "Centro di Controllo",
+  "statusFocus": "Full immersion",
+  "statusNowPlaying": "In riproduzione"
 }

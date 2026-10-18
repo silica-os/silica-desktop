@@ -3,8 +3,8 @@
 // The lock screen is the shell's client of ext-session-lock-v1: Ossido announces `session.locked`
 // (`1`) and [LockController] (in the `screensaver` layer) asks the embedder for the session lock
 // (`silica/lock`, `lock`); once Ossido grants it, the embedder gives the `lock` view a lock
-// surface and [LockScreen] draws in it: the wallpaper under a veil, the time and date, and the
-// user with a password field. The password goes to silica-daemon (`System1.Unlock`, which only
+// surface and [LockScreen] draws in it: the wallpaper under a veil, the shared Status Bar where
+// the menu bar keeps it, the glass clock and the date, and the user with a password field. The password goes to silica-daemon (`System1.Unlock`, which only
 // checks it); on a right one the embedder unlocks (`silica/lock`, `unlock`). While locked,
 // Ossido draws and feeds nothing else; if this process dies the session stays locked and the
 // shell, started again, takes the lock over. A wrong password shakes the field and leaves the
@@ -27,9 +27,11 @@ import 'package:intl/intl.dart';
 import 'package:silica_ui/silica_ui.dart';
 
 import '../l10n/l10n.dart';
+import '../menubar/bar_menu_host.dart';
 import '../menubar/power.dart';
 import '../notifications/model.dart';
 import '../notifications/service.dart' show NotificationsSource;
+import '../status/status_items.dart';
 import '../system/dbus.dart';
 import '../system/system_status.dart';
 import '../system/layer_arbiter.dart';
@@ -276,6 +278,7 @@ class LockScreen extends StatefulWidget {
     this.notifications,
     this.onPower,
     this.now,
+    this.look,
   });
 
   final LockSource source;
@@ -283,7 +286,7 @@ class LockScreen extends StatefulWidget {
   /// Where the `lockscreen.*` settings come from; the system's.
   final SilicaSettings? settings;
 
-  /// Wi-Fi and battery for the status items; null: none.
+  /// Wi-Fi and battery for the Status Bar; null: none.
   final SystemSource? system;
 
   /// The notifications, shown collapsed (app and count, never the text); null: none.
@@ -293,6 +296,9 @@ class LockScreen extends StatefulWidget {
   final void Function(PowerAction action)? onPower;
 
   final DateTime Function()? now;
+
+  /// The appearance and the accessibility settings; null: the system's.
+  final LockLook? look;
 
   @override
   State<LockScreen> createState() => LockScreenState();
@@ -379,6 +385,9 @@ class LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
     widget.settings ?? SilicaSettings.instance,
   );
 
+  /// The input sources Ossido announces (the Status Bar's input source item and its menu).
+  final InputSources _inputSources = InputSources();
+
   /// The power action waiting for its confirmation card (restart, shut down).
   PowerAction? _confirm;
 
@@ -411,6 +420,8 @@ class LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
     _shake.dispose();
     _fade.dispose();
     _leave.dispose();
+    _inputSources.dispose();
+    _inputFocus.dispose();
     super.dispose();
   }
 
@@ -440,9 +451,9 @@ class LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
     if (mounted) setState(() {});
   }
 
-  /// The display came back (spec "Wake"): the wallpaper and the status items; 150 ms later the
-  /// date, clock, avatar and name, 36 pt higher and without the field; 20 ms later the field
-  /// and the help button, with the user block in place. All cuts. Nothing calls it yet:
+  /// The display came back (spec "Wake"): the wallpaper and the Status Bar; 150 ms later the
+  /// date, clock, avatar and name, 48 pt higher (one field row) and without the field; 20 ms
+  /// later the field and the help button, with the user block in place. All cuts. Nothing calls it yet:
   /// Ossido does not tell the shell when the display turns on.
   void wake() {
     _wakeTimer?.cancel();
@@ -524,28 +535,115 @@ class LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
     });
   }
 
+  /// The input menu is open (from the Status Bar's input source item).
+  bool _inputMenu = false;
+  final GlobalKey _inputItemKey = GlobalKey(debugLabel: 'lock input source');
+
+  final FocusNode _inputFocus = FocusNode(debugLabel: 'lock input source');
+  bool _inputFocused = false;
+
+  void _toggleInputMenu() => setState(() => _inputMenu = !_inputMenu);
+
+  void _closeInputMenu() {
+    if (!_inputMenu) return;
+    setState(() => _inputMenu = false);
+    _focus.requestFocus();
+  }
+
   @override
   Widget build(BuildContext context) {
     final l = l10nOf(context);
-    final look = LockLook.of(context);
-    final colors = look.colors;
+    final look = widget.look ?? LockLook.of(context);
     return AmalfiTheme(
-      brightness: look.dark ? Brightness.dark : Brightness.light,
+      brightness: look.brightness,
       // The glass is drawn here: the wallpaper is in this view (the lock surface is a view of
       // its own).
       child: AmalfiGlassBackendScope(
         backend: AmalfiGlassBackend.flutter,
         child: CallbackShortcuts(
           bindings: {const SingleActivator(LogicalKeyboardKey.escape): _escape},
-          child: FadeTransition(
-            opacity: _screenOpacity,
-            child: LayoutBuilder(
-              builder: (context, constraints) =>
-                  _body(context, constraints.biggest, l, look, colors),
+          // Tab and Shift+Tab move field → help → input source (→ power row): the lock view
+          // has no app around it to give it the traversal keys.
+          child: Shortcuts(
+            shortcuts: const {
+              SingleActivator(LogicalKeyboardKey.tab): NextFocusIntent(),
+              SingleActivator(LogicalKeyboardKey.tab, shift: true):
+                  PreviousFocusIntent(),
+            },
+            child: Actions(
+              actions: {
+                NextFocusIntent: NextFocusAction(),
+                PreviousFocusIntent: PreviousFocusAction(),
+              },
+              child: FocusTraversalGroup(
+                policy: OrderedTraversalPolicy(),
+                child: FadeTransition(
+                  opacity: _screenOpacity,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) =>
+                        _body(context, constraints.biggest, l, look),
+                  ),
+                ),
+              ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// The Status Bar of the lock screen (status-bar.md › Contexts): Input Source, Wi-Fi and
+  /// Battery with its percentage, where the menu bar keeps them, from the same builders.
+  Widget _statusBar(AppLocalizations l, LockLook look) {
+    Widget bar(SystemSnapshot? s) => AmalfiStatusBar(
+      key: const ValueKey('lock status bar'),
+      placement: AmalfiStatusBarPlacement.lockScreen,
+      legibility: look.legibility,
+      items: [
+        // Tab reaches the input source after the help button (lock-screen.md › Keyboard),
+        // whatever the keyboard navigation setting; Return and Space open its menu, and the
+        // Active capsule shows the focus.
+        if (inputSourceStatusItem(
+              l,
+              _inputSources.value,
+              boxKey: _inputItemKey,
+              active: _inputMenu || _inputFocused,
+              onPressed: _toggleInputMenu,
+            )
+            case final item?)
+          FocusTraversalOrder(
+            order: const NumericFocusOrder(3),
+            child: Focus(
+              focusNode: _inputFocus,
+              onFocusChange: (on) => setState(() => _inputFocused = on),
+              onKeyEvent: (node, event) {
+                if (event is KeyDownEvent &&
+                    (event.logicalKey == LogicalKeyboardKey.enter ||
+                        event.logicalKey == LogicalKeyboardKey.numpadEnter ||
+                        event.logicalKey == LogicalKeyboardKey.space)) {
+                  _toggleInputMenu();
+                  return KeyEventResult.handled;
+                }
+                return KeyEventResult.ignored;
+              },
+              child: ExcludeFocus(child: item),
+            ),
+          ),
+        if (s != null) ...[
+          ?networkStatusItem(l, s),
+          ?batteryStatusItem(l, s, percentage: true),
+        ],
+      ],
+    );
+    final system = widget.system;
+    return ValueListenableBuilder<InputSourceState>(
+      valueListenable: _inputSources,
+      builder: (context, _, _) => system == null
+          ? bar(null)
+          : ValueListenableBuilder<SystemSnapshot>(
+              valueListenable: system,
+              builder: (context, s, _) => bar(s),
+            ),
     );
   }
 
@@ -554,7 +652,6 @@ class LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
     Size size,
     AppLocalizations l,
     LockLook look,
-    AmalfiColors colors,
   ) {
     final now = (widget.now ?? DateTime.now)();
     _dates ??= initializeDateFormatting();
@@ -573,14 +670,15 @@ class LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
     final hintText = _cfg.passwordHint.value.trim().isEmpty
         ? l.lockNoHint
         : _cfg.passwordHint.value.trim();
-    final textStyle = (TextStyle s) => s.copyWith(shadows: look.textShadow);
-
+    final address = _cfg.helpAddress.value.trim();
+    final colors = look.colors;
+    final clock = LockMetrics.clock(size);
     final banners = widget.notifications;
     return Stack(
       fit: StackFit.expand,
       children: [
-        // The wallpaper, as on the desktop and not blurred, under a black 6 % veil: nothing
-        // else covers it.
+        // The wallpaper, as on the desktop and not blurred, under a black 6 % veil; the light
+        // appearance adds the legibility scrim (provisional).
         const WallpaperLayer(),
         const Positioned.fill(
           child: ColoredBox(
@@ -588,40 +686,49 @@ class LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
             color: Color(0x0F000000),
           ),
         ),
+        if (!look.dark)
+          Positioned.fill(
+            child: DecoratedBox(
+              key: const ValueKey('lock scrim'),
+              decoration: BoxDecoration(
+                gradient: AmalfiScrims.lockLight.gradient,
+              ),
+            ),
+          ),
         Positioned(
-          top: 2,
-          right: LockMetrics.margin,
-          height: 28,
-          child: LockStatusItems(system: widget.system, look: look),
+          top: 0,
+          right: LockMetrics.statusTrailing,
+          height: LockMetrics.statusHeight,
+          child: _statusBar(l, look),
         ),
         if (clockShown) ...[
           Positioned.fromRect(
             key: const ValueKey('lock clock block'),
-            rect: LockMetrics.clock(size),
+            rect: clock,
             child: FadeTransition(
               opacity: _clockOpacity,
               child: Stack(
+                clipBehavior: Clip.none,
                 children: [
                   Positioned(
+                    key: const ValueKey('lock date box'),
                     left: 0,
                     right: 0,
-                    top: 4,
+                    top: 0,
                     height: LockMetrics.dateHeight,
                     child: Center(
-                      child: Text(
-                        date,
+                      child: KeyedSubtree(
                         key: const ValueKey('lock date'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: lockDateStyle(look),
+                        child: LockDate(date: date, look: look),
                       ),
                     ),
                   ),
                   Positioned(
+                    key: const ValueKey('lock time box'),
                     left: 0,
                     right: 0,
-                    top: LockMetrics.digitsTop - LockMetrics.clock(size).top,
-                    height: LockMetrics.digitHeight,
+                    top: LockMetrics.timeTop,
+                    height: LockMetrics.timeHeight,
                     child: Center(
                       child: KeyedSubtree(
                         key: const ValueKey('lock time'),
@@ -633,84 +740,81 @@ class LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
               ),
             ),
           ),
-          Positioned.fromRect(
-            key: const ValueKey('lock user block'),
-            rect: LockMetrics.userBlock(size, raised: raised),
-            child: FadeTransition(
-              opacity: _userOpacity,
-              child: Stack(
-                children: [
-                  if (!hint || raised) ...[
+          if (!hint || raised)
+            Positioned.fromRect(
+              key: const ValueKey('lock user block'),
+              rect: LockMetrics.userBlock(size, raised: raised),
+              child: FadeTransition(
+                opacity: _userOpacity,
+                child: Stack(
+                  children: [
                     Positioned(
-                      left: (320 - 72) / 2,
+                      left:
+                          (LockMetrics.userSize.width - LockMetrics.avatar) / 2,
                       top: 0,
-                      width: 72,
-                      height: 72,
-                      child: _Avatar(look: look, showUser: showUser),
+                      child: LockAvatar(
+                        key: const ValueKey('lock avatar'),
+                        look: look,
+                        showUser: showUser,
+                      ),
                     ),
                     if (showUser)
                       Positioned(
                         left: 0,
-                        top: 84,
-                        width: 320,
-                        height: 22,
-                        child: Center(
-                          child: Text(
+                        top: LockMetrics.nameTop,
+                        width: LockMetrics.userSize.width,
+                        height: LockMetrics.nameHeight,
+                        child: KeyedSubtree(
+                          key: const ValueKey('lock user'),
+                          child: LockPhotoText(
                             user.name,
-                            key: const ValueKey('lock user'),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: textStyle(
-                              AmalfiType.title3(color: look.ink),
-                            ),
+                            look: look,
+                            style: AmalfiType.title3(),
                           ),
                         ),
                       ),
                   ],
-                ],
+                ),
               ),
             ),
-          ),
         ],
         if (fieldShown && hint) ...[
-          Positioned.fromRect(
+          // The hint replaces the avatar and the name in one frame. It stands on the block's
+          // bottom, 24 above the field, and grows upwards when it wraps further. The reset row
+          // of the kit is not drawn: Silica has no account recovery yet.
+          Positioned(
             key: const ValueKey('lock hint'),
-            rect: LockMetrics.hint(size),
-            child: Align(
-              alignment: Alignment.bottomCenter,
-              child: Text(
-                hintText,
-                textAlign: TextAlign.center,
-                style: textStyle(AmalfiType.headline(color: look.ink)),
-              ),
+            left: LockMetrics.hint(size).left,
+            width: LockMetrics.hintSize.width,
+            bottom: size.height - LockMetrics.hint(size).bottom,
+            child: LockPhotoText(
+              hintText,
+              look: look,
+              maxLines: 6,
+              style: AmalfiType.headline(),
             ),
           ),
-          if (_cfg.helpAddress.value.trim().isNotEmpty)
+          if (address.isNotEmpty && !_unavailable)
             Positioned.fromRect(
               key: const ValueKey('lock help address'),
               rect: LockMetrics.helpAddress(size),
-              child: Center(
-                child: Text(
-                  _cfg.helpAddress.value.trim(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: textStyle(
-                    AmalfiType.callout(color: look.inkSecondary),
-                  ),
-                ),
+              child: LockPhotoText(
+                address,
+                look: look,
+                color: look.onPhotoSecondary,
+                style: AmalfiType.callout(),
               ),
             ),
         ],
         if (fieldShown && _unavailable)
           Positioned.fromRect(
             rect: LockMetrics.helpAddress(size),
-            child: Center(
-              child: Text(
+            child: KeyedSubtree(
+              key: const ValueKey('lock message'),
+              child: LockPhotoText(
                 l.lockUnavailable,
-                key: const ValueKey('lock message'),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textStyle(AmalfiType.callout(color: look.ink)),
+                look: look,
+                style: AmalfiType.callout(),
               ),
             ),
           ),
@@ -736,33 +840,40 @@ class LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
                   children: [
                     Positioned.fromRect(
                       rect: LockMetrics.field(size),
-                      child: LockPasswordField(
-                        key: const ValueKey('lock password'),
-                        controller: _password,
-                        focusNode: _focus,
-                        look: look,
-                        state: fieldState,
-                        placeholder: l.lockPassword,
-                        edge: flash ? colors.paletteTerracotta : null,
-                        onSubmit: () {
-                          // The editing action unfocuses the field (EditableText's default
-                          // for "done"): take the focus back at once, the check runs with it.
-                          _focus.requestFocus();
-                          _submit();
-                        },
+                      child: FocusTraversalOrder(
+                        order: const NumericFocusOrder(1),
+                        child: LockPasswordField(
+                          key: const ValueKey('lock password'),
+                          controller: _password,
+                          focusNode: _focus,
+                          look: look,
+                          state: fieldState,
+                          placeholder: l.lockPassword,
+                          edge: flash ? colors.paletteTerracotta : null,
+                          onSubmit: () {
+                            // The editing action unfocuses the field (EditableText's
+                            // default for "done"): take the focus back at once, the check
+                            // runs with it.
+                            _focus.requestFocus();
+                            _submit();
+                          },
+                        ),
                       ),
                     ),
                     if (_cfg.showHints.value)
                       Positioned.fromRect(
-                        rect: LockMetrics.help(size),
-                        child: LockHelpButton(
-                          key: const ValueKey('lock help'),
-                          look: look,
-                          edge: flash ? colors.paletteTerracotta : null,
-                          onTap: () {
-                            setState(() => _helpShown = !_helpShown);
-                            _focus.requestFocus();
-                          },
+                        rect: LockMetrics.helpButton(size),
+                        child: FocusTraversalOrder(
+                          order: const NumericFocusOrder(2),
+                          child: LockHelpButton(
+                            key: const ValueKey('lock help'),
+                            look: look,
+                            edge: flash ? colors.paletteTerracotta : null,
+                            onTap: () {
+                              setState(() => _helpShown = !_helpShown);
+                              _focus.requestFocus();
+                            },
+                          ),
                         ),
                       ),
                   ],
@@ -776,37 +887,39 @@ class LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
             rect: LockMetrics.powerRow(size),
             child: FadeTransition(
               opacity: _userOpacity,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  for (final (i, action) in const [
-                    PowerAction.sleep,
-                    PowerAction.restart,
-                    PowerAction.shutDown,
-                  ].indexed) ...[
-                    if (i > 0) const SizedBox(width: 24),
-                    LockActionButton(
-                      look: look,
-                      symbol: switch (action) {
-                        PowerAction.sleep => 'moon',
-                        PowerAction.restart => 'restart',
-                        _ => 'power',
-                      },
-                      label: switch (action) {
-                        PowerAction.sleep => l.lockSleep,
-                        PowerAction.restart => l.lockRestart,
-                        _ => l.lockShutDown,
-                      },
-                      onTap: () {
-                        if (action == PowerAction.sleep) {
-                          (widget.onPower ?? _power)(action);
-                        } else {
-                          setState(() => _confirm = action);
-                        }
-                      },
-                    ),
+              child: FocusTraversalOrder(
+                order: const NumericFocusOrder(4),
+                child: Row(
+                  children: [
+                    for (final (i, action) in const [
+                      PowerAction.sleep,
+                      PowerAction.restart,
+                      PowerAction.shutDown,
+                    ].indexed) ...[
+                      if (i > 0) const SizedBox(width: 24),
+                      LockActionButton(
+                        look: look,
+                        symbol: switch (action) {
+                          PowerAction.sleep => 'moon',
+                          PowerAction.restart => 'restart',
+                          _ => 'power',
+                        },
+                        label: switch (action) {
+                          PowerAction.sleep => l.lockSleep,
+                          PowerAction.restart => l.lockRestart,
+                          _ => l.lockShutDown,
+                        },
+                        onTap: () {
+                          if (action == PowerAction.sleep) {
+                            (widget.onPower ?? _power)(action);
+                          } else {
+                            setState(() => _confirm = action);
+                          }
+                        },
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ),
@@ -831,6 +944,7 @@ class LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
               );
             },
           ),
+        if (_inputMenu) ..._inputMenuLayer(l),
         if (_confirm case final action?)
           Positioned.fill(
             child: Stack(
@@ -868,29 +982,52 @@ class LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
     );
   }
 
+  /// The input menu (spec "Status items": an ordinary menu with the input sources, the current
+  /// one checked), hanging from the input source item like a menu bar menu; a click outside
+  /// or Escape closes it. Adding or removing sources needs Settings, which the lock screen
+  /// cannot open: those rows are not offered here.
+  List<Widget> _inputMenuLayer(AppLocalizations l) {
+    final box = _inputItemKey.currentContext?.findRenderObject();
+    final root = context.findRenderObject();
+    var anchor = const Offset(0, LockMetrics.statusHeight + 8);
+    if (box is RenderBox && root is RenderBox && box.attached) {
+      final left = box.localToGlobal(Offset.zero, ancestor: root).dx;
+      anchor = Offset(left - 4, LockMetrics.statusHeight + 8);
+    }
+    return [
+      Positioned.fill(
+        child: GestureDetector(
+          key: const ValueKey('lock input menu barrier'),
+          behavior: HitTestBehavior.opaque,
+          onTap: _closeInputMenu,
+        ),
+      ),
+      Positioned.fill(
+        child: BarMenuHost(
+          key: const ValueKey('lock input menu'),
+          entryKey: 'input',
+          entries: amalfiEntries([
+            for (final entry in inputSourceMenu(_inputSources, l.localeName))
+              if (entry is MenuAction)
+                MenuAction(
+                  entry.label,
+                  checked: entry.checked,
+                  onSelected: () {
+                    entry.onSelected?.call();
+                    _closeInputMenu();
+                  },
+                )
+              else
+                entry,
+          ]),
+          anchor: anchor,
+          onDismissed: _closeInputMenu,
+        ),
+      ),
+    ];
+  }
+
   void _power(PowerAction action) {
     unawaited(runPower(action, logOut: () {}));
   }
-}
-
-/// The user's picture: no pictures are kept yet, so a `Glass/Lock` disc with the `person-fill`
-/// glyph (the lock glyph when the user is not shown).
-class _Avatar extends StatelessWidget {
-  const _Avatar({required this.look, required this.showUser});
-
-  final LockLook look;
-  final bool showUser;
-
-  @override
-  Widget build(BuildContext context) => LockGlass(
-    look: look,
-    radius: 36,
-    child: Center(
-      child: AmalfiSymbol(
-        showUser ? 'person-fill' : 'lock',
-        size: 40,
-        color: look.dark ? const Color(0xCCFFFFFF) : look.colors.textSecondary,
-      ),
-    ),
-  );
 }

@@ -2171,7 +2171,7 @@ abstract class AppLocalizations {
   /// No description provided for @lockPassword.
   ///
   /// In en, this message translates to:
-  /// **'Enter password'**
+  /// **'Enter Password'**
   String get lockPassword;
 
   /// No description provided for @lockIncorrect.
@@ -2233,6 +2233,108 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, =1{1 notification} other{{count} notifications}}'**
   String lockNotificationCount(int count);
+
+  /// Status Bar: screen reader name of the Wi-Fi item
+  ///
+  /// In en, this message translates to:
+  /// **'Wi-Fi'**
+  String get statusWifi;
+
+  /// Status Bar: Wi-Fi item value when Wi-Fi is off
+  ///
+  /// In en, this message translates to:
+  /// **'off'**
+  String get statusWifiOff;
+
+  /// Status Bar: Wi-Fi item value when on but not connected
+  ///
+  /// In en, this message translates to:
+  /// **'not connected'**
+  String get statusWifiNotConnected;
+
+  /// Status Bar: Wi-Fi item value
+  ///
+  /// In en, this message translates to:
+  /// **'connected to {network}'**
+  String statusWifiConnected(String network);
+
+  /// Status Bar: screen reader name of the wired network item
+  ///
+  /// In en, this message translates to:
+  /// **'Ethernet'**
+  String get statusEthernet;
+
+  /// Status Bar: screen reader name of the battery item
+  ///
+  /// In en, this message translates to:
+  /// **'Battery'**
+  String get statusBattery;
+
+  /// Status Bar: battery item value
+  ///
+  /// In en, this message translates to:
+  /// **'{percent} percent'**
+  String statusBatteryLevel(int percent);
+
+  /// Status Bar: battery item value while charging
+  ///
+  /// In en, this message translates to:
+  /// **'{percent} percent, charging'**
+  String statusBatteryCharging(int percent);
+
+  /// Status Bar: screen reader name of the input source item
+  ///
+  /// In en, this message translates to:
+  /// **'Input source'**
+  String get statusInputSource;
+
+  /// Input source menu of the menu bar: opens Settings
+  ///
+  /// In en, this message translates to:
+  /// **'Keyboard Settings…'**
+  String get statusInputSettings;
+
+  /// Status Bar: screen reader name of the Bluetooth item
+  ///
+  /// In en, this message translates to:
+  /// **'Bluetooth'**
+  String get statusBluetooth;
+
+  /// Status Bar: screen reader name of the sound item
+  ///
+  /// In en, this message translates to:
+  /// **'Sound'**
+  String get statusSound;
+
+  /// Status Bar: screen reader name of the search (Faro) item
+  ///
+  /// In en, this message translates to:
+  /// **'Search'**
+  String get statusSearch;
+
+  /// Status Bar: screen reader name of the clock item
+  ///
+  /// In en, this message translates to:
+  /// **'Clock'**
+  String get statusClock;
+
+  /// Status Bar: screen reader name of the Control Center item
+  ///
+  /// In en, this message translates to:
+  /// **'Control Center'**
+  String get statusControlCenter;
+
+  /// Status Bar: screen reader name of the Focus item
+  ///
+  /// In en, this message translates to:
+  /// **'Focus'**
+  String get statusFocus;
+
+  /// Status Bar: screen reader name of the media item
+  ///
+  /// In en, this message translates to:
+  /// **'Now Playing'**
+  String get statusNowPlaying;
 }
 
 class _AppLocalizationsDelegate

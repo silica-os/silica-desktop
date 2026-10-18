@@ -643,57 +643,60 @@ void main() {
     },
   );
 
-  testWidgets(
-    'the bar follows the kit: 32 tall, items 28, mark and glyphs 36 wide',
-    (tester) async {
-      tester.view.physicalSize = const Size(960, 200);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-        ShellChannel.channel,
-        (call) async => null,
-      );
-      final system = FakeSystem(
-        const SystemSnapshot(wifiAvailable: true, wifiSsid: 'Casa'),
-      );
-      await tester.pumpWidget(
-        Directionality(
-          textDirection: TextDirection.ltr,
-          child: MenuBar(system: system, now: DateTime(2026, 10, 16, 9, 41)),
-        ),
-      );
-      await tester.pump();
-      expect(barHeight, 32);
-      // The mark's item: x 8, 36 × 28 at y 2 (kit `Silica mark`).
-      final mark = find
-          .ancestor(
-            of: find.byType(SilicaMark),
-            matching: find.byType(SizedBox),
+  testWidgets('the bar follows the kit: 32 tall, items 28, mark and glyphs 36 wide', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(960, 200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      ShellChannel.channel,
+      (call) async => null,
+    );
+    final system = FakeSystem(
+      const SystemSnapshot(wifiAvailable: true, wifiSsid: 'Casa'),
+    );
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: MenuBar(system: system, now: DateTime(2026, 10, 16, 9, 41)),
+      ),
+    );
+    await tester.pump();
+    expect(barHeight, 32);
+    // The mark's item: x 8, 36 × 28 at y 2 (kit `Silica mark`).
+    final mark = find
+        .ancestor(of: find.byType(SilicaMark), matching: find.byType(SizedBox))
+        .first;
+    expect(tester.getRect(mark), const Rect.fromLTWH(8, 2, 36, 28));
+    // The app name follows at x 44, its text 8 pt in (kit `App name`), Headline.
+    final name = find.text('Silica');
+    expect(tester.getRect(name).left, 52);
+    expect(tester.widget<Text>(name).style?.fontWeight, FontWeight.w600);
+    // The clock's label box ends 8 + 36 + 8 pt before the right edge (the bar's padding, the
+    // Control Center, the item's padding): the shared Status Bar (status-bar.md).
+    final clock = find
+        .ancestor(
+          of: find.text('Fri 16 Oct  09:41'),
+          matching: find.byType(AmalfiWholePoints),
+        )
+        .first;
+    expect(tester.getRect(clock).right, 960 - 8 - 36 - 8);
+    expect(find.byType(AmalfiStatusBar), findsOneWidget);
+    expect(
+      tester
+          .getRect(
+            find.byWidgetPredicate(
+              (w) => w is StatusIcon && w.kind == StatusKind.controls,
+            ),
           )
-          .first;
-      expect(tester.getRect(mark), const Rect.fromLTWH(8, 2, 36, 28));
-      // The app name follows at x 44, its text 8 pt in (kit `App name`), Headline.
-      final name = find.text('Silica');
-      expect(tester.getRect(name).left, 52);
-      expect(tester.widget<Text>(name).style?.fontWeight, FontWeight.w600);
-      // The clock ends 8 + 36 pt before the right edge (its item, then the control centre).
-      final clock = find.text('Fri 16 Oct  09:41');
-      expect(tester.getRect(clock).right, 960 - 8 - 36 - 8);
-      expect(
-        tester
-            .getRect(
-              find.byWidgetPredicate(
-                (w) => w is StatusIcon && w.kind == StatusKind.controls,
-              ),
-            )
-            .center
-            .dx,
-        960 - 8 - 18,
-      );
-      // The bar paints no material: no glass above its items.
-      expect(find.byType(Glass), findsNothing);
-    },
-  );
+          .center
+          .dx,
+      960 - 8 - 18,
+    );
+    // The bar paints no material: no glass above its items.
+    expect(find.byType(Glass), findsNothing);
+  });
 
   group('logo menu', () {
     List<String> labels(List<MenuEntry> entries) => [

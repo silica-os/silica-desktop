@@ -1,13 +1,12 @@
 // Bar icons drawn in code (generic shapes, not assets): the Silica mark, the network,
-// search (Faro), the Control Center. The status items draw the Icon Kit symbols (16 pt); these
-// shapes are what they fall back to when silica-icons is not installed.
+// search (Faro), the Control Center. The status items draw the Silica Symbols glyphs (20 pt) of
+// the shared Status Bar (silica_ui `AmalfiStatusGlyph`, docs/design/amalfi/status-bar.md); these
+// shapes are what they fall back to when a symbol is missing.
 
 import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 import 'package:silica_ui/silica_ui.dart';
-
-import 'menubar.dart';
 
 /// The Silica mark ("from sand to glass", silica-brand `exports/mark/silica-mark-16-mono.svg`):
 /// the half disc of glass and the three grains of sand, in one colour on the 16 pt grid
@@ -62,8 +61,8 @@ enum StatusKind {
   bluetooth,
 }
 
-/// The Icon Kit symbol of a status item (silica-icons, Regular), by what it shows. The bar
-/// draws it 16 pt in the item (`Menu Bar/Item/Status`).
+/// The Silica Symbols glyph of a status item, by what it shows (status-bar.md › Items): the
+/// state is the glyph (`wifi-slash`, `volume-slash`), never a dimmed ink.
 String statusSymbol(
   StatusKind kind, {
   double level = 1,
@@ -73,22 +72,18 @@ String statusSymbol(
   StatusKind.network =>
     dim
         ? 'wifi-slash'
+        : level < 0.1
+        ? 'wifi-0'
         : switch (wifiArcs(level)) {
             3 => 'wifi',
             2 => 'wifi-2',
             _ => 'wifi-1',
           },
   StatusKind.wired => 'ethernet',
-  StatusKind.battery =>
-    charging
-        ? 'battery-charging'
-        : level < 0.05
-        ? 'battery-0'
-        : level < 0.3
-        ? 'battery-10'
-        : level < 0.8
-        ? 'battery-50'
-        : 'battery',
+  StatusKind.battery => AmalfiStatusBatteryItem.symbolFor(
+    level,
+    charging: charging,
+  ),
   StatusKind.search => 'search',
   StatusKind.controls => 'control-center',
   StatusKind.focus => 'moon',
@@ -97,10 +92,10 @@ String statusSymbol(
     dim || level <= 0
         ? 'volume-slash'
         : level < 0.34
-        ? 'volume-1'
+        ? 'volume-0'
         : level < 0.67
-        ? 'volume-2'
-        : 'volume',
+        ? 'volume-1'
+        : 'volume-2',
   StatusKind.bluetooth => dim ? 'bluetooth-slash' : 'bluetooth',
 };
 
@@ -119,7 +114,7 @@ class StatusIcon extends StatelessWidget {
 
   final StatusKind kind;
 
-  /// The glyph's colour; null: the bar's text colour of the appearance.
+  /// The glyph's colour; null: the ink of the Status Bar it is in (`AmalfiStatusBarStyle`).
   final Color? color;
 
   /// Wi-Fi strength or battery charge, 0–1.
@@ -133,23 +128,34 @@ class StatusIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ink = color ?? barTextColor(context);
+    final override = color;
+    final ink = override ?? AmalfiStatusBarStyle.of(context).ink;
+    final symbol = statusSymbol(
+      kind,
+      level: level,
+      dim: dim,
+      charging: charging,
+    );
+    // Without the symbol: the shapes drawn in code.
+    final fallback = CustomPaint(
+      painter: _StatusPainter(
+        kind,
+        ink,
+        level: level,
+        dim: dim,
+        charging: charging,
+      ),
+    );
+    if (override == null) {
+      return AmalfiStatusGlyph(symbol, fallback: fallback);
+    }
     return SizedBox.square(
       dimension: statusGlyph,
       child: AmalfiSymbol(
-        statusSymbol(kind, level: level, dim: dim, charging: charging),
+        symbol,
         size: statusGlyph,
-        color: ink,
-        // Without the installed symbols: the shapes drawn in code.
-        fallback: CustomPaint(
-          painter: _StatusPainter(
-            kind,
-            ink,
-            level: level,
-            dim: dim,
-            charging: charging,
-          ),
-        ),
+        color: override,
+        fallback: fallback,
       ),
     );
   }

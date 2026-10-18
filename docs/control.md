@@ -90,6 +90,7 @@ parameter schemas. Every catalog id is run by Ossido (test
 | `output.configure` | `connector?`, `mode?` (`width`, `height`, `refresh?`), `scale?` (1–4, quarter steps), `transform?` (`normal`, `90`, `180`, `270`, `flipped`, `flipped-90`…) | the display after the change; applied at once and saved in `displays.json` for that display. Without `connector`: the display in use. The real session drives one display: the others are listed but not configurable yet; nested and headless cannot change mode |
 | `output.color_temperature` | `kelvin` (1000–6500) | `kelvin`, `applied`: the night light on every display through the CRTC gamma ramp (6500 is neutral; `applied` false where there is no gamma: nested, headless, some virtual GPUs). silica-daemon drives it with the schedule |
 | `keyboard.next_source` | — | `switched`, `active`: the next input source (⌃Space; with a single source the shortcut goes to the app) |
+| `keyboard.select_source` | `index` (0–3) | `switched`, `active`: makes that input source the active one (the input menu of the menu bar and the lock screen); `false` with fewer than two sources or past the last |
 | `perf.render` | `reset?` | Ossido's rendering (winit): `frames`, `mean_ms`, `p50_ms`, `p95_ms`, `p99_ms`, `max_ms` |
 
 The `perf.frames` measurements are the compositor's, the same for every toolkit: a frame is
@@ -131,7 +132,8 @@ keys it does not know.
 A change of repeat is sent to every bound keyboard (`wl_keyboard.repeat_info`); a change of
 `layouts`, `model` or `options` compiles a new keymap and sends it to the clients. A layout xkb
 does not know keeps the keymap in use. ⌃Space (`keyboard.next_source`) moves to the next
-source when there are two or more.
+source when there are two or more. With two or more, Ossido announces them to the shell: `keyboard.sources` (the xkb names,
+comma-separated; empty with fewer than two) and `keyboard.source` (the index of the active one).
 
 ### displays.json
 
