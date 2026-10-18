@@ -281,8 +281,13 @@ struct View {
     removing: bool,
     /// A shell layer's namespace (`menubar`, `dock`…): Dart picks what to draw by it.
     namespace: Option<String>,
+    /// The shell asked for input on part of the surface (an explicit, non-empty input region):
+    /// such a layer is mapped even while its scene is empty (silica-desktop#242).
+    input_wanted: bool,
     /// For a popup, the view it hangs from.
     popup_parent: Option<i64>,
+    /// For a popup, how it was asked for (its size changes with `resizePopup`).
+    popup_spec: Option<views::PopupSpec>,
     /// For a popup, where Ossido put it: x, y relative to its parent, width, height.
     popup_placed: Option<(i32, i32, i32, i32)>,
 }
@@ -311,6 +316,8 @@ impl View {
             export: None,
             removing: false,
             namespace: None,
+            input_wanted: false,
+            popup_spec: None,
             popup_parent: None,
             popup_placed: None,
         }
@@ -391,6 +398,8 @@ struct App {
     /// Several windows (`--multi-window`): the engine composes through backing stores.
     multi_view: bool,
     next_view: i64,
+    /// The token of the last `xdg_popup.reposition` (`resize_popup`).
+    popup_token: u32,
     /// For new windows: the xdg shell and the engine thread's view events.
     xdg_shell: Option<XdgShell>,
     /// For the shell layers drawn as more views of this engine (`--view`, #201).
@@ -481,6 +490,9 @@ struct App {
     /// app ends with its last window, since when its window is hidden, and this process in
     /// the app registry with its socket.
     app_id: String,
+    /// The Flutter bundle the app runs (`silica/app` `appInfo`: the About panel finds the app's
+    /// `icon/` folder next to it, silica-ui#99).
+    bundle: std::path::PathBuf,
     quit_with_last_window: bool,
     /// A helper process (`--helper`): it ends with its window, whatever the app asks.
     helper: bool,
@@ -898,6 +910,7 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         })]),
         multi_view,
         next_view: MAIN_VIEW + 1,
+        popup_token: 0,
         xdg_shell,
         layer_shell,
         session_lock_state: SessionLockState::new(&globals, &qh),
@@ -969,6 +982,7 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         vsync: None,
         exit: false,
         app_id: options.app_id.clone(),
+        bundle: options.bundle.clone(),
         quit_with_last_window: false,
         helper: options.helper,
         hidden_since: None,
@@ -1159,6 +1173,18 @@ impl App {
                 );
             }
             return crate::text_input::success(serde_json::Value::Null);
+        }
+        if method == Some("resizePopup") {
+            let size = call.get("args").and_then(|args| {
+                let side = |key: &str| {
+                    args.get(key)
+                        .and_then(serde_json::Value::as_f64)
+                        .and_then(views::window_side)
+                };
+                side("width").zip(side("height"))
+            });
+            let done = size.is_some_and(|size| self.resize_popup(id, size));
+            return crate::text_input::success(serde_json::json!(done));
         }
         if method == Some("popupsAvailable") {
             // Menus and popovers as their own surfaces need several views (`--multi-window`,
@@ -1555,6 +1581,7 @@ impl App {
             .map_or(1, |parent| parent.scale);
         let mut view = View::new(Shell::Popup(popup), spec.size, scale, false);
         view.popup_parent = Some(spec.parent);
+        view.popup_spec = Some(spec.clone());
         view.surface.commit();
         if let Err(err) = self.attach_view(id, &view) {
             return self.refuse_open(reply, &err);
@@ -1566,6 +1593,50 @@ impl App {
             spec.size, spec.anchor_rect
         );
         self.views.insert(id, view);
+    }
+
+    /// `resizePopup`: popup `id` takes a new size, kept where it hangs from its anchor
+    /// (`xdg_popup.reposition`, xdg-shell 3): a popover whose content grew (Show All…) is not
+    /// cut (silica-desktop#238). Ossido answers with a configure, which resizes the view.
+    fn resize_popup(&mut self, id: i64, size: (u32, u32)) -> bool {
+        let Some(xdg_shell) = &self.xdg_shell else {
+            return false;
+        };
+        let Some(View {
+            surface: Shell::Popup(popup),
+            popup_spec: Some(spec),
+            removing: false,
+            ..
+        }) = self.views.get_mut(&id)
+        else {
+            return false;
+        };
+        if spec.size == size {
+            return true;
+        }
+        if wayland_client::Proxy::version(popup.xdg_popup()) < 3 {
+            return false;
+        }
+        let positioner = match XdgPositioner::new(xdg_shell) {
+            Ok(positioner) => positioner,
+            Err(err) => {
+                warn!("popup {id} resize: {err}");
+                return false;
+            }
+        };
+        spec.size = size;
+        let (x, y, w, h) = spec.anchor_rect;
+        positioner.set_size(size.0 as i32, size.1 as i32);
+        positioner.set_anchor_rect(x, y, w, h);
+        positioner.set_anchor(popup_anchor(spec.anchor));
+        positioner.set_gravity(popup_gravity(spec.gravity));
+        positioner.set_constraint_adjustment(
+            xdg_positioner::ConstraintAdjustment::from_bits_truncate(spec.adjust),
+        );
+        self.popup_token = self.popup_token.wrapping_add(1);
+        popup.xdg_popup().reposition(&positioner, self.popup_token);
+        info!("popup {id} resized: {size:?}");
+        true
     }
 
     /// The shell layers of this engine, for `silica/layer` `views`: `[{viewId, namespace}]`,
@@ -2154,7 +2225,7 @@ impl App {
                     answer(&stream, "ok");
                 }
                 Some(Request::Open(args)) => {
-                    self.reopen();
+                    self.reopen_with(true);
                     self.send_app("open", serde_json::json!({ "args": args }));
                     answer(&stream, "ok");
                 }
@@ -2263,6 +2334,12 @@ impl App {
     /// app only learns about it. With none, an app that answers reopen builds its new window
     /// and calls `openWindow`; any other app gets its hidden window back at once.
     fn reopen(&mut self) {
+        self.reopen_with(false);
+    }
+
+    /// A reopen; `files`: files follow it (`open`, a second launch with documents), so a document
+    /// app has something to show and does not ask for a document first.
+    fn reopen_with(&mut self, files: bool) {
         let windowless = self.windowless();
         if windowless && self.handles_reopen {
             if !self.show_pending {
@@ -2288,7 +2365,10 @@ impl App {
         } else {
             self.activate_main();
         }
-        self.send_app("reopen", serde_json::json!({ "windowless": windowless }));
+        self.send_app(
+            "reopen",
+            serde_json::json!({ "windowless": windowless, "files": files }),
+        );
     }
 
     /// The app built its window (`openWindow`): it is shown after the frame being drawn, so
@@ -2423,6 +2503,17 @@ impl App {
             Some("isHidden") => {
                 crate::text_input::success(serde_json::json!(self.hidden_since.is_some()))
             }
+            // The app answers a reopen without a window for now (a document app showing its
+            // Open panel, APP-LC): the hidden window is not shown by the reopen's timer; the
+            // app calls openWindow if a document is chosen.
+            Some("stayWindowless") => {
+                self.show_pending = false;
+                crate::text_input::success(serde_json::Value::Null)
+            }
+            Some("appInfo") => crate::text_input::success(crate::app_lifecycle::app_info(
+                &self.app_id,
+                &self.bundle,
+            )),
             _ => Vec::new(),
         }
     }
@@ -2749,6 +2840,7 @@ impl App {
         let Some(View { surface, .. }) = self.views.get(&target) else {
             return text_input::success(serde_json::json!(false));
         };
+        let mut input_wanted = None;
         let done = match call.get("method").and_then(serde_json::Value::as_str) {
             Some("setKeyboardInteractivity") => {
                 let mode = match args.get("mode").and_then(serde_json::Value::as_str) {
@@ -2811,6 +2903,7 @@ impl App {
             {
                 None => {
                     surface.wl_surface().set_input_region(None);
+                    input_wanted = Some(false);
                     true
                 }
                 Some(rects) => match self.region_from(rects) {
@@ -2818,6 +2911,7 @@ impl App {
                         surface
                             .wl_surface()
                             .set_input_region(Some(region.wl_region()));
+                        input_wanted = Some(!rects.is_empty());
                         true
                     }
                     None => false,
@@ -2915,7 +3009,30 @@ impl App {
         if done {
             surface.commit();
         }
+        if let Some(wanted) = input_wanted
+            && let Some(view) = self.views.get_mut(&target)
+        {
+            view.input_wanted = wanted;
+            self.map_if_input_wanted(target);
+        }
         text_input::success(serde_json::json!(done))
+    }
+
+    /// A layer that asks for input somewhere but has drawn nothing yet (the Dock hidden by
+    /// auto-hide from session start: its scene is empty, so the engine presents no frame) gets a
+    /// transparent frame at its size: an unmapped surface has no input region, and nothing at the
+    /// screen edge could reveal it (silica-desktop#242). Other layers with nothing to show (a
+    /// closed Faro) stay unmapped, without a full-screen surface to composite.
+    fn map_if_input_wanted(&self, id: i64) {
+        let (Some(engine), Some(view)) = (&self.engine, self.views.get(&id)) else {
+            return;
+        };
+        if !view.input_wanted || !view.added {
+            return;
+        }
+        if let Some(vulkan) = engine.vulkan() {
+            vulkan.map_empty(id);
+        }
     }
 
     /// A region from `[[x, y, w, h], …]` in surface points (empty rectangles skipped).
@@ -3093,9 +3210,13 @@ impl App {
         if id == MAIN_VIEW && !engine.gl_presented() {
             engine.resize_surface(w, h);
         }
+        if let Some(vulkan) = engine.vulkan() {
+            vulkan.set_view_size(id, (w, h));
+        }
         if let Err(err) = engine.send_window_metrics(id, w, h, f64::from(view.scale.max(1))) {
             warn!("{err}");
         }
+        self.map_if_input_wanted(id);
     }
 
     fn send_pointer(&self, phase: PointerPhase, position: (f64, f64), scroll: Option<(f64, f64)>) {

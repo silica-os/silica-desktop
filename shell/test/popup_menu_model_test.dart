@@ -46,6 +46,32 @@ void main() {
     expect(chosen, [2, 1]);
   });
 
+  test('in a menu where some rows have an icon the others keep its room', () {
+    final chosen = <int>[];
+    final entries = popupEntries([
+      PopupRow(kind: PopupRowKind.submenuBegin, label: 'Open With'),
+      PopupRow(kind: PopupRowKind.item, id: 1, label: 'Firefox (default)'),
+      PopupRow(
+        kind: PopupRowKind.item,
+        id: 2,
+        label: 'Preview',
+        icon: '/icons/preview.png',
+      ),
+      PopupRow(kind: PopupRowKind.submenuEnd),
+      PopupRow(kind: PopupRowKind.item, id: 3, label: 'Copy'),
+    ], chosen.add);
+    final openWith = (entries.first as AmalfiMenuAction).submenu!;
+    final firefox = openWith.first as AmalfiMenuAction;
+    // An empty 16 pt box, so both labels start at the same place; it still chooses.
+    expect(firefox.icon, isA<SizedBox>());
+    expect((firefox.icon! as SizedBox).width, 16);
+    firefox.onSelected!();
+    expect((openWith[1] as AmalfiMenuAction).icon, isNotNull);
+    // The top level has no icon at all: no room taken.
+    expect((entries[1] as AmalfiMenuAction).icon, isNull);
+    expect(chosen, [1]);
+  });
+
   test('a submenu with no rows is dropped and stray ends are ignored', () {
     final entries = popupEntries([
       PopupRow(kind: PopupRowKind.submenuBegin, label: 'Empty'),

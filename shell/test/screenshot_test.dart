@@ -349,6 +349,30 @@ image/png=missing.desktop;org.example.Viewer.desktop;
     },
   );
 
+  testWidgets(
+    'a change of the options made elsewhere applies to the running layer (#240)',
+    (tester) async {
+      final backend = MemorySettingsBackend({});
+      store = SilicaSettings(backend: backend);
+      await store.refresh();
+      await pumpLayer(tester);
+      // Turned off in Settings (or by another run) after the layer started.
+      backend.emit('screenshot.thumbnail', false);
+      await tester.pump();
+      await announce(tester);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.byKey(const ValueKey('thumbnail')), findsNothing);
+      // The pointer option reaches Ossido, which draws it into full-screen captures.
+      services.executed.clear();
+      services.params.clear();
+      backend.emit('screenshot.pointer', true);
+      await tester.pump();
+      expect(services.executed, contains('screenshot.settings'));
+      expect(services.params.last, {'pointer': true});
+      await tester.pump(const Duration(seconds: 2));
+    },
+  );
+
   testWidgets('a clipboard capture is copied, with no thumbnail and no file', (
     tester,
   ) async {

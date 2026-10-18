@@ -39,6 +39,28 @@ fn maximize_fills_the_screen_and_unmaximize_goes_back() {
     assert_eq!((after.x, after.y), (before.x, before.y));
 }
 
+/// A window that cannot be resized (min = max, Calculator) is not zoomed by the app's title bar
+/// double click (`set_maximized`), as its zoom button is disabled (silica-desktop#245).
+#[test]
+fn a_fixed_size_window_does_not_zoom() {
+    let ossido = Headless::start_with("zoom-fixed", SIZE, &[]);
+    let mut window = TestWindow::open_decorated(&ossido.wayland, "fixed", (248, 412));
+    window.set_fixed_size((248, 412));
+    let before = windows(&ossido).remove(0);
+    window.request_maximized(true);
+    assert!(!window.maximized(), "the client stays unmaximized");
+    window.commit_frames(1, std::time::Duration::ZERO);
+    let after = windows(&ossido).remove(0);
+    assert_eq!(
+        (after.x, after.y, after.width, after.height),
+        (before.x, before.y, before.width, before.height)
+    );
+    // Minimize is still allowed.
+    window.request_minimized();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert!(windows(&ossido).iter().all(|w| w.minimized));
+}
+
 #[test]
 fn minimize_request_takes_the_window_off_the_screen() {
     let ossido = Headless::start_with("zoom-minimize", SIZE, &[]);

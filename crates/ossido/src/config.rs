@@ -1,9 +1,11 @@
-//! The user's settings files that Ossido applies: `$XDG_CONFIG_HOME/silica/*.json` (usually
-//! `~/.config/silica`), written by Settings (`docs/control.md` › Settings files).
-//!
-//! The folder is watched with inotify: a file written in place or renamed over (Settings writes
-//! a temporary file and renames it) is read again and applied at once. A missing, unreadable or
-//! malformed file means the defaults; a value out of range is ignored, the others still apply.
+//! The user's settings that Ossido applies. Most come from the Settings service
+//! (`settings_service.rs`, silica-desktop#240): the parsers here read the service's keys of a
+//! group (`keyboard.*`, `input.*`, …) as one object, so a value out of range is ignored and the
+//! others still apply. Two are still files of `$XDG_CONFIG_HOME/silica` (usually
+//! `~/.config/silica`): `power.json` and `displays.json` (`docs/control.md` › Settings files),
+//! watched with inotify: a file written in place or renamed over is read again and applied at
+//! once; a missing, unreadable or malformed file means the defaults. The glass and the
+//! accessibility of the display come with the look of silica-daemon (`look.*` of `System1`).
 
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
@@ -72,9 +74,7 @@ pub fn text_of(map: &serde_json::Map<String, Value>, key: &str) -> Option<String
     (text.len() <= 256 && !text.chars().any(char::is_control)).then(|| text.to_owned())
 }
 
-// --- keyboard.json -------------------------------------------------------------------------
-
-pub const KEYBOARD_FILE: &str = "keyboard.json";
+// --- keyboard.* -------------------------------------------------------------------------
 
 /// One input source: an xkb layout with its variant (`us`, `it`, `de(nodeadkeys)`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,7 +111,7 @@ impl Layout {
     }
 }
 
-/// `keyboard.json`: key repeat and input sources.
+/// The `keyboard.*` settings: key repeat and input sources.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyboardConfig {
     /// Before the first repeat, in ms.
@@ -168,9 +168,7 @@ impl KeyboardConfig {
     }
 }
 
-// --- input.json ----------------------------------------------------------------------------
-
-pub const INPUT_FILE: &str = "input.json";
+// --- input.* ----------------------------------------------------------------------------
 
 /// How a touchpad makes a secondary click.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,7 +211,7 @@ impl Default for PointerSettings {
     }
 }
 
-/// `input.json`: mice and touchpads.
+/// The `input.*` settings: mice and touchpads.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct InputConfig {
     pub mouse: PointerSettings,
@@ -222,7 +220,7 @@ pub struct InputConfig {
     pub double_click_ms: Option<u32>,
 }
 
-/// The double click time when `input.json` has none.
+/// The double click time without the `input.*` settings.
 pub const DEFAULT_DOUBLE_CLICK_MS: u32 = 400;
 
 impl InputConfig {
@@ -267,9 +265,7 @@ impl InputConfig {
     }
 }
 
-// --- hotcorners.json -----------------------------------------------------------------------
-
-pub const HOT_CORNERS_FILE: &str = "hotcorners.json";
+// --- hotcorners.* -----------------------------------------------------------------------
 
 /// A corner of the output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -330,10 +326,7 @@ impl HotCornersConfig {
     }
 }
 
-// --- lockscreen.json and screensaver.json ----------------------------------------------------
-
-pub const LOCK_FILE: &str = "lockscreen.json";
-pub const SAVER_FILE: &str = "screensaver.json";
+// --- lockscreen.passwordDelay and screensaver.* ----------------------------------------------------
 
 /// How long after the screen saver or the display off the password is asked for, in seconds
 /// (`passwordDelay`; 0 at once); 15 minutes without the key, never when it is `null`.
@@ -407,9 +400,7 @@ impl SaverConfig {
     }
 }
 
-// --- dock.json -----------------------------------------------------------------------------
-
-pub const DOCK_FILE: &str = "dock.json";
+// --- dock.* -----------------------------------------------------------------------------
 
 /// What a double click on a window's title bar does (`titleBarDoubleClick`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -447,9 +438,7 @@ impl DockConfig {
     }
 }
 
-// --- shortcuts.json ------------------------------------------------------------------------
-
-pub const SHORTCUTS_FILE: &str = "shortcuts.json";
+// --- shortcuts.* ------------------------------------------------------------------------
 
 /// `shortcuts.json` (Settings › Keyboard › Keyboard Shortcuts): per catalog command id, the
 /// shortcut in the `Logo+Shift+Q` format, or `null` for none. A command not listed keeps its
@@ -468,6 +457,26 @@ impl ShortcutOverrides {
             .iter()
             .find(|(known, _)| *known == id)
             .map(|(_, text)| text.as_deref())
+    }
+
+    /// The `shortcuts.<command id>` keys of the Settings service: a shortcut, or `none` for
+    /// none; empty (the default) keeps the catalog's.
+    pub fn from_settings(settings: &crate::settings_service::ServiceSettings) -> Self {
+        let mut map = serde_json::Map::new();
+        for (id, value) in settings.group("shortcuts") {
+            if let crate::settings_service::Setting::Text(text) = value {
+                match text.as_str() {
+                    "" => {}
+                    "none" => {
+                        map.insert(id.to_owned(), Value::Null);
+                    }
+                    keys => {
+                        map.insert(id.to_owned(), Value::from(keys));
+                    }
+                }
+            }
+        }
+        Self::parse(Some(&map))
     }
 
     pub fn parse(map: Option<&serde_json::Map<String, Value>>) -> Self {
@@ -490,9 +499,7 @@ impl ShortcutOverrides {
     }
 }
 
-// --- theme.json ----------------------------------------------------------------------------
-
-pub const THEME_FILE: &str = "theme.json";
+// --- look.* and accessibility.cursorSize ----------------------------------------------------------------------------
 
 /// `theme.json` (Settings › Appearance): the part Ossido applies, the glass level. The rest of
 /// the file is the look the apps follow (silica-daemon `SetLook`).
@@ -571,25 +578,55 @@ impl State {
     /// A file of the settings folder changed.
     pub fn config_changed(&mut self, name: &str) {
         match name {
-            KEYBOARD_FILE => self.apply_keyboard_config(),
-            INPUT_FILE => self.apply_input_config(),
             POWER_FILE => self.apply_power_config(),
-            THEME_FILE => self.apply_theme_config(),
-            HOT_CORNERS_FILE => self.apply_hot_corners_config(),
-            SHORTCUTS_FILE => self.apply_shortcuts_config(),
-            DOCK_FILE => self.apply_dock_config(),
-            LOCK_FILE | SAVER_FILE => self.apply_lock_config(),
             crate::displays::DISPLAYS_FILE => self.apply_displays_config(),
             _ => {}
         }
     }
 
-    /// `input.json`: to every mouse and touchpad now, and to each one that appears later.
+    /// The Settings service told something (every key, or one that changed): what those keys
+    /// drive is applied at once.
+    pub fn settings_event(&mut self, event: crate::settings_service::Event) {
+        let changed = self.service_settings.take(event);
+        let touched = |prefix: &str| changed.iter().any(|key| key.starts_with(prefix));
+        if touched("keyboard.") {
+            self.apply_keyboard_config();
+        }
+        if touched("input.") {
+            self.apply_input_config();
+        }
+        if touched("hotcorners.") {
+            self.apply_hot_corners_config();
+        }
+        if touched("shortcuts.") {
+            self.apply_shortcuts_config();
+        }
+        if touched("dock.") {
+            self.apply_dock_config();
+        }
+        if touched("lockscreen.passwordDelay") || touched("screensaver.") {
+            self.apply_lock_config();
+        }
+        if touched("accessibility.cursorSize") {
+            self.apply_theme_config();
+        }
+        if !changed.is_empty() {
+            self.wake();
+        }
+    }
+
+    /// `input.*`: to every mouse and touchpad now, and to each one that appears later.
+    /// The double click time is the look's (`look.doubleClickMs` of silica-daemon), the one the
+    /// apps use.
     pub fn apply_input_config(&mut self) {
-        let Some(dir) = self.config_dir.clone() else {
-            return;
-        };
-        let config = InputConfig::parse(read_json(&dir, INPUT_FILE).as_ref());
+        let mut map = self.service_settings.object("input");
+        if let Some(Value::Object(state)) = self.system.status()
+            && let Some(ms) = state.get("look.doubleClickMs")
+        {
+            map.get_or_insert_with(serde_json::Map::new)
+                .insert("doubleClickMs".to_owned(), ms.clone());
+        }
+        let config = InputConfig::parse(map.as_ref());
         if config != self.input_config {
             self.input_config = config;
             #[cfg(feature = "drm")]
@@ -597,34 +634,25 @@ impl State {
         }
     }
 
-    /// `dock.json`: the title bar's double click.
+    /// `dock.*`: the title bar's double click, minimizing into the app.
     pub fn apply_dock_config(&mut self) {
-        let Some(dir) = self.config_dir.clone() else {
-            return;
-        };
-        self.dock_config = DockConfig::parse(read_json(&dir, DOCK_FILE).as_ref());
+        self.dock_config = DockConfig::parse(self.service_settings.object("dock").as_ref());
     }
 
-    /// `shortcuts.json`: the catalog's shortcuts with the user's changes, at once.
+    /// `shortcuts.*`: the catalog's shortcuts with the user's changes, at once.
     pub fn apply_shortcuts_config(&mut self) {
-        let Some(dir) = self.config_dir.clone() else {
-            return;
-        };
-        let file = read_json(&dir, SHORTCUTS_FILE);
-        self.shortcuts_capture = file
-            .as_ref()
-            .and_then(|map| bool_of(map, "capture"))
-            .unwrap_or(false);
-        let overrides = ShortcutOverrides::parse(file.as_ref());
+        self.shortcuts_capture = matches!(
+            self.service_settings.get("shortcuts.capture"),
+            Some(crate::settings_service::Setting::Bool(true))
+        );
+        let overrides = ShortcutOverrides::from_settings(&self.service_settings);
         self.shortcuts = crate::commands::shortcuts_with(&overrides);
     }
 
-    /// `hotcorners.json`: the actions of the four corners.
+    /// `hotcorners.*`: the actions of the four corners.
     pub fn apply_hot_corners_config(&mut self) {
-        let Some(dir) = self.config_dir.clone() else {
-            return;
-        };
-        self.hot_corners = HotCornersConfig::parse(read_json(&dir, HOT_CORNERS_FILE).as_ref());
+        self.hot_corners =
+            HotCornersConfig::parse(self.service_settings.object("hotcorners").as_ref());
     }
 
     /// The pointer moved to `location`: when it arrives in a corner with an action, runs it
@@ -674,12 +702,27 @@ impl State {
         }
     }
 
-    /// `theme.json`: the glass level, drawn from the next frame.
+    /// The glass level and the accessibility of the display (the look of silica-daemon,
+    /// `look.*`) and the pointer size (`accessibility.cursorSize`), drawn from the next frame.
     pub fn apply_theme_config(&mut self) {
-        let Some(dir) = self.config_dir.clone() else {
-            return;
-        };
-        let config = ThemeConfig::parse(read_json(&dir, THEME_FILE).as_ref());
+        let mut map = serde_json::Map::new();
+        if let Some(Value::Object(state)) = self.system.status() {
+            for (look, key) in [
+                ("look.glass", "glass"),
+                ("look.reduceTransparency", "reduceTransparency"),
+                ("look.reduceMotion", "reduceMotion"),
+            ] {
+                if let Some(value) = state.get(look) {
+                    map.insert(key.to_owned(), value.clone());
+                }
+            }
+        }
+        if let Some(crate::settings_service::Setting::Int(size)) =
+            self.service_settings.get("accessibility.cursorSize")
+        {
+            map.insert("cursorSize".to_owned(), Value::from(*size));
+        }
+        let config = ThemeConfig::parse(Some(&map));
         if config != self.theme_config {
             let was = self.theme_config.reduce_motion;
             let cursor_was = self.theme_config.cursor_size;
@@ -711,13 +754,11 @@ impl State {
         self.apply_displays_config();
     }
 
-    /// `keyboard.json`: the repeat goes to every bound keyboard (`wl_keyboard.repeat_info`),
-    /// a new keymap to the clients when the sources change.
+    /// `keyboard.*`: the repeat goes to every bound keyboard (`wl_keyboard.repeat_info`), a
+    /// new keymap to the clients when the sources change. Until the Settings service answers
+    /// (and without it) the repeat is `OSSIDO_KEY_REPEAT`'s or the built-in one.
     pub fn apply_keyboard_config(&mut self) {
-        let Some(dir) = self.config_dir.clone() else {
-            return;
-        };
-        let map = read_json(&dir, KEYBOARD_FILE);
+        let map = self.service_settings.object("keyboard");
         let config = KeyboardConfig::parse(map.as_ref(), crate::state::key_repeat());
         let Some(keyboard) = self.seat.get_keyboard() else {
             return;
@@ -745,7 +786,7 @@ impl State {
                 Ok(()) => info!("keyboard layouts: {layout} ({variant})"),
                 Err(err) => {
                     // A layout xkb does not know: keep the keymap in use.
-                    warn!("keyboard.json: layouts {layout} ({variant}): {err:?}");
+                    warn!("keyboard.layouts {layout} ({variant}): {err:?}");
                     self.keyboard_config.layouts = old.layouts;
                     self.keyboard_config.model = old.model;
                     self.keyboard_config.options = old.options;
@@ -1071,5 +1112,40 @@ mod tests {
         let odd = SaverConfig::parse(Some(&map(r#"{"minutes": 0, "saver": "fire"}"#)));
         assert_eq!((odd.minutes, odd.saver.as_str()), (None, "drift"));
         assert_eq!(SaverConfig::parse(None).minutes, None);
+    }
+
+    #[test]
+    fn shortcuts_come_from_the_settings_service() {
+        use crate::settings_service::{Event, ServiceSettings, Setting};
+        let ids: Vec<&str> = silica_control::commands::CATALOG
+            .iter()
+            .take(3)
+            .map(|spec| spec.id)
+            .collect();
+        let mut settings = ServiceSettings::default();
+        settings.take(Event::All(
+            [
+                (
+                    format!("shortcuts.{}", ids[0]),
+                    Setting::Text("Logo+Shift+K".into()),
+                ),
+                (
+                    format!("shortcuts.{}", ids[1]),
+                    Setting::Text("none".into()),
+                ),
+                (
+                    format!("shortcuts.{}", ids[2]),
+                    Setting::Text(String::new()),
+                ),
+                ("shortcuts.capture".to_owned(), Setting::Bool(true)),
+            ]
+            .into_iter()
+            .collect(),
+        ));
+        let overrides = ShortcutOverrides::from_settings(&settings);
+        assert_eq!(overrides.get(ids[0]), Some(Some("Logo+Shift+K")));
+        assert_eq!(overrides.get(ids[1]), Some(None));
+        // Empty: the catalog's own.
+        assert_eq!(overrides.get(ids[2]), None);
     }
 }

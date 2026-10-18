@@ -70,18 +70,17 @@ by the daemon with `InvalidArgs`; readers still fall back to the default for any
 - **Notifications** (`notifications/settings.dart`): the settings are read again for every
   notification, so a change applies to the next one.
 - **Control Center** (`controlcenter/modules.dart`): follows `controlcenter.modules`.
-- **Screenshot** (`screenshot/settings.dart`): reads the keys when the layer starts and writes
-  them back all at once when an option changes.
+- **Screenshot** (`screenshot/settings.dart`): follows the `screenshot.*` keys while the layer
+  runs (a change made elsewhere shows at once) and writes them back all at once when an option
+  changes.
 
-## What Ossido still reads from JSON
+## Ossido
 
-Ossido (the compositor) reads a few files itself (`docs/control.md`): `input.json`, `theme.json`,
-`hotcorners.json`, `shortcuts.json`, `keyboard.json`, `sound.json`, `displays` and the Dock's
-`titleBarDoubleClick`. Of the service's keys, four are Ossido's too: `dock.minimizeToApp`,
-`lockscreen.passwordDelay`, `screensaver.minutes`, `screensaver.saver`. The daemon writes them
-into `dock.json`, `lockscreen.json` and `screensaver.json` whenever they change (keeping the
-other keys of those files), until Ossido reads the service. The other files are written by
-Settings directly, as before.
+Ossido (the compositor) reads its keys from the service too (silica-desktop#240,
+`docs/control.md` › Settings): key repeat and input sources, mice and touchpads, hot corners,
+shortcuts, the title bar's double click, minimizing into the app, the password delay, the screen
+saver and the pointer size; the glass comes with the daemon's look. Only `displays.json` and
+`power.json` are still files it reads.
 
 ## Migration
 

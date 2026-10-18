@@ -88,6 +88,34 @@ void main() {
     },
   );
 
+  testWidgets(
+    'auto-hide: a pointer that arrives on the last row and stays still reveals it (#242)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 300);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      const items = [Item.app('Terminal', command: 'term')];
+      await tester.pumpWidget(
+        const Directionality(
+          textDirection: TextDirection.ltr,
+          child: Dock(items: items, autohide: true),
+        ),
+      );
+      double glassTop() => tester.getRect(find.byType(ProfiledGlass)).top;
+      expect(glassTop(), greaterThanOrEqualTo(300));
+      // The compositor's enter on the 1 px strip: the pointer is added there, with no motion
+      // after it (a warp, a mouse pushed against the edge).
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      addTearDown(mouse.removePointer);
+      await mouse.addPointer(location: const Offset(900, 299.5));
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(glassTop(), greaterThanOrEqualTo(300));
+      await tester.pump(const Duration(milliseconds: 60));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(glassTop(), closeTo(300 - bottomGap - backgroundHeight, 0.5));
+    },
+  );
+
   test('dock.launchAnimation: bounce by default, none turns it off', () async {
     final backend = await useSettings();
     final settings = SilicaSettings.instance;

@@ -277,6 +277,9 @@ struct Chain {
     outstanding: bool,
     /// Drawn and waiting to be presented with the other views of the frame.
     queued: Option<u32>,
+    /// The size in pixels the engine was last given for the view (its window metrics), for a
+    /// transparent frame before the engine drew one ([`VulkanSurface::map_empty`]).
+    size: (u32, u32),
 }
 
 /// What the engine needs to draw a view's frame into a swapchain image (`compositor.rs`).
@@ -395,6 +398,7 @@ impl VulkanSurface {
             swap: Swap::EMPTY,
             outstanding: false,
             queued: None,
+            size: (0, 0),
         };
         let this = Self {
             entry,
@@ -524,6 +528,7 @@ impl VulkanSurface {
             swap: Swap::EMPTY,
             outstanding: false,
             queued: None,
+            size: (0, 0),
         };
         let old = self
             .chains
@@ -534,6 +539,36 @@ impl VulkanSurface {
             self.destroy_chain(old);
         }
         Ok(())
+    }
+
+    /// The size in pixels view `view_id` is given (its window metrics), before its first frame
+    /// too.
+    pub fn set_view_size(&self, view_id: i64, size: (u32, u32)) {
+        if let Ok(mut chains) = self.chains.lock()
+            && let Some(chain) = chains.get_mut(&view_id)
+        {
+            chain.size = size;
+        }
+    }
+
+    /// Maps view `view_id` with a transparent frame at its size if it has shown nothing yet
+    /// (its scene was empty from the start): a shell layer that takes input on part of its
+    /// surface needs to be on screen for it. Nothing if the view already showed a frame, is
+    /// drawing one, or has no size yet. Whether it presented.
+    pub fn map_empty(&self, view_id: i64) -> bool {
+        let Ok(mut chains) = self.chains.lock() else {
+            return false;
+        };
+        let Some(chain) = chains.get_mut(&view_id) else {
+            return false;
+        };
+        let extent = chain.swap.extent;
+        let size = chain.size;
+        if extent.width > 0 && extent.height > 0 || size.0 == 0 || size.1 == 0 || chain.outstanding
+        {
+            return false;
+        }
+        self.clear_chain(chain, size)
     }
 
     /// Destroys the swapchain and the surface of view `view_id`, after the engine removed the
@@ -981,7 +1016,7 @@ impl VulkanSurface {
         self.note_presented(&presented);
     }
 
-    /// Presents a fully transparent frame on view `view_id`, at the size it last had. With a
+    /// Presents a fully transparent frame on view `view_id`, at the view's size. With a
     /// compositor the engine draws no layer for an empty scene (a closed panel, a layer
     /// with nothing left to show): without this the view's last frame would stay on screen.
     pub(super) fn present_clear(&self, view_id: i64) -> bool {
@@ -999,7 +1034,20 @@ impl VulkanSurface {
         if chain.outstanding {
             return false;
         }
-        let Some((image, _)) = self.acquire(chain, (extent.width, extent.height)) else {
+        // At the view's size now when the engine has told it (a layer that resized while its
+        // scene was empty, the hidden Dock growing to the screen height): the frame of the old
+        // size would not fit the new configure, and the layer would stay where it was.
+        let size = if chain.size.0 > 0 && chain.size.1 > 0 {
+            chain.size
+        } else {
+            (extent.width, extent.height)
+        };
+        self.clear_chain(chain, size)
+    }
+
+    /// Presents a fully transparent frame of `size` pixels on `chain` (its lock held).
+    fn clear_chain(&self, chain: &mut Chain, size: (u32, u32)) -> bool {
+        let Some((image, _)) = self.acquire(chain, size) else {
             return false;
         };
         let Some(index) = chain.swap.current.take() else {

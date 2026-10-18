@@ -958,6 +958,19 @@ impl State {
             .position(|placed| placed.iter().any(|(w, _)| Self::window_id(w) == Some(id)))
     }
 
+    /// The surface a keyboard focus belongs to: for a popup (an app's menu or popover, a
+    /// shell layer's menu) the root of its chain, the window or layer it hangs from; otherwise
+    /// the surface itself.
+    pub(crate) fn focus_root(
+        &self,
+        focus: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    ) -> smithay::reexports::wayland_server::protocol::wl_surface::WlSurface {
+        self.popups
+            .find_popup(focus)
+            .and_then(|popup| smithay::desktop::find_popup_root_surface(&popup).ok())
+            .unwrap_or_else(|| focus.clone())
+    }
+
     pub(crate) fn focused_window(&self) -> Option<Window> {
         let focus = self.seat.get_keyboard()?.current_focus()?;
         if let Some(window) = self

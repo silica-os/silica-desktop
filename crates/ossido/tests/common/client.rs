@@ -1207,6 +1207,23 @@ impl TestWindow {
         self.queue.roundtrip(&mut self.app).unwrap();
     }
 
+    /// Hides the window as an app does when its last window closes (`silica_window_v1
+    /// .set_hidden`, #142): the app keeps running with no window.
+    #[allow(dead_code)]
+    pub fn set_hidden(&mut self, hidden: bool) {
+        let qh = self.queue.handle();
+        let manager = self
+            .app
+            .appearance
+            .clone()
+            .expect("silica_window_manager_v1 missing");
+        let window = self
+            .appearance
+            .get_or_insert_with(|| manager.get_window(&self.surface, &qh, ()));
+        window.set_hidden(u32::from(hidden));
+        self.queue.roundtrip(&mut self.app).unwrap();
+    }
+
     /// Asks Ossido to move the window (`xdg_toplevel.move`) with the serial of the last press
     /// received, as the embedder does from the app's toolbar.
     #[allow(dead_code)]

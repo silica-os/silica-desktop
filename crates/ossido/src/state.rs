@@ -47,6 +47,8 @@ pub struct State {
     pub session_bus: Option<String>,
     /// The `system.*` commands towards silica-daemon.
     pub system: crate::system::SystemLink,
+    /// The settings of the Settings service (`settings_service.rs`).
+    pub service_settings: crate::settings_service::ServiceSettings,
     /// The appearance forced with `--appearance` (tests, sessions without the daemon): it wins
     /// over silica-daemon's state.
     pub appearance: Option<bool>,
@@ -180,6 +182,11 @@ pub struct State {
     /// has the focus, the menu bar shows that app and Cmd+Q quits it. Cleared when a window
     /// takes the focus.
     pub windowless_front: Option<String>,
+    /// The windowless apps that were frontmost before another app's window took the front,
+    /// most recent last: when that window goes and nothing else is in front, the last of them
+    /// still running comes back (a document app whose Open panel, another process's window,
+    /// was cancelled; macOS activates the previous app).
+    pub windowless_history: Vec<String>,
     /// Where each app's window last closed: its next window opens there (APP-LC).
     pub app_frames: crate::app_frames::AppFrames,
     /// Shell components kept running (`--keep-shell`, `keep.rs`).
@@ -404,6 +411,7 @@ impl State {
             socket_name,
             session_bus: None,
             system: crate::system::SystemLink::disconnected(),
+            service_settings: crate::settings_service::ServiceSettings::default(),
             appearance: None,
             drag_icon: None,
             drag_icon_offset: Point::default(),
@@ -481,6 +489,7 @@ impl State {
             hidden: Vec::new(),
             hidden_apps: crate::app_hide::HiddenApps::default(),
             windowless_front: None,
+            windowless_history: Vec::new(),
             app_frames: crate::app_frames::AppFrames::default(),
             keeper: crate::keep::Keeper::default(),
             workspaces: crate::workspaces::Workspaces::default(),

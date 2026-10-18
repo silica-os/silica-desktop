@@ -91,7 +91,7 @@ pub struct DrmBackend {
     /// The `dev_t` of the GPU, to recognise its udev events.
     device_id: u64,
     libinput: Libinput,
-    /// The pointer devices, to apply `input.json` again when it changes.
+    /// The pointer devices, to apply the `input.*` settings again when it changes.
     devices: Vec<smithay::reexports::input::Device>,
     surface: Option<OutputSurface>,
     /// A frame is queued for scanout and waits for its vblank.
@@ -394,7 +394,7 @@ fn is_pointer(device: &smithay::reexports::input::Device) -> bool {
     device.has_capability(smithay::reexports::input::DeviceCapability::Pointer)
 }
 
-/// Applies `input.json` to one device; a setting left out goes back to libinput's default.
+/// Applies the `input.*` settings to one device; a setting left out goes back to libinput's default.
 fn configure_device(
     device: &mut smithay::reexports::input::Device,
     config: &crate::config::InputConfig,
@@ -449,7 +449,7 @@ fn configure_device(
 }
 
 impl State {
-    /// A device appeared (at start or plugged in): `input.json` applies to it at once.
+    /// A device appeared (at start or plugged in): the `input.*` settings applies to it at once.
     fn input_device_added(&mut self, mut device: smithay::reexports::input::Device) {
         if !is_pointer(&device) {
             return;
@@ -468,7 +468,7 @@ impl State {
         self.report_input_devices();
     }
 
-    /// `input.json` changed: every pointer device again.
+    /// The `input.*` settings changed: every pointer device again.
     pub fn configure_input_devices(&mut self) {
         let config = self.input_config.clone();
         if let Some(backend) = self.drm_backend() {

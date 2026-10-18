@@ -417,6 +417,18 @@ impl State {
         if self.focused_window().is_some_and(|w| Some(&w) != closing) {
             return;
         }
+        // The windowless app that was in front before (its Open panel, a window of another
+        // process, closed): it is frontmost again while it still runs (a hidden window).
+        while let Some(app) = self.windowless_history.pop() {
+            let running = self
+                .hidden
+                .iter()
+                .any(|(w, _)| crate::panorama::window_app(w).as_deref() == Some(app.as_str()));
+            if running {
+                self.set_windowless_front(Some(app));
+                return;
+            }
+        }
         if let Some((_, owner)) = self.desktop_layer()
             && !owner.is_empty()
         {

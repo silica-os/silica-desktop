@@ -28,7 +28,7 @@ parameter schemas. Every catalog id is run by Ossido (test
 | `ui.screenshot` | `path?` | `width`, `height`, `path` or `png_base64` |
 | `ui.animation_scale` | `scale` (0–1000) | — (multiplies the animation durations; 0 turns them off) |
 | `ui.glass_quality` | `quality` (`auto`, `full`, `frosted`, `opaque`) | `quality` in use |
-| `dock.icons` | `icons` (`app_id`, `x`, `y`: the center of each app icon in the Dock surface) | `icons` kept; the shell sends it, windows then minimize into their app's icon (`dock.json` `minimizeToApp`) |
+| `dock.icons` | `icons` (`app_id`, `x`, `y`: the center of each app icon in the Dock surface) | `icons` kept; the shell sends it, windows then minimize into their app's icon (`dock.minimizeToApp` of the Settings service) |
 | `session.lock` | — | locks the session (`Logo+Ctrl+Q`) and asks the shell's locker to take the lock; refused when no shell is running. There is no command to unlock |
 | `engine.commands` | — | the catalog |
 | `engine.execute` | `id`, `params?` | the command's result |
@@ -100,33 +100,27 @@ descendants.
 
 Without `id`, the window commands act on the focused one.
 
-## Settings files
+## Settings
 
-Ossido applies the user's settings from `$XDG_CONFIG_HOME/silica` (usually `~/.config/silica`;
-`crates/ossido/src/config.rs`), written by Settings. The folder is watched (inotify): a file
-written in place or renamed over is applied at once, a removed one brings back the defaults.
-A malformed file is ignored as a whole; a value out of range is ignored alone. Settings keeps the
-keys it does not know.
+Ossido applies the user's settings (`crates/ossido/src/config.rs`). Most are keys of the
+Settings service of silica-daemon (`dev.frascella.Silica.Settings1`, `docs/daemon.md`,
+`crates/ossido/src/settings_service.rs`, silica-desktop#240): Ossido reads them all when the
+service appears and follows `Changed`, applying each at once; the service refuses a value that
+does not fit its schema. Until the service answers (and without it, in tests) the defaults
+apply. The glass and the accessibility of the display come with the look of silica-daemon
+(`look.glass`, `look.reduceTransparency`, `look.reduceMotion` of `System1`). Two settings are
+still files of `$XDG_CONFIG_HOME/silica` (usually `~/.config/silica`), watched with inotify:
+`displays.json` and `power.json`.
 
-### keyboard.json
-
-```json
-{
-  "repeatDelay": 375,
-  "repeatRate": 11,
-  "layouts": ["us", "it", "de(nodeadkeys)"],
-  "model": "",
-  "options": "caps:escape"
-}
-```
+### keyboard.*
 
 | Key | Type | Meaning |
 | --- | --- | --- |
-| `repeatDelay` | integer, 100–3000 | ms before a held key repeats (default 375, or `OSSIDO_KEY_REPEAT`) |
-| `repeatRate` | integer, 0–100 | repeats per second; 0 turns repeat off (default 11) |
-| `layouts` | array of strings, at most 4 | the input sources: xkb layouts, a variant in parentheses; the first is active at start. Empty or absent: xkb's default (`XKB_DEFAULT_*`) |
-| `model` | string | xkb model (empty: default) |
-| `options` | string | xkb options, comma-separated (`caps:escape,compose:ralt`) |
+| `keyboard.repeatDelay` | integer, 100–3000 | ms before a held key repeats (default 375; without the service, `OSSIDO_KEY_REPEAT` or 375) |
+| `keyboard.repeatRate` | integer, 0–100 | repeats per second; 0 turns repeat off (default 11) |
+| `keyboard.layouts` | list of strings, at most 4 used | the input sources: xkb layouts, a variant in parentheses (`de(nodeadkeys)`); the first is active at start. Empty: xkb's default (`XKB_DEFAULT_*`) |
+| `keyboard.model` | string | xkb model (empty: default) |
+| `keyboard.options` | string | xkb options, comma-separated (`caps:escape,compose:ralt`) |
 
 A change of repeat is sent to every bound keyboard (`wl_keyboard.repeat_info`); a change of
 `layouts`, `model` or `options` compiles a new keymap and sends it to the clients. A layout xkb
@@ -170,12 +164,7 @@ drawn until the next input); nested and headless only keep the state (`idle.stat
 no `ext-idle-notify-v1` for clients yet (Smithay's implementation needs the event loop's data
 to be the compositor state).
 
-### lockscreen.json and screensaver.json
-
-```json
-{"passwordDelay": 900, "showUser": true}
-{"minutes": 10, "saver": "drift"}
-```
+### lockscreen.passwordDelay and screensaver.*
 
 *Lock screen and screen saver.* The lock screen is the shell's client of `ext_session_lock_v1`
 (offered to shell clients only). While the session is locked only its lock surface is drawn and
@@ -188,85 +177,61 @@ asked for by `session.lock`, the Logo menu, the password delay or sleeping start
 announced to the shell as `session.locked` (`1` or `0`), so that its locker takes the lock. A
 screenshot taken with the headless software renderer is not covered.
 
-`lockscreen.json`: `passwordDelay`, integer seconds (0 to 86400) between the start of the
-screen saver or the display turning off and the lock; absent: 900 (15 minutes); `null`: never
-(the lock stays manual). The session also locks before sleeping when a delay is set. `showUser`
-(boolean) belongs to the shell. `screensaver.json`: `minutes` without input before the screen
-saver starts (absent or 0: never) and `saver`, `drift`, `clock` or `colors`; Ossido announces
+`lockscreen.passwordDelay`: integer seconds (0 to 86400) between the start of the screen saver
+or the display turning off and the lock; default 900 (15 minutes); -1: never (the lock stays
+manual). The session also locks before sleeping when a delay is set. `lockscreen.showUser`
+belongs to the shell. `screensaver.minutes`: minutes without input before the screen saver
+starts (0: never) and `screensaver.saver`, `drift`, `clock` or `colors`; Ossido announces
 the saver to the shell as `screensaver.active` (its id, empty when none) and any input ends it.
 `idle.state` has a `lock` object with the state.
 
-### hotcorners.json
+### hotcorners.*
 
-```json
-{"topLeft": "panorama", "bottomRight": "desktop"}
-```
+`hotcorners.topLeft`, `hotcorners.topRight`, `hotcorners.bottomLeft`, `hotcorners.bottomRight`:
+the action Ossido runs once when the pointer arrives in that corner (it is armed again after the
+pointer leaves): `panorama` (`panorama.toggle`), `appWindows` (`panorama.app`), `desktop`
+(`desktop.show`), `notifications` (`notifications.toggle`), `launcher` (`launcher.toggle`),
+`controlCenter` (`controlcenter.toggle`), `search` (`faro.toggle`); `none` (the default) does
+nothing. Dragging or resizing a window into a corner does not trigger it.
 
-Keys `topLeft`, `topRight`, `bottomLeft`, `bottomRight`; the value is the action Ossido runs once
-when the pointer arrives in that corner (it is armed again after the pointer leaves): `panorama`
-(`panorama.toggle`), `appWindows` (`panorama.app`), `desktop` (`desktop.show`), `notifications`
-(`notifications.toggle`), `launcher` (`launcher.toggle`), `controlCenter`
-(`controlcenter.toggle`), `search` (`faro.toggle`). `none`, a missing key or any other value does
-nothing. Dragging or resizing a window into a corner does not trigger it. Watched like the other
-settings files.
-
-### dock.json
-
-Ossido reads two keys of the Dock's file (the rest is the shell's):
+### dock.titleBarDoubleClick and dock.minimizeToApp
 
 | Key | Type | Meaning |
 | --- | --- | --- |
-| `titleBarDoubleClick` | `zoom` (default), `minimize`, `none` | what a double click on the title bar Ossido draws does; the apps that draw their own bar read the same key (silica_ui) |
-| `minimizeToApp` | boolean, default false | a window minimizes into its app's icon (the target of the genie or scale effect) instead of the Dock's right section; the shell tells where the icons are with `dock.icons` |
+| `dock.titleBarDoubleClick` | `zoom` (default), `minimize`, `none` | what a double click on the title bar does; the apps that draw their own bar read the same key (silica_ui). A window that cannot be resized never zooms |
+| `dock.minimizeToApp` | boolean, default false | a window minimizes into its app's icon (the target of the genie or scale effect) instead of the Dock's right section; the shell tells where the icons are with `dock.icons` |
 
-### shortcuts.json
+### shortcuts.*
 
-```json
-{"window.minimize": "Logo+N", "faro.toggle": null, "window.tile_fill": "Logo+Ctrl+F5"}
-```
+Settings › Keyboard › Keyboard Shortcuts. `shortcuts.<command id>` for a command of the catalog
+(`engine.commands`): the shortcut in the catalog's format (`Logo`, `Ctrl`, `Alt`, `Shift` and an
+xkb keysym name, joined by `+`), or `none` to switch the command's shortcut off; empty (the
+default, `Reset`) keeps the catalog's. Any command can be given a shortcut, also one with no
+default. Two commands with the same keys: the first of the catalog runs (Settings refuses the
+duplicate). `shortcuts.capture` true (set by Settings while it records a new shortcut) makes
+Ossido let every key reach Settings, and only while Settings is the frontmost app.
 
-Settings › Keyboard › Keyboard Shortcuts. The keys are command ids of the catalog
-(`engine.commands`); the value is the shortcut in the catalog's format (`Logo`, `Ctrl`, `Alt`,
-`Shift` and an xkb keysym name, joined by `+`) or `null` to switch the command's shortcut off.
-A command left out keeps the catalog's default; any command can be given a shortcut, also one
-with no default. An unknown id, an invalid shortcut or any other value is ignored (the default
-stays). `"capture": true` (written by Settings while it records a new shortcut) makes Ossido
-let every key reach Settings, and only while Settings is the frontmost app. Two commands with the same keys: the first of the catalog runs (Settings refuses the
-duplicate). Applied at once when the file changes.
-
-### theme.json
-
-Settings' Appearance choices. Ossido reads one key; the rest is the look the apps follow
-(silica-daemon `SetLook`, `docs/daemon.md`) and is ignored here.
+### The glass, the accessibility of the display, the pointer size
 
 | Key | Type | Meaning |
 | --- | --- | --- |
-| `reduceTransparency` | boolean | Accessibility › Display: the glass is drawn opaque (the `opaque` quality, no blur); off by default |
-| `reduceMotion` | boolean | Accessibility › Display: Ossido's own animations are skipped (the window genie, closing, space switch, Panorama); off by default |
-| `cursorSize` | integer 16–128 | Accessibility › Pointer: the pointer's size in logical pixels (the cursor theme at that size); the environment's (`XCURSOR_SIZE`, 24 by default) without it |
-| `glass` | number 0–1 | how tinted the glass is: 0 clearest, 1 most tinted; 0.5 (default) is the measured material. Only the tint's strength changes (`GlassProfile::with_glass_level`); clear glass has no tint and stays. A value out of range is the default. |
+| `look.reduceTransparency` (System1) | boolean | Accessibility › Display: the glass is drawn opaque (the `opaque` quality, no blur) |
+| `look.reduceMotion` (System1) | boolean | Accessibility › Display: Ossido's own animations are skipped (the window genie, closing, space switch, Panorama) |
+| `look.glass` (System1) | number 0–1 | how tinted the glass is: 0 clearest, 1 most tinted; 0.5 (default) is the measured material. Only the tint's strength changes (`GlassProfile::with_glass_level`) |
+| `accessibility.cursorSize` | integer 16–128 | Accessibility › Pointer: the pointer's size in logical pixels (default 24) |
 
-### input.json
-
-```json
-{
-  "mouse": {"speed": 0.0, "naturalScroll": false, "secondaryClick": "right", "scrollSpeed": 1.0},
-  "touchpad": {"speed": 0.0, "naturalScroll": true, "tapToClick": true,
-               "secondaryClick": "twoFinger", "disableWhileTyping": true, "scrollSpeed": 1.0},
-  "doubleClickMs": 500
-}
-```
+### input.*
 
 | Key | Type | Meaning |
 | --- | --- | --- |
-| `*.speed` | number, -1–1 | pointer acceleration speed (libinput) |
-| `*.naturalScroll` | boolean | content follows the fingers / the wheel is reversed |
-| `*.scrollSpeed` | number, 0.1–10 | multiplies the scroll deltas (wheel for `mouse`, fingers for `touchpad`) |
-| `mouse.secondaryClick` | `right`, `left` | which button is the secondary click (`left`: left-handed) |
-| `touchpad.secondaryClick` | `twoFinger`, `bottomRight`, `bottomLeft` | click with two fingers (clickfinger) or in a bottom corner (button areas; `bottomLeft` is left-handed) |
-| `touchpad.tapToClick` | boolean | a tap is a click |
-| `touchpad.disableWhileTyping` | boolean | the touchpad ignores the palm while typing |
-| `doubleClickMs` | integer, 100–2000 | the double click time: the toolkits read it, and Ossido uses it for the double click on its own title bars (default 400) |
+| `input.{mouse,touchpad}.speed` | number, -1–1 | pointer acceleration speed (libinput; default 0) |
+| `input.{mouse,touchpad}.naturalScroll` | boolean | content follows the fingers / the wheel is reversed (default false) |
+| `input.{mouse,touchpad}.scrollSpeed` | number, 0.1–10 | multiplies the scroll deltas (wheel for the mouse, fingers for the touchpad; default 1) |
+| `input.mouse.secondaryClick` | `right` (default), `left` | which button is the secondary click (`left`: left-handed) |
+| `input.touchpad.secondaryClick` | `twoFinger` (default), `bottomRight`, `bottomLeft` | click with two fingers (clickfinger) or in a bottom corner (button areas; `bottomLeft` is left-handed) |
+| `input.touchpad.tapToClick` | boolean | a tap is a click (default false) |
+| `input.touchpad.disableWhileTyping` | boolean | the touchpad ignores the palm while typing (default true) |
+| `look.doubleClickMs` (System1) | integer | the double click time, the apps' too: Ossido uses it on its own title bars (400 ms without the daemon) |
 
 A device is a touchpad when libinput can tap with it, otherwise a mouse. Every key left out
 gives the device libinput's default. The settings apply to every pointer device at once and

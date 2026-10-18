@@ -29,6 +29,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{
 const CHILD_SOCKET: &str = "SILICA_TEST_FRONT_SOCKET";
 const DESKTOP_APP: &str = "dev.test.Desktop";
 const OTHER_APP: &str = "dev.test.Other";
+const DOC_APP: &str = "dev.test.Document";
 
 #[derive(Default)]
 struct Client {
@@ -244,6 +245,23 @@ fn closing_the_last_window_falls_back_to_the_desktop_owner() {
     assert_ne!(frontmost(&ossido), DESKTOP_APP);
     window.destroy_toplevel();
     assert_eq!(frontmost(&ossido), DESKTOP_APP);
+}
+
+/// A document app with no window (its Open panel, preview#24): the panel is another app's
+/// window; when it goes, the windowless app is frontmost again, not the desktop's owner.
+#[test]
+fn closing_another_apps_window_gives_the_front_back_to_the_windowless_app() {
+    let ossido = Headless::start("front-back");
+    let _desktop = Desktop::map(&ossido, DESKTOP_APP);
+    APP_ID.with(|id| *id.borrow_mut() = DOC_APP.to_owned());
+    let mut document = TestWindow::open(&ossido.wayland, "document");
+    document.set_hidden(true);
+    assert_eq!(frontmost(&ossido), DOC_APP);
+    APP_ID.with(|id| *id.borrow_mut() = OTHER_APP.to_owned());
+    let mut panel = TestWindow::open(&ossido.wayland, "Open");
+    assert_ne!(frontmost(&ossido), DOC_APP);
+    panel.destroy_toplevel();
+    assert_eq!(frontmost(&ossido), DOC_APP);
 }
 
 #[test]

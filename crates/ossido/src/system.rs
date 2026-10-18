@@ -85,7 +85,11 @@ pub struct SystemLink {
 impl SystemLink {
     /// Starts with the session bus `address` (Ossido's private one) or, without it, with the
     /// environment's.
-    pub fn start(address: Option<String>) -> Self {
+    /// `look_changed` hears whenever the daemon's state changes (its look drives the glass).
+    pub fn start(
+        address: Option<String>,
+        look_changed: Option<smithay::reexports::calloop::channel::Sender<()>>,
+    ) -> Self {
         let cache = Arc::new(Mutex::new(None));
         let (calls, receiver) = mpsc::channel();
         let report = Arc::new(Mutex::new(Map::new()));
@@ -94,7 +98,14 @@ impl SystemLink {
         let listener_address = address.clone();
         let spawned = std::thread::Builder::new()
             .name("ossido-system".to_owned())
-            .spawn(move || listen(listener_address, &listener_cache, &listener_report))
+            .spawn(move || {
+                listen(
+                    listener_address,
+                    &listener_cache,
+                    &listener_report,
+                    look_changed.as_ref(),
+                )
+            })
             .and_then(|_| {
                 std::thread::Builder::new()
                     .name("ossido-system-calls".to_owned())
@@ -229,9 +240,28 @@ fn connect(address: Option<&str>) -> zbus::Result<Connection> {
 
 /// The cached state: `State` at the start, then every `Changed`. If the daemon or the bus
 /// disappear it retries.
-fn listen(address: Option<String>, cache: &Mutex<Option<Json>>, report: &Mutex<Map<String, Json>>) {
+fn listen(
+    address: Option<String>,
+    cache: &Mutex<Option<Json>>,
+    report: &Mutex<Map<String, Json>>,
+    look_changed: Option<&smithay::reexports::calloop::channel::Sender<()>>,
+) {
     let store = |state: Option<Json>| {
-        *cache.lock().unwrap_or_else(|e| e.into_inner()) = state;
+        let mut cached = cache.lock().unwrap_or_else(|e| e.into_inner());
+        let look = |state: &Option<Json>| {
+            state.as_ref().and_then(Json::as_object).map(|map| {
+                map.iter()
+                    .filter(|(key, _)| key.starts_with("look."))
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect::<Vec<_>>()
+            })
+        };
+        let changed = look(&cached) != look(&state);
+        *cached = state;
+        drop(cached);
+        if changed && let Some(tx) = look_changed {
+            let _ = tx.send(());
+        }
     };
     loop {
         let result = (|| -> zbus::Result<()> {

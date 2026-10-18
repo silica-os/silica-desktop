@@ -1,6 +1,6 @@
 //! Synthetic keys for `input.key` and `input.type`: from name or character to keycode.
 //!
-//! The keymap is the one the keyboard is using (the layouts of `keyboard.json`, the active
+//! The keymap is the one the keyboard is using (the layouts of the `keyboard.*` settings, the active
 //! input source): the inverse map keysym → (keycode, Shift, AltGr) is derived from it, so a
 //! text typed under the Italian layout produces the same characters (#195). A character the
 //! layout does not have is typed on a temporary key (`with_temporary_key`).

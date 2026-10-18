@@ -1,5 +1,6 @@
-//! The settings files in `$XDG_CONFIG_HOME/silica`: Ossido applies them at start and when
-//! they change (inotify).
+//! The user's settings: those of the Settings service (silica-daemon's, here on a private bus,
+//! silica-desktop#240) and the files still in `$XDG_CONFIG_HOME/silica` (`power.json`,
+//! `displays.json`). Ossido applies them at start and when they change.
 
 #![allow(
     clippy::unwrap_used,
@@ -14,12 +15,13 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use common::Headless;
+use common::{Headless, SettingsBus};
 use serde_json::{Value, json};
 use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_client::{Connection, Dispatch, QueueHandle, WEnum};
+use zbus::zvariant::Value as Variant;
 
 /// Writes `name` like Settings does: a temporary file renamed over the real one.
 fn write_setting(ossido: &Headless, name: &str, value: &Value) {
@@ -112,9 +114,19 @@ fn connect(socket: &Path) -> (Connection, wayland_client::EventQueue<Keyboard>, 
     (connection, queue, keyboard)
 }
 
+/// Ossido on `bus`, which has the Settings service.
+fn with_settings(name: &str, bus: &SettingsBus) -> Headless {
+    Headless::start_with_env(name, (common::WIDTH, common::HEIGHT), &[], &bus.env())
+}
+
 #[test]
-fn keyboard_json_sets_repeat_and_sources_live() {
-    let ossido = Headless::start("keyboard-json");
+fn keyboard_settings_set_repeat_and_sources_live() {
+    let bus = SettingsBus::start(&[
+        ("keyboard.repeatDelay", Variant::I64(375)),
+        ("keyboard.repeatRate", Variant::I64(11)),
+        ("keyboard.layouts", Variant::from(Vec::<String>::new())),
+    ]);
+    let ossido = with_settings("keyboard-settings", &bus);
     let (_connection, mut queue, mut keyboard) = connect(&ossido.wayland);
     // The defaults first (no file).
     let state = ossido.client().call("keyboard.state", Value::Null).unwrap();
@@ -129,19 +141,22 @@ fn keyboard_json_sets_repeat_and_sources_live() {
         .unwrap();
     assert_eq!(next["switched"], false);
 
-    write_setting(
-        &ossido,
-        "keyboard.json",
-        &json!({"repeatDelay": 250, "repeatRate": 30, "layouts": ["us", "it"]}),
+    bus.set("keyboard.repeatDelay", Variant::I64(250));
+    bus.set(
+        "keyboard.layouts",
+        Variant::from(vec!["us".to_owned(), "it".to_owned()]),
     );
-    let state = wait_for(&ossido, "keyboard.state", |s| s["repeatRate"] == 30);
+    bus.set("keyboard.repeatRate", Variant::I64(30));
+    let state = wait_for(&ossido, "keyboard.state", |s| {
+        s["repeatRate"] == 30 && s["layouts"] == json!(["us", "it"])
+    });
     assert_eq!(state["repeatDelay"], 250);
     assert_eq!(state["layouts"], json!(["us", "it"]));
     assert_eq!(state["active"], 0);
     // The bound keyboard got the new repeat and a new keymap.
     queue.roundtrip(&mut keyboard).unwrap();
     assert_eq!(keyboard.repeat.last(), Some(&(30, 250)));
-    assert_eq!(keyboard.keymaps, 2);
+    assert!(keyboard.keymaps >= 2);
 
     let next = ossido
         .client()
@@ -150,20 +165,28 @@ fn keyboard_json_sets_repeat_and_sources_live() {
     assert_eq!(next, json!({"switched": true, "active": 1}));
 
     // A layout xkb does not know keeps the keymap; the repeat still applies.
-    write_setting(
-        &ossido,
-        "keyboard.json",
-        &json!({"repeatDelay": 600, "repeatRate": 0, "layouts": ["us", "nosuchlayout"]}),
+    bus.set(
+        "keyboard.layouts",
+        Variant::from(vec!["us".to_owned(), "nosuchlayout".to_owned()]),
     );
+    bus.set("keyboard.repeatRate", Variant::I64(0));
+    bus.set("keyboard.repeatDelay", Variant::I64(600));
     let state = wait_for(&ossido, "keyboard.state", |s| s["repeatDelay"] == 600);
     assert_eq!(state["repeatRate"], 0);
     assert_eq!(state["layouts"], json!(["us", "it"]));
 
-    // Removed: the defaults again.
-    std::fs::remove_file(ossido.dir.join("config/silica/keyboard.json")).unwrap();
-    let state = wait_for(&ossido, "keyboard.state", |s| s["repeatDelay"] == 375);
+    // Back to the defaults.
+    for key in [
+        "keyboard.repeatDelay",
+        "keyboard.repeatRate",
+        "keyboard.layouts",
+    ] {
+        bus.reset(key);
+    }
+    let state = wait_for(&ossido, "keyboard.state", |s| {
+        s["repeatDelay"] == 375 && s["layouts"] == json!([])
+    });
     assert_eq!(state["repeatRate"], 11);
-    assert_eq!(state["layouts"], json!([]));
 }
 
 #[test]
@@ -257,22 +280,31 @@ fn power_json_turns_the_display_off_until_input() {
 }
 
 #[test]
-fn input_json_is_read_live() {
-    let ossido = Headless::start("input-json");
-    let state = ossido.client().call("input.state", Value::Null).unwrap();
-    assert_eq!(state["mouse"]["speed"], Value::Null);
+fn input_settings_are_applied_live() {
+    let bus = SettingsBus::start(&[
+        ("input.mouse.speed", Variant::F64(0.0)),
+        ("input.mouse.scrollSpeed", Variant::F64(1.0)),
+        ("input.mouse.naturalScroll", Variant::Bool(false)),
+        ("input.mouse.secondaryClick", Variant::from("right")),
+        ("input.touchpad.speed", Variant::F64(0.0)),
+        ("input.touchpad.scrollSpeed", Variant::F64(1.0)),
+        ("input.touchpad.secondaryClick", Variant::from("twoFinger")),
+        ("input.touchpad.tapToClick", Variant::Bool(false)),
+        ("input.touchpad.disableWhileTyping", Variant::Bool(true)),
+    ]);
+    let ossido = with_settings("input-settings", &bus);
+    // The service's defaults, once it has answered.
+    let state = wait_for(&ossido, "input.state", |s| s["mouse"]["speed"] == 0.0);
     assert_eq!(state["mouse"]["scrollSpeed"], 1.0);
+    assert_eq!(state["touchpad"]["disableWhileTyping"], true);
     // Headless has no libinput devices.
     assert_eq!(state["devices"], json!({"mouse": false, "touchpad": false}));
 
-    write_setting(
-        &ossido,
-        "input.json",
-        &json!({
-            "mouse": {"speed": 0.25, "naturalScroll": true, "secondaryClick": "left"},
-            "touchpad": {"tapToClick": true, "secondaryClick": "twoFinger", "scrollSpeed": 1.5}
-        }),
-    );
+    bus.set("input.mouse.naturalScroll", Variant::Bool(true));
+    bus.set("input.mouse.secondaryClick", Variant::from("left"));
+    bus.set("input.touchpad.tapToClick", Variant::Bool(true));
+    bus.set("input.touchpad.scrollSpeed", Variant::F64(1.5));
+    bus.set("input.mouse.speed", Variant::F64(0.25));
     let state = wait_for(&ossido, "input.state", |s| s["mouse"]["speed"] == 0.25);
     assert_eq!(state["mouse"]["naturalScroll"], true);
     assert_eq!(state["mouse"]["leftHanded"], true);
@@ -280,16 +312,31 @@ fn input_json_is_read_live() {
     assert_eq!(state["touchpad"]["secondaryClick"], "twoFinger");
     assert_eq!(state["touchpad"]["scrollSpeed"], 1.5);
 
-    // Not an object: the defaults.
-    write_setting(&ossido, "input.json", &json!("not an object"));
-    wait_for(&ossido, "input.state", |s| s["mouse"]["speed"].is_null());
+    // Back to the default.
+    bus.reset("input.mouse.speed");
+    wait_for(&ossido, "input.state", |s| s["mouse"]["speed"] == 0.0);
+}
+
+#[test]
+fn without_the_settings_service_the_defaults_apply() {
+    let ossido = Headless::start("no-settings");
+    let state = ossido.client().call("keyboard.state", Value::Null).unwrap();
+    assert_eq!(state["repeatDelay"], 375);
+    let state = ossido.client().call("input.state", Value::Null).unwrap();
+    assert_eq!(state["mouse"]["speed"], Value::Null);
+    // The files of the settings folder no longer drive what moved to the service.
+    write_setting(&ossido, "keyboard.json", &json!({"repeatDelay": 250}));
+    std::thread::sleep(Duration::from_millis(300));
+    let state = ossido.client().call("keyboard.state", Value::Null).unwrap();
+    assert_eq!(state["repeatDelay"], 375);
 }
 
 #[test]
 fn input_type_follows_the_active_keymap_with_a_temporary_key_fallback() {
-    let ossido = Headless::start("keyboard-type");
+    let bus = SettingsBus::start(&[("keyboard.layouts", Variant::from(Vec::<String>::new()))]);
+    let ossido = with_settings("keyboard-type", &bus);
     let (_connection, mut queue, mut keyboard) = connect(&ossido.wayland);
-    write_setting(&ossido, "keyboard.json", &json!({"layouts": ["it"]}));
+    bus.set("keyboard.layouts", Variant::from(vec!["it".to_owned()]));
     wait_for(&ossido, "keyboard.state", |s| s["layouts"] == json!(["it"]));
     queue.roundtrip(&mut keyboard).unwrap();
     // Characters the Italian layout has (the ones that put "ò" for ";" on US keycodes), some
@@ -323,7 +370,8 @@ fn input_type_follows_the_active_keymap_with_a_temporary_key_fallback() {
 
 #[test]
 fn hot_corners_run_their_action_when_the_pointer_arrives() {
-    let ossido = Headless::start("hot-corners");
+    let bus = SettingsBus::start(&[("hotcorners.topLeft", Variant::from("none"))]);
+    let ossido = with_settings("hot-corners", &bus);
     let mut client = ossido.client();
     let pointer = |client: &mut silica_control::Client, x: f64, y: f64| {
         client
@@ -333,16 +381,12 @@ fn hot_corners_run_their_action_when_the_pointer_arrives() {
     let open = |client: &mut silica_control::Client| {
         client.call("panorama.state", Value::Null).unwrap()["open"] == true
     };
-    // Without a file, the corner does nothing.
+    // By default, the corner does nothing.
     pointer(&mut client, 160.0, 120.0);
     pointer(&mut client, 0.0, 0.0);
     assert!(!open(&mut client));
-    write_setting(
-        &ossido,
-        "hotcorners.json",
-        &json!({"topLeft": "panorama", "bottomRight": "nonsense"}),
-    );
-    // The file is read as it lands: arrive again until the corner is armed with its action.
+    bus.set("hotcorners.topLeft", Variant::from("panorama"));
+    // Applied as it lands: arrive again until the corner is armed with its action.
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         pointer(&mut client, 160.0, 120.0);

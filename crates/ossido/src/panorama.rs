@@ -103,8 +103,14 @@ const THUMBS_FROM: f64 = 0.6;
 const THUMBS_FULL: f64 = 0.8;
 /// Beyond this distance from the press, a click on a window becomes a drag.
 const DRAG_THRESHOLD: f64 = 4.0;
-/// The window dragged over the bar shrinks to this scale.
-const DRAG_OVER_BAR_SCALE: f64 = 0.25;
+/// Climbing toward the bar the dragged window shrinks linearly with height: ~1.65 pt of width
+/// per pt climbed (spaces.md, PA-13; −0.0027 of scale per pt for a 600 pt window), and grows
+/// back the same way going down.
+const DRAG_SHRINK_PER_PT: f64 = 1.65;
+/// Over the bar it is a miniature of about 0.066–0.073 of the window's real size, following the
+/// pointer about 55 % down it.
+const DRAG_OVER_BAR_FACTOR: f64 = 0.07;
+const DRAG_OVER_BAR_GRAB_Y: f64 = 0.55;
 
 /// Bar expansion (ms, 0–1): height from 40 to 169 pt in the video, frame by frame. Closing is
 /// not measured: same curve.
@@ -551,10 +557,61 @@ pub struct Panorama {
     pub close_press: Option<usize>,
     /// The "+" pressed (the space is added on release over it).
     pub plus_press: bool,
+    /// The ghost thumbnail sliding in while the pointer is on the "+" (spaces.md › Adding a
+    /// space); `None` before the first hover.
+    pub ghost: Option<Ghost>,
     /// The space being magnified out of its thumbnail as Panorama closes, and the thumbnail.
     pub zoom: Option<(usize, Rectangle<f64, Logical>)>,
     /// The time of the last frame.
     pub clock: Instant,
+}
+
+/// The ghost thumbnail of the "+": its target (in or out), since when, and where it started.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ghost {
+    pub shown: bool,
+    pub since: Instant,
+    pub from: f64,
+}
+
+/// The ghost's slide: a critically damped spring (ω ≈ 16.4 s⁻¹, spaces.md › Ghost entry).
+const GHOST_OMEGA: f64 = 0.0164;
+/// Its left edge, this far from the screen's right edge once in.
+const GHOST_LEFT: f64 = 80.0;
+/// Pressed, it darkens to about 68 % brightness.
+const GHOST_PRESSED: f64 = 0.68;
+
+impl Ghost {
+    /// How far in, 0 (out of the screen) to 1, at `now`; `speed` is the animation scale (0:
+    /// at once).
+    pub fn value(&self, now: Instant, speed: f64) -> f64 {
+        let target = if self.shown { 1.0 } else { 0.0 };
+        if speed <= 0.0 {
+            return target;
+        }
+        let ms = now.saturating_duration_since(self.since).as_secs_f64() * 1000.0 / speed;
+        let t = crate::thumbnail_row::spring(ms, GHOST_OMEGA);
+        self.from + (target - self.from) * t
+    }
+}
+
+/// The ghost's rectangle in bar coordinates for `value` (0–1): the size of a thumbnail, cut by
+/// the screen's right edge, its left edge sliding in to [`GHOST_LEFT`] from it, centred on the
+/// "+" (so the cross sits at its vertical centre).
+pub fn ghost_rect(width: f64, height: f64, expansion: f64, value: f64) -> Rectangle<f64, Logical> {
+    let plus = plus_rect(width, expansion);
+    let center = plus.loc.y + plus.size.h / 2.0;
+    let thumb = crate::thumbnail_row::THUMB_HEIGHT;
+    let left = width - GHOST_LEFT * value.clamp(0.0, 1.0);
+    let thumb_width = if height > 0.0 {
+        thumb * width / height
+    } else {
+        thumb * 16.0 / 9.0
+    };
+    Rectangle::new(
+        (left, center - thumb / 2.0).into(),
+        ((width - left).min(thumb_width), thumb).into(),
+    )
 }
 
 /// The thumbnail under the pointer and since when.
@@ -594,6 +651,9 @@ pub struct PanoramaView {
     pub thumbnail_rects: Vec<Rectangle<f64, Logical>>,
     /// Whether the "+" shows (not at the maximum of spaces).
     pub plus: bool,
+    /// How far in the ghost thumbnail of the "+" is, 0–1, and whether the "+" is pressed.
+    pub ghost: f64,
+    pub ghost_pressed: bool,
     /// The close buttons showing.
     pub close_buttons: Vec<CloseButton>,
     /// The space magnified out of its thumbnail (closing after a click on it): its index and
@@ -755,19 +815,43 @@ pub fn interpolate(p: &Placement, progress: f64) -> Rectangle<f64, Logical> {
 
 /// The frame of the dragged window: it follows the pointer from the grab point; over the
 /// bar it shrinks.
-fn drag_rect(drag: &Drag, frame: Rectangle<f64, Logical>, bar: f64) -> Rectangle<f64, Logical> {
-    let scale = if drag.pointer.y < bar {
-        DRAG_OVER_BAR_SCALE
+/// Where the dragged window is drawn: its arranged `frame` scaled down as it climbs from the
+/// press toward the bar, a miniature of its `real` width over the bar (spaces.md, PA-13).
+fn drag_rect(
+    drag: &Drag,
+    frame: Rectangle<f64, Logical>,
+    real_width: f64,
+    bar: f64,
+) -> Rectangle<f64, Logical> {
+    drag_geometry(drag.press, drag.pointer, drag.grab, frame, real_width, bar)
+}
+
+/// [`drag_rect`] from the press and the pointer, the grab point (proportions of the frame).
+fn drag_geometry(
+    press: Point<f64, Logical>,
+    pointer: Point<f64, Logical>,
+    grab: (f64, f64),
+    frame: Rectangle<f64, Logical>,
+    real_width: f64,
+    bar: f64,
+) -> Rectangle<f64, Logical> {
+    let full = frame.size.w.max(1.0);
+    let mini = (real_width * DRAG_OVER_BAR_FACTOR).clamp(1.0, full);
+    let over_bar = pointer.y < bar;
+    let width = if over_bar {
+        mini
     } else {
-        1.0
+        let climbed = (press.y - pointer.y).max(0.0);
+        (full - DRAG_SHRINK_PER_PT * climbed).max(mini)
     };
-    let size = frame.size.upscale(scale);
+    let size = frame.size.upscale(width / full);
+    let grab_y = if over_bar {
+        DRAG_OVER_BAR_GRAB_Y
+    } else {
+        grab.1
+    };
     Rectangle::new(
-        (
-            drag.pointer.x - drag.grab.0 * size.w,
-            drag.pointer.y - drag.grab.1 * size.h,
-        )
-            .into(),
+        (pointer.x - grab.0 * size.w, pointer.y - grab_y * size.h).into(),
         size,
     )
 }
@@ -892,6 +976,7 @@ impl State {
             rearm_until: None,
             close_press: None,
             plus_press: false,
+            ghost: None,
             zoom: None,
             clock: now,
         });
@@ -1035,6 +1120,60 @@ impl State {
         }
         if !panorama.opening && panorama.progress <= 0.0 {
             self.panorama = None;
+            return;
+        }
+        self.refresh_placements();
+    }
+
+    /// A window that maps, closes or changes size while a view is open is arranged again with
+    /// the others: arranged with no size (a window still drawing its first frame when the view
+    /// opened) or left out, it would be drawn at its real place, under the spaces bar
+    /// (silica-desktop#246). Not while a window is dragged, returning or a space magnifying.
+    fn refresh_placements(&mut self) {
+        let Some(panorama) = self.panorama.as_ref() else {
+            return;
+        };
+        if !panorama.opening
+            || panorama.drag.is_some()
+            || panorama.returning.is_some()
+            || panorama.zoom.is_some()
+        {
+            return;
+        }
+        let mode = panorama.mode;
+        let current: Vec<(Window, Option<Rectangle<f64, Logical>>)> = self
+            .space
+            .elements()
+            .map(|w| {
+                let frame = self
+                    .space
+                    .element_geometry(w)
+                    .map(|g| crate::decorations::frame_of(w, g).to_f64());
+                (w.clone(), frame)
+            })
+            .collect();
+        let known = |window: &Window| panorama.placements.iter().find(|p| &p.window == window);
+        let changed = match mode {
+            // App Exposé arranges only some windows: a placement whose window changed or went.
+            Mode::App => panorama.placements.iter().any(|p| {
+                current
+                    .iter()
+                    .find(|(w, _)| *w == p.window)
+                    .is_none_or(|(_, frame)| *frame != Some(p.from))
+            }),
+            Mode::Panorama | Mode::Desktop => {
+                current.len() != panorama.placements.len()
+                    || current
+                        .iter()
+                        .any(|(window, frame)| known(window).is_none_or(|p| *frame != Some(p.from)))
+            }
+        };
+        if !changed {
+            return;
+        }
+        let fresh = self.panorama_placements(mode);
+        if let Some(panorama) = self.panorama.as_mut() {
+            panorama.placements = fresh;
         }
     }
 
@@ -1049,7 +1188,12 @@ impl State {
         let Some(placement) = panorama.placements.iter().find(|p| p.window == drag.window) else {
             return;
         };
-        let from = drag_rect(drag, placement.to, bar_height(panorama.expansion));
+        let from = drag_rect(
+            drag,
+            placement.to,
+            placement.from.size.w,
+            bar_height(panorama.expansion),
+        );
         panorama.returning = Some(Returning {
             window: drag.window.clone(),
             from,
@@ -1103,7 +1247,12 @@ impl State {
                 .find(|p| p.window == drag.window)?;
             Some((
                 drag.window.clone(),
-                drag_rect(drag, placement.to, bar_height(panorama.expansion)),
+                drag_rect(
+                    drag,
+                    placement.to,
+                    placement.from.size.w,
+                    bar_height(panorama.expansion),
+                ),
             ))
         });
         let drag = dragging.or_else(|| {
@@ -1128,6 +1277,10 @@ impl State {
             labels: self.space_labels(),
             hover_window: self.hover_window(),
             plus: self.workspaces.count() < crate::workspaces::MAX_SPACES,
+            ghost: panorama
+                .ghost
+                .map_or(0.0, |g| g.value(panorama.clock, self.animation_speed)),
+            ghost_pressed: panorama.plus_press,
             zoom: panorama.zoom.map(|(index, rect)| {
                 let output = self.output_size();
                 let full = Rectangle::from_size(output);
@@ -1315,6 +1468,30 @@ impl State {
             self.expand_spaces_bar(true, now);
         }
         self.track_hover(location, now);
+        self.track_ghost(location, now);
+    }
+
+    /// The ghost thumbnail slides in while the pointer is on the "+" of the expanded bar, and
+    /// out when it leaves (the reverse of the entry: not measured).
+    fn track_ghost(&mut self, location: Point<f64, Logical>, now: Instant) {
+        let width = self.output_size().w;
+        let speed = self.animation_speed;
+        let plus = self.workspaces.count() < crate::workspaces::MAX_SPACES;
+        let Some(panorama) = self.panorama.as_mut() else {
+            return;
+        };
+        let on = plus
+            && panorama.expansion >= THUMBS_FULL
+            && panorama.drag.is_none()
+            && plus_rect(width, panorama.expansion).contains(location);
+        let current = panorama.ghost.map_or(0.0, |g| g.value(now, speed));
+        if panorama.ghost.map(|g| g.shown) != Some(on) && (on || panorama.ghost.is_some()) {
+            panorama.ghost = Some(Ghost {
+                shown: on,
+                since: now,
+                from: current,
+            });
+        }
     }
 
     /// The space of the thumbnail under the point, with the bar expanded.
@@ -1425,6 +1602,10 @@ impl State {
             .as_mut()
             .is_some_and(|p| std::mem::take(&mut p.plus_press))
         {
+            // The ghost vanishes in one frame; the new thumbnail comes in from the edge.
+            if let Some(panorama) = self.panorama.as_mut() {
+                panorama.ghost = None;
+            }
             let expansion = self.panorama.as_ref().map_or(0.0, |p| p.expansion);
             if plus_rect(self.output_size().w, expansion).contains(location)
                 && let Err(err) = self.add_space()
@@ -1529,6 +1710,11 @@ pub struct BarLook {
     pub active: usize,
     /// Whether the "+" shows.
     pub plus: bool,
+    /// How far in the ghost thumbnail of the "+" is (0–1), and whether the "+" is pressed.
+    pub ghost: f64,
+    pub ghost_pressed: bool,
+    /// The output's height (the ghost has a thumbnail's aspect).
+    pub height: f64,
     /// A thumbnail not drawn (the one magnifying out of the bar).
     pub hidden: Option<usize>,
     pub expansion: f64,
@@ -1555,7 +1741,7 @@ impl BarLook {
             .map(|r| format!("{:.1},{:.1},{:.1}", r.loc.x, r.loc.y, r.size.w))
             .collect();
         format!(
-            "{}:{:?}:{}:{}:{}:{}:{:?}:{}",
+            "{}:{:?}:{}:{}:{}:{}:{:?}:{}:{}:{}",
             self.dark,
             self.hidden,
             self.plus,
@@ -1563,6 +1749,8 @@ impl BarLook {
             self.active,
             (self.expansion * 1000.0).round(),
             self.backdrop,
+            (self.ghost * 1000.0).round(),
+            self.ghost_pressed,
             self.labels.join("\u{1f}")
         )
     }
@@ -1666,6 +1854,27 @@ pub fn draw_bar(canvas: &mut Canvas, look: &BarLook) {
                 faded(label_color, shown),
             );
         }
+    }
+    // The ghost thumbnail of the "+" (under the cross), in the empty thumbnails' colour.
+    if look.plus && look.ghost > 0.0 && look.expansion >= THUMBS_FULL {
+        let r = ghost_rect(look.width, look.height, look.expansion, look.ghost);
+        let [red, green, blue, alpha] = look.backdrop;
+        let shade = |c: u8| {
+            if look.ghost_pressed {
+                (f64::from(c) * GHOST_PRESSED).round() as u8
+            } else {
+                c
+            }
+        };
+        canvas.fill_rect(
+            [
+                r.loc.x as f32,
+                r.loc.y as f32,
+                r.size.w as f32,
+                r.size.h as f32,
+            ],
+            [shade(red), shade(green), shade(blue), alpha],
+        );
     }
     if !look.plus {
         return;
@@ -1931,6 +2140,66 @@ mod tests {
         // Slowed down x2 it takes twice as long; with animations off it is immediate.
         assert!(return_fraction(ms(500), 2.0) < 1.0);
         assert_eq!(return_fraction(ms(0), 0.0), 1.0);
+    }
+
+    #[test]
+    fn the_ghost_of_the_plus_slides_in_from_the_edge_and_out_again() {
+        let start = Instant::now();
+        let ms = |n: u64| start + Duration::from_millis(n);
+        let ghost = Ghost {
+            shown: true,
+            since: start,
+            from: 0.0,
+        };
+        // The spring of the entry (ω ≈ 16.4 s⁻¹): about half way at ~102 ms, in by ~410 ms.
+        assert_eq!(ghost.value(start, 1.0), 0.0);
+        assert!((ghost.value(ms(102), 1.0) - 0.5).abs() < 0.02);
+        assert!(ghost.value(ms(410), 1.0) > 0.98);
+        // Slowed down x2 it takes twice as long; with animations off it is in at once.
+        assert!((ghost.value(ms(204), 2.0) - 0.5).abs() < 0.02);
+        assert_eq!(ghost.value(start, 0.0), 1.0);
+        // Leaving from half way it goes back out from there.
+        let out = Ghost {
+            shown: false,
+            since: start,
+            from: 0.5,
+        };
+        assert_eq!(out.value(start, 1.0), 0.5);
+        assert!(out.value(ms(600), 1.0) < 0.01);
+        // In, its left edge is 80 pt from the screen's right edge, a thumbnail tall, cut by the
+        // edge, centred on the "+"; out, it is past the edge.
+        let (w, h) = (1920.0, 1200.0);
+        let plus = plus_rect(w, 1.0);
+        let r = ghost_rect(w, h, 1.0, 1.0);
+        assert_eq!(r.loc.x, w - 80.0);
+        assert_eq!(r.size, (80.0, 90.0).into());
+        assert!((r.loc.y + 45.0 - (plus.loc.y + plus.size.h / 2.0)).abs() < 1e-9);
+        assert_eq!(ghost_rect(w, h, 1.0, 0.0).size.w, 0.0);
+    }
+
+    #[test]
+    fn a_dragged_window_shrinks_as_it_climbs_and_is_a_miniature_over_the_bar() {
+        // A 600 × 400 window arranged at 300 × 200, pressed at y 700, grabbed in its middle.
+        let frame = Rectangle::<f64, Logical>::new((200.0, 600.0).into(), (300.0, 200.0).into());
+        let press = Point::from((350.0, 700.0));
+        let at = |y: f64| drag_geometry(press, (350.0, y).into(), (0.5, 0.5), frame, 600.0, 168.0);
+        // At the press, or below it: full size.
+        assert_eq!(at(700.0).size, frame.size);
+        assert_eq!(at(760.0).size, frame.size);
+        // 100 pt up: 165 pt narrower (1.65 pt of width per pt), the height in proportion.
+        let up = at(600.0);
+        assert!((up.size.w - 135.0).abs() < 1e-9, "{:?}", up.size);
+        assert!((up.size.h - 90.0).abs() < 1e-9);
+        // The pointer keeps its place in it.
+        assert!((up.loc.x + up.size.w / 2.0 - 350.0).abs() < 1e-9);
+        // Never below the miniature: 0.07 of the real width (42 pt), and that over the bar,
+        // with the pointer 55 % down it.
+        assert!((at(200.0).size.w - 42.0).abs() < 1e-9);
+        let over = at(100.0);
+        assert!((over.size.w - 42.0).abs() < 1e-9);
+        assert!((over.loc.y + 0.55 * over.size.h - 100.0).abs() < 1e-9);
+        // Going back down it grows back the same way.
+        assert_eq!(at(600.0), up);
     }
 
     #[test]
