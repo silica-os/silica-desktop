@@ -46,6 +46,18 @@ const QUIET_TICKS: u32 = 3;
 /// layer placement) shows within this.
 const IDLE_RECHECK: Duration = Duration::from_millis(250);
 
+/// The buffer age the damage tracker is told for a swapchain buffer (silica-desktop#233).
+///
+/// With the age the tracker repaints, on a buffer, only the damage of the frames since it was
+/// last drawn. On the dev VM's software GPU the contents of a scanout buffer do not survive
+/// as the age promises, and a partially damaged frame (the lock screen's field, a client that
+/// damages one rectangle: #205) showed the previous state. Age 0 repaints the whole output
+/// from the surface textures on every frame that has damage, as the winit backend does; the
+/// savings that remain are the idle ticks (#202) and the partial shm uploads (#205).
+fn tracker_age(_swapchain_age: u8) -> usize {
+    0
+}
+
 /// What a frame tick knows to decide whether to build a frame.
 #[derive(Debug, Clone, Copy)]
 struct Tick {
@@ -908,7 +920,7 @@ impl State {
                 .render_output(
                     &mut backend.renderer,
                     &mut framebuffer,
-                    usize::from(age),
+                    tracker_age(age),
                     &elements,
                     clear_color,
                 )
@@ -957,7 +969,7 @@ fn default_cursor(renderer: &mut GlesRenderer) -> Option<GlesTexture> {
 
 #[cfg(test)]
 mod tests {
-    use super::{IDLE_RECHECK, QUIET_TICKS, Tick, frame_due, preferred_mode};
+    use super::{IDLE_RECHECK, QUIET_TICKS, Tick, frame_due, preferred_mode, tracker_age};
     use std::time::Duration;
 
     #[test]
@@ -1005,6 +1017,13 @@ mod tests {
     fn frames_go_on_for_a_few_ticks_after_the_last_damage() {
         for quiet in 0..QUIET_TICKS {
             assert!(frame_due(Tick { quiet, ..idle() }), "{quiet}");
+        }
+    }
+
+    #[test]
+    fn the_tracker_always_repaints_the_whole_output_from_the_textures() {
+        for age in [0, 1, 2, 3, u8::MAX] {
+            assert_eq!(tracker_age(age), 0, "{age}");
         }
     }
 

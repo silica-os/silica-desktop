@@ -1009,6 +1009,37 @@ impl TestWindow {
         self.app.pointer_log
     }
 
+    /// A new shm buffer with `pixels` (premultiplied BGRA, rows from the top, `WINDOW` size),
+    /// committed with only `damage` (x, y, width, height in buffer pixels) as its damage: what
+    /// the embedder does for a frame that differs from the one before in one rectangle.
+    #[allow(dead_code)]
+    pub fn repaint(&mut self, pixels: &[u8], damage: Option<(i32, i32, i32, i32)>) {
+        let (w, h) = WINDOW;
+        let stride = w * 4;
+        let qh = self.queue.handle();
+        let shm = self.app.shm.clone().expect("wl_shm missing");
+        let mut file = tempfile::tempfile().unwrap();
+        assert_eq!(pixels.len(), (w * h * 4) as usize, "window pixels");
+        file.write_all(pixels).unwrap();
+        let pool = shm.create_pool(file.as_fd(), (stride * h) as i32, &qh, ());
+        let buffer = pool.create_buffer(
+            0,
+            w as i32,
+            h as i32,
+            stride as i32,
+            wl_shm::Format::Argb8888,
+            &qh,
+            (),
+        );
+        self.surface.attach(Some(&buffer), 0, 0);
+        if let Some((x, y, dw, dh)) = damage {
+            self.surface.damage_buffer(x, y, dw, dh);
+        }
+        self.surface.commit();
+        self.buffer = buffer;
+        self.queue.roundtrip(&mut self.app).unwrap();
+    }
+
     /// Recommits the same buffer `count` times, every `every`: frames at a known pace.
     #[allow(dead_code)]
     pub fn commit_frames(&mut self, count: u32, every: std::time::Duration) {
