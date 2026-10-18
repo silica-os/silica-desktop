@@ -31,6 +31,7 @@ import '../system/glass_profile.dart';
 import '../system/icon_lookup.dart';
 import '../system/layer_control.dart';
 import '../system/shadow_image.dart';
+import '../system/sounds.dart';
 import '../system/shell_channel.dart';
 import '../system/system_status.dart';
 import 'banner.dart';
@@ -122,10 +123,14 @@ class NotificationsLayer extends StatefulWidget {
     this.startOpen = false,
     this.settings = NotificationSettings.read,
     this.openApp = openSenderApp,
+    this.playAlert = playAlertSound,
   });
 
   /// A click on a notification without a `default` action opens its app (N-02).
   final void Function(ShellNotification) openApp;
+
+  /// Plays the alert sound of a notification that comes with a banner (and a sound).
+  final Future<void> Function() playAlert;
 
   final NotificationsSource source;
 
@@ -223,6 +228,7 @@ class _NotificationsLayerState extends State<NotificationsLayer>
     final settings = widget.settings();
     final style = settings.styleOf(n);
     if (style == NotificationStyle.none) return;
+    if (settings.soundOf(n)) unawaited(widget.playAlert());
     n = settings.present(n);
     setState(() {
       final same = _banners.where(

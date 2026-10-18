@@ -22,6 +22,25 @@ abstract final class UiSound {
   static const String screenCapture = 'screen-capture';
 }
 
+/// Plays the alert sound chosen in Settings › Sound at the alert volume (`PlayAlert`), as a
+/// notification arrives; never fails.
+Future<void> playAlertSound() async {
+  try {
+    await DBus.instance.call(
+      destination: 'dev.frascella.Silica',
+      path: '/dev/frascella/Silica/Sound1',
+      interface: 'dev.frascella.Silica.Sound1',
+      method: 'PlayAlert',
+      signature: 's',
+      args: [''],
+    );
+  } on PlatformException {
+    // No daemon, or no such sound: silence.
+  } on MissingPluginException {
+    // Outside Silica.
+  }
+}
+
 /// Plays interface sound `name`; never fails.
 Future<void> playUiSound(String name) async {
   try {

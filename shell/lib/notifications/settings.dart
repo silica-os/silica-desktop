@@ -35,7 +35,15 @@ class NotificationSettings {
     this.groupings = const {},
     this.hiddenInCenter = const {},
     this.grouping = GroupingMode.auto,
+    this.mutedApps = const {},
   ]);
+
+  /// The apps that play no sound (`sound: false`).
+  final Set<String> mutedApps;
+
+  /// Whether a notification of this app plays the alert sound (the default).
+  bool soundOf(ShellNotification n) =>
+      !(mutedApps.contains(n.group) || mutedApps.contains(n.appName));
 
   /// Style by group key (desktop entry or app name).
   final Map<String, NotificationStyle> styles;
@@ -111,6 +119,10 @@ class NotificationSettings {
             key,
       },
       _grouping(json['grouping']) ?? GroupingMode.auto,
+      {
+        for (final MapEntry(:key, :value) in apps.entries)
+          if (key is String && value is Map && value['sound'] == false) key,
+      },
     );
   }
 
