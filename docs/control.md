@@ -29,8 +29,7 @@ parameter schemas. Every catalog id is run by Ossido (test
 | `ui.animation_scale` | `scale` (0–1000) | — (multiplies the animation durations; 0 turns them off) |
 | `ui.glass_quality` | `quality` (`auto`, `full`, `frosted`, `opaque`) | `quality` in use |
 | `dock.icons` | `icons` (`app_id`, `x`, `y`: the center of each app icon in the Dock surface) | `icons` kept; the shell sends it, windows then minimize into their app's icon (`dock.json` `minimizeToApp`) |
-| `session.lock` | — | locks the session (`Logo+Ctrl+Q`); refused when no `lock` layer (the lock screen) exists. See *Lock screen and screen saver* |
-| `session.unlock` | — | unlocks it; silica-daemon calls it after checking the password (`System1.Unlock`) |
+| `session.lock` | — | locks the session (`Logo+Ctrl+Q`) and asks the shell's locker to take the lock; refused when no shell is running. There is no command to unlock |
 | `engine.commands` | — | the catalog |
 | `engine.execute` | `id`, `params?` | the command's result |
 | `window.list` | — | windows from top to bottom, then the minimized ones: `id`, `title`, `app_id`, `x`, `y`, `width`, `height` (of the content, without the bar), `focused`, `minimized`, `fullscreen`, `space` |
@@ -178,12 +177,16 @@ to be the compositor state).
 {"minutes": 10, "saver": "drift"}
 ```
 
-*Lock screen and screen saver.* The lock screen is the shell's `lock` layer (an overlay with the
-keyboard). While the session is locked (`session.lock`, `Logo+Ctrl+Q`, the Logo menu, or the
-password delay) Ossido runs no shortcut, no virtual terminal switch, no gesture and no hot
-corner, and a click or the wheel goes only to the `lock` layer; it announces the state to the
-shell as `session.locked` (`1` or `0`). It is a lock against someone at the keyboard, not
-against other programs of the same user (they may call `session.unlock` on the actions socket).
+*Lock screen and screen saver.* The lock screen is the shell's client of `ext_session_lock_v1`
+(offered to shell clients only). While the session is locked only its lock surface is drawn and
+only it gets input: pointer motion and hover included, the keyboard, the wheel; no shortcut, VT
+switch, gesture or hot corner runs, and no window or layer takes the focus. If the locker dies
+the session stays locked (a plain black screen, no input) until a new locker, the shell started
+again, takes the lock over; only the client that holds the lock unlocks it
+(`unlock_and_destroy`), after silica-daemon checked the password (`System1.Unlock`). A lock
+asked for by `session.lock`, the Logo menu, the password delay or sleeping starts at once and is
+announced to the shell as `session.locked` (`1` or `0`), so that its locker takes the lock. A
+screenshot taken with the headless software renderer is not covered.
 
 `lockscreen.json`: `passwordDelay`, integer seconds (0 to 86400) between the start of the
 screen saver or the display turning off and the lock; absent: 900 (15 minutes); `null`: never

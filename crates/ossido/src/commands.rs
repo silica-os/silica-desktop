@@ -11,11 +11,10 @@ use silica_control::commands::{
     INPUT_POINTER_BUTTON, INPUT_POINTER_MOVE, INPUT_SCROLL, INPUT_TYPE, Key, LAYER_LIST,
     NOTIFICATIONS_TOGGLE, PERF_FRAMES, PERF_PROCESS, PERF_RENDER, PerfFramesParams,
     PerfProcessParams, PerfRenderParams, PointerButton, PointerMove, SESSION_LOCK, SESSION_QUIT,
-    SESSION_UNLOCK, Scroll, TypeText, UI_ANIMATION_SCALE, UI_GLASS_QUALITY, UI_SCREENSHOT,
-    WINDOW_ARRANGE_2, WINDOW_ARRANGE_3, WINDOW_ARRANGE_4, WINDOW_CLOSE, WINDOW_FOCUS,
-    WINDOW_FULLSCREEN, WINDOW_LIST, WINDOW_MINIMIZE, WINDOW_MOVE, WINDOW_TILE_BOTTOM,
-    WINDOW_TILE_FILL, WINDOW_TILE_LEFT, WINDOW_TILE_RIGHT, WINDOW_TILE_TOP, WindowInfo, WindowMove,
-    WindowTarget,
+    Scroll, TypeText, UI_ANIMATION_SCALE, UI_GLASS_QUALITY, UI_SCREENSHOT, WINDOW_ARRANGE_2,
+    WINDOW_ARRANGE_3, WINDOW_ARRANGE_4, WINDOW_CLOSE, WINDOW_FOCUS, WINDOW_FULLSCREEN, WINDOW_LIST,
+    WINDOW_MINIMIZE, WINDOW_MOVE, WINDOW_TILE_BOTTOM, WINDOW_TILE_FILL, WINDOW_TILE_LEFT,
+    WINDOW_TILE_RIGHT, WINDOW_TILE_TOP, WindowInfo, WindowMove, WindowTarget,
 };
 use silica_control::commands::{
     APP_FORCE_QUIT, APP_FORCE_QUIT_PANEL, SCREENSHOT_REGION, SCREENSHOT_SCREEN,
@@ -684,10 +683,6 @@ impl State {
                 self.lock_session()?;
                 Ok(json!({ "locked": true }))
             }
-            SESSION_UNLOCK => {
-                self.unlock_session();
-                Ok(json!({ "locked": false }))
-            }
             SESSION_QUIT => {
                 info!("quit requested");
                 self.loop_signal.stop();
@@ -994,6 +989,13 @@ impl State {
 
     /// Gives the focus to a window (or to none) and brings it to the top.
     pub fn focus_window(&mut self, window: Option<Window>) {
+        // Locked: nothing takes the focus from the lock surface; the window is remembered.
+        if self.locked {
+            if window.is_some() {
+                self.locked_focus = window;
+            }
+            return;
+        }
         // Activation leaving the window (or app) an open menu belongs to closes the menu.
         if !self.transients.is_empty() && self.focused_window() != window {
             self.dismiss_transients();

@@ -164,10 +164,10 @@ handled yet.
 
 - `Unlock(s password) → b`: checks the password of the user the daemon runs as with
   `unix_chkpwd` (PAM's helper, `/usr/sbin/unix_chkpwd`; `SILICA_UNIX_CHKPWD` replaces the path)
-  and, if it is right, runs Ossido's `session.unlock`. `true` when unlocked; `false` for a wrong
-  password, after 1.5 s (the next try waits). `Failed` when the password cannot be checked or
-  Ossido does not answer: the session stays locked. The lock screen (a shell component) is the
-  only caller; the password never goes to the compositor. Only local accounts (`pam_unix`).
+  and answers `true` if it is right, `false` after 1.5 s if it is not (the next try waits).
+  `Failed` when the password cannot be checked: the session stays locked. It unlocks nothing:
+  the lock screen holds the session lock (`ext_session_lock_v1`, `docs/control.md`) and calls
+  `unlock_and_destroy` itself after a `true`. Only local accounts (`pam_unix`).
 
 ### System look
 

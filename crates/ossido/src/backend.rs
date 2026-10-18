@@ -202,11 +202,17 @@ impl State {
         let dark = self.dark();
         let drag_icon = self.drag_icon_view();
         let window_veil = self.window_veil_view();
+        let lock_surfaces = self.lock_wl_surfaces();
+        let clear = if lock_surfaces.is_some() {
+            [0.0, 0.0, 0.0, 1.0]
+        } else {
+            self.clear_color
+        };
         if let Some(renderer) = self.backend.gles() {
             let context = RenderContext {
                 buttons,
                 alt,
-                clear_color: self.clear_color,
+                clear_color: clear,
                 animation_speed: self.animation_speed,
                 closing: &self.closing,
                 genies: &self.genies,
@@ -219,14 +225,10 @@ impl State {
                 dark,
                 drag_icon,
                 window_veil,
+                lock_surfaces,
             };
             let elements = output_elements(renderer, &self.space, &self.output, &context);
-            return capture_elements::<_, GlesTexture, _>(
-                renderer,
-                &self.output,
-                &elements,
-                self.clear_color,
-            );
+            return capture_elements::<_, GlesTexture, _>(renderer, &self.output, &elements, clear);
         }
         match &mut self.backend {
             Backend::Headless(Headless::Pixman(renderer)) => {
@@ -257,6 +259,7 @@ impl State {
         let dark = self.dark();
         let drag_icon = self.drag_icon_view();
         let window_veil = self.window_veil_view();
+        let lock_surfaces = self.lock_wl_surfaces();
         let cursor = self.effective_cursor();
         let Backend::Winit(backend) = &mut self.backend else {
             return;
@@ -281,7 +284,11 @@ impl State {
         }
         let size = backend.graphics.window_size();
         let damage = Rectangle::from_size(size);
-        let clear_color = self.clear_color;
+        let clear_color = if lock_surfaces.is_some() {
+            [0.0, 0.0, 0.0, 1.0]
+        } else {
+            self.clear_color
+        };
         let context = RenderContext {
             buttons: buttons.clone(),
             alt,
@@ -298,6 +305,7 @@ impl State {
             dark,
             drag_icon,
             window_veil,
+            lock_surfaces,
         };
         let elements = output_elements(
             backend.graphics.renderer(),

@@ -327,6 +327,9 @@ impl State {
     }
 
     pub fn focus_layer(&mut self, layer: &LayerSurface) {
+        if self.locked {
+            return;
+        }
         let surface = layer.wl_surface().clone();
         if let Some(keyboard) = self.seat.get_keyboard() {
             keyboard.set_focus(self, Some(surface), SERIAL_COUNTER.next_serial());

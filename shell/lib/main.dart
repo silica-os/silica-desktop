@@ -104,8 +104,10 @@ class ShellComponent extends StatelessWidget {
         system: DBusSystem(),
       ),
       'controlcenter' => ControlCenter(system: DBusSystem()),
-      // The lock screen and the screen saver: nothing until Ossido locks or the idle time is up.
-      'lock' => LockLayer(source: DBusLock()),
+      // The screen saver (and what asks for the session lock) in an ordinary overlay layer; the
+      // lock screen itself is the view of the lock surface the embedder adds while locked.
+      'screensaver' => const ScreenSaverLayer(),
+      'lock' => LockScreen(source: DBusLock(), showUser: readShowUser()),
       // The app switcher never takes input: the same layer hosts the screenshots.
       'switcher' => _followsEntries(
         () => Stack(

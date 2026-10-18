@@ -27,7 +27,7 @@ class FakeLock implements LockSource {
 
 final DateTime fixedNow = DateTime(2026, 10, 18, 9, 5);
 
-Future<void> pump(WidgetTester tester, FakeLock source) async {
+Future<void> pumpApp(WidgetTester tester, Widget child) async {
   tester.view.physicalSize = const Size(1280, 800);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -39,12 +39,27 @@ Future<void> pump(WidgetTester tester, FakeLock source) async {
   await tester.pumpWidget(
     Directionality(
       textDirection: TextDirection.ltr,
-      child: ShellLocalizations(
-        child: compositorScope(LockLayer(source: source, now: () => fixedNow)),
-      ),
+      child: ShellLocalizations(child: compositorScope(child)),
     ),
   );
 }
+
+/// The lock screen, as the view of a lock surface.
+Future<void> pump(
+  WidgetTester tester,
+  FakeLock source, {
+  bool showUser = true,
+}) => pumpApp(
+  tester,
+  LockScreen(source: source, showUser: showUser, now: () => fixedNow),
+);
+
+/// The screen saver layer, with a fake for the lock request.
+Future<void> pumpSaver(WidgetTester tester, {Future<bool> Function()? take}) =>
+    pumpApp(
+      tester,
+      ScreenSaverLayer(now: () => fixedNow, take: take ?? () async => true),
+    );
 
 void announce(Map<String, String> states) {
   ShellChannel.instance.states.value = states;
@@ -83,17 +98,22 @@ void main() {
     expect(readShowUser(env: env), isTrue);
   });
 
-  testWidgets('nothing is drawn until the session is locked', (tester) async {
+  testWidgets('the lock screen shows the time, the date and the user', (
+    tester,
+  ) async {
     await pump(tester, FakeLock());
-    expect(find.byKey(const ValueKey('lock screen')), findsNothing);
-    announce({'session.locked': '1'});
-    await tester.pump();
-    expect(find.byKey(const ValueKey('lock screen')), findsOneWidget);
     expect(find.text('09:05'), findsOneWidget);
     expect(find.text('Anna Rossi'), findsOneWidget);
-    announce({'session.locked': '0'});
-    await tester.pump();
-    expect(find.byKey(const ValueKey('lock screen')), findsNothing);
+    expect(find.byKey(const ValueKey('lock date')), findsOneWidget);
+  });
+
+  testWidgets('without showUser the name and the initial are not shown', (
+    tester,
+  ) async {
+    await pump(tester, FakeLock(), showUser: false);
+    expect(find.text('Anna Rossi'), findsNothing);
+    expect(find.text('A'), findsNothing);
+    expect(find.byKey(const ValueKey('lock password')), findsOneWidget);
   });
 
   testWidgets('a wrong password shakes and says so; the right one is sent', (
@@ -101,8 +121,6 @@ void main() {
   ) async {
     final source = FakeLock();
     await pump(tester, source);
-    announce({'session.locked': '1'});
-    await tester.pump();
     await tester.pump();
     await tester.enterText(find.byKey(const ValueKey('lock password')), 'nope');
     await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -126,10 +144,6 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
     expect(source.tries, ['nope', 'secret']);
-    // The compositor unlocks and announces it: the screen goes.
-    announce({'session.locked': '0'});
-    await tester.pump();
-    expect(find.byKey(const ValueKey('lock screen')), findsNothing);
   });
 
   testWidgets('a password that cannot be checked is told apart', (
@@ -137,8 +151,6 @@ void main() {
   ) async {
     final source = FakeLock()..throws = true;
     await pump(tester, source);
-    announce({'session.locked': '1'});
-    await tester.pump();
     await tester.pump();
     await tester.enterText(find.byKey(const ValueKey('lock password')), 'x');
     await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -149,7 +161,7 @@ void main() {
   testWidgets('the screen saver of the state is drawn and ends with it', (
     tester,
   ) async {
-    await pump(tester, FakeLock());
+    await pumpSaver(tester);
     for (final id in screenSaverIds) {
       announce({'screensaver.active': id});
       await tester.pump();
@@ -168,10 +180,72 @@ void main() {
   });
 
   testWidgets('the clock saver shows the time', (tester) async {
-    await pump(tester, FakeLock());
+    await pumpSaver(tester);
     announce({'screensaver.active': 'clock'});
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('09:05'), findsOneWidget);
+  });
+
+  testWidgets('the session lock is asked for while Ossido says locked', (
+    tester,
+  ) async {
+    var asked = 0;
+    await pumpSaver(
+      tester,
+      take: () async {
+        asked++;
+        return true;
+      },
+    );
+    expect(asked, 0);
+    announce({'session.locked': '1'});
+    await tester.pump();
+    expect(asked, 1);
+    // Again every few seconds (the request is idempotent), until it is unlocked.
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump(const Duration(seconds: 3));
+    expect(asked, 3);
+    announce({'session.locked': '0'});
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 10));
+    expect(asked, 3);
+  });
+
+  testWidgets('a shell that starts with the session locked asks at once', (
+    tester,
+  ) async {
+    var asked = 0;
+    ShellChannel.instance.states.value = const {'session.locked': '1'};
+    await pumpSaver(
+      tester,
+      take: () async {
+        asked++;
+        return true;
+      },
+    );
+    expect(asked, 1);
+  });
+
+  testWidgets('the right password releases the lock through the embedder', (
+    tester,
+  ) async {
+    final calls = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      LockControl.channel,
+      (call) async {
+        calls.add(call.method);
+        return true;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        LockControl.channel,
+        null,
+      ),
+    );
+    expect(await LockControl.take(), isTrue);
+    expect(await LockControl.release(), isTrue);
+    expect(calls, ['lock', 'unlock']);
   });
 }

@@ -42,6 +42,10 @@ impl State {
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
+        if self.locked {
+            self.locked_pointer_motion(location, time);
+            return;
+        }
         if self.resizing.is_some() {
             self.resize_to(location);
         }
@@ -172,8 +176,18 @@ impl State {
         };
         let serial = SERIAL_COUNTER.next_serial();
         let location = pointer.current_location();
-        // Locked: only the lock screen is clicked.
-        if self.locked_blocks(location) {
+        // Locked: the lock surface alone gets the button.
+        if self.locked {
+            pointer.button(
+                self,
+                &ButtonEvent {
+                    button,
+                    state,
+                    serial,
+                    time,
+                },
+            );
+            pointer.frame(self);
             return;
         }
         // Panorama takes the clicks, except those on the Dock and on the panels.
@@ -349,7 +363,9 @@ impl State {
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
-        if self.locked_blocks(pointer.current_location()) {
+        if self.locked {
+            pointer.axis(self, frame);
+            pointer.frame(self);
             return;
         }
         if self.scroll_on_transients(pointer.current_location()) {
@@ -366,6 +382,10 @@ impl State {
         let Some(keyboard) = self.seat.get_keyboard() else {
             return;
         };
+        // Locked: the keys go to the lock surface and to nobody else, whatever had the focus.
+        if self.locked {
+            self.lock_focus();
+        }
         let pressed = state == KeyState::Pressed;
         // Settings recording a new shortcut gets the keys, whatever they are bound to.
         let locked = self.locked;

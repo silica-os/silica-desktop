@@ -863,27 +863,20 @@ impl System {
         .map_err(failed)
     }
 
-    /// Unlocks the session: checks `password` for the user the daemon runs as and, if it is
-    /// right, tells Ossido to unlock (`session.unlock`). Returns whether it was right; a wrong
-    /// one makes the answer wait a moment. `Failed` when the password cannot be checked at all
-    /// or Ossido does not answer: the session stays locked.
+    /// Checks `password` for the user the daemon runs as (the lock screen asks): true when it is
+    /// right, false after a short wait when it is not. It unlocks nothing itself: the lock
+    /// screen, which holds the session lock, unlocks (ext-session-lock) after a true answer.
+    /// `Failed` when the password cannot be checked at all: the session stays locked.
     async fn unlock(&self, password: &str) -> zbus::fdo::Result<bool> {
         let user = unlock::user_name().ok_or_else(|| failed("no user name"))?;
-        if !unlock::check_password(&user, password)
+        if unlock::check_password(&user, password)
             .await
             .map_err(failed)?
         {
-            async_io::Timer::after(unlock::WRONG_PASSWORD_DELAY).await;
-            return Ok(false);
+            return Ok(true);
         }
-        display::ossido(
-            &self.shared,
-            silica_control::commands::SESSION_UNLOCK,
-            serde_json::json!({}),
-        )
-        .await
-        .map_err(failed)?;
-        Ok(true)
+        async_io::Timer::after(unlock::WRONG_PASSWORD_DELAY).await;
+        Ok(false)
     }
 
     /// Ossido's report (a JSON object of the keys in `REPORTED_KEYS`): they join the state.

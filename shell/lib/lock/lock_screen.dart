@@ -1,12 +1,17 @@
-// The lock screen and the screen saver, one shell component (the `lock` layer, an overlay).
+// The lock screen and the screen saver.
 //
-// Ossido announces the states: `session.locked` (`1` while the session is locked: windows get
-// no input) and `screensaver.active` (the id of the saver, empty when none). Locked, the layer
-// takes the pointer and the keyboard and shows the wallpaper under a veil, the time and date,
-// and the user with a password field; the password goes to silica-daemon
-// (`System1.Unlock`), which checks it and tells Ossido to unlock. A wrong password shakes the
-// field and clears it. The screen saver draws over the desktop and ends with any input. The
-// design is ours: the reference did not show its lock screen (settings docs/spec/lock-screen.md).
+// The lock screen is the shell's client of ext-session-lock-v1: Ossido announces `session.locked`
+// (`1`) and [LockController] (in the `screensaver` layer) asks the embedder for the session lock
+// (`silica/lock`, `lock`); once Ossido grants it, the embedder gives the `lock` view a lock
+// surface and [LockScreen] draws in it: the wallpaper under a veil, the time and date, and the
+// user with a password field. The password goes to silica-daemon (`System1.Unlock`, which only
+// checks it); on a right one the embedder unlocks (`silica/lock`, `unlock`). While locked,
+// Ossido draws and feeds nothing else; if this process dies the session stays locked and the
+// shell, started again, takes the lock over. A wrong password shakes the field and clears it.
+//
+// The screen saver (`screensaver.active`: the id of the saver, empty when none) draws in an
+// ordinary overlay layer over the desktop and ends with any input. The design is ours: the
+// reference did not show its lock screen (settings docs/spec/lock-screen.md).
 
 import 'dart:async';
 import 'dart:convert';
@@ -57,8 +62,33 @@ class DBusLock implements LockSource {
       signature: 's',
       args: [password],
     );
-    return reply.firstOrNull == true;
+    // Right: the lock is let go here, in the process that holds it.
+    return reply.firstOrNull == true && await LockControl.release();
   }
+}
+
+/// The embedder's session lock (`silica/lock`): this process holds it for the compositor.
+abstract final class LockControl {
+  static const MethodChannel channel = MethodChannel(
+    'silica/lock',
+    JSONMethodCodec(),
+  );
+
+  static Future<bool> _call(String method) async {
+    try {
+      return await channel.invokeMethod<bool>(method) ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// Takes the session lock Ossido has asked for (true: held or asked for).
+  static Future<bool> take() => _call('lock');
+
+  /// Ends the lock; only after the password was right.
+  static Future<bool> release() => _call('unlock');
 }
 
 /// The logged-in user from the environment and `/etc/passwd`.
@@ -104,24 +134,74 @@ bool readShowUser({Map<String, String>? env}) {
   }
 }
 
-/// The component: nothing until the session is locked or the screen saver starts.
-class LockLayer extends StatefulWidget {
-  const LockLayer({super.key, required this.source, this.now});
+/// Takes the session lock whenever Ossido says the session is locked: at once, again every few
+/// seconds while it is (the lock is idempotent), and at the start of a shell that finds the
+/// session locked (a locker that died).
+class LockController extends StatefulWidget {
+  const LockController({
+    super.key,
+    this.take = LockControl.take,
+    this.every = const Duration(seconds: 3),
+    required this.child,
+  });
 
-  final LockSource source;
+  final Future<bool> Function() take;
+  final Duration every;
+  final Widget child;
+
+  @override
+  State<LockController> createState() => _LockControllerState();
+}
+
+class _LockControllerState extends State<LockController> {
+  Timer? _retry;
+
+  @override
+  void initState() {
+    super.initState();
+    ShellChannel.instance.states.addListener(_changed);
+    _changed();
+  }
+
+  @override
+  void dispose() {
+    ShellChannel.instance.states.removeListener(_changed);
+    _retry?.cancel();
+    super.dispose();
+  }
+
+  void _changed() {
+    final locked = ShellChannel.instance.states.value['session.locked'] == '1';
+    if (!locked) {
+      _retry?.cancel();
+      _retry = null;
+      return;
+    }
+    if (_retry != null) return;
+    unawaited(widget.take());
+    _retry = Timer.periodic(widget.every, (_) => unawaited(widget.take()));
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
+/// The screen saver layer: nothing until Ossido says a saver is active (and the lock
+/// controller that rides on this layer).
+class ScreenSaverLayer extends StatefulWidget {
+  const ScreenSaverLayer({super.key, this.now, this.take = LockControl.take});
 
   /// The clock; the system's by default (tests).
   final DateTime Function()? now;
+  final Future<bool> Function() take;
 
   @override
-  State<LockLayer> createState() => _LockLayerState();
+  State<ScreenSaverLayer> createState() => _ScreenSaverLayerState();
 }
 
-class _LockLayerState extends State<LockLayer> {
+class _ScreenSaverLayerState extends State<ScreenSaverLayer> {
   late final LayerArbiter _arbiter;
-  bool _locked = false;
   String _saver = '';
-  bool _showUser = true;
 
   @override
   void initState() {
@@ -139,41 +219,26 @@ class _LockLayerState extends State<LockLayer> {
   }
 
   void _changed() {
-    final states = ShellChannel.instance.states.value;
-    final locked = states['session.locked'] == '1';
-    final saver = states['screensaver.active'] ?? '';
-    if (locked == _locked && saver == _saver) return;
-    if (locked && !_locked) _showUser = readShowUser();
-    setState(() {
-      _locked = locked;
-      _saver = saver;
-    });
-    // Locked: the whole surface and the keyboard. The saver only looks: the first input ends it
-    // (Ossido) and reaches whatever is below.
+    final saver =
+        ShellChannel.instance.states.value['screensaver.active'] ?? '';
+    if (saver == _saver) return;
+    setState(() => _saver = saver);
+    // The saver only looks: the first input ends it (Ossido) and reaches whatever is below.
     _arbiter.set(
       this,
-      _locked
-          ? const LayerWish.all()
-          : _saver.isNotEmpty
-          ? const LayerWish.rects([])
-          : const LayerWish.none(),
+      _saver.isEmpty ? const LayerWish.none() : const LayerWish.rects([]),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_locked) {
-      return LockScreen(
-        key: const ValueKey('lock screen'),
-        source: widget.source,
-        showUser: _showUser,
-        now: widget.now,
-      );
-    }
     final saver = screenSaver(_saver, now: widget.now);
-    return saver == null
-        ? const SizedBox.shrink()
-        : KeyedSubtree(key: ValueKey('saver $_saver'), child: saver);
+    return LockController(
+      take: widget.take,
+      child: saver == null
+          ? const SizedBox.shrink()
+          : KeyedSubtree(key: ValueKey('saver $_saver'), child: saver),
+    );
   }
 }
 

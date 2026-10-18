@@ -40,6 +40,10 @@ use smithay_client_toolkit::seat::pointer::{
     PointerEvent as SeatPointerEvent, PointerEventKind, PointerHandler,
 };
 use smithay_client_toolkit::seat::{Capability, SeatHandler, SeatState};
+use smithay_client_toolkit::session_lock::{
+    SessionLock, SessionLockHandler, SessionLockState, SessionLockSurface,
+    SessionLockSurfaceConfigure,
+};
 use smithay_client_toolkit::shell::WaylandSurface;
 use smithay_client_toolkit::shell::wlr_layer::{
     Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
@@ -54,8 +58,8 @@ use smithay_client_toolkit::shm::slot::{Buffer, SlotPool};
 use smithay_client_toolkit::shm::{Shm, ShmHandler};
 use smithay_client_toolkit::{
     delegate_compositor, delegate_data_device, delegate_keyboard, delegate_layer, delegate_output,
-    delegate_pointer, delegate_registry, delegate_seat, delegate_shm, delegate_xdg_popup,
-    delegate_xdg_shell, delegate_xdg_window, registry_handlers,
+    delegate_pointer, delegate_registry, delegate_seat, delegate_session_lock, delegate_shm,
+    delegate_xdg_popup, delegate_xdg_shell, delegate_xdg_window, registry_handlers,
 };
 use tracing::{debug, info, warn};
 use wayland_client::globals::registry_queue_init;
@@ -92,6 +96,8 @@ enum Shell {
     Window(Window),
     Layer(LayerSurface),
     Popup(Popup),
+    /// The lock screen's surface (ext-session-lock-v1).
+    Lock(SessionLockSurface),
 }
 
 impl Shell {
@@ -100,6 +106,7 @@ impl Shell {
             Shell::Window(window) => window.wl_surface(),
             Shell::Layer(layer) => layer.wl_surface(),
             Shell::Popup(popup) => popup.wl_surface(),
+            Shell::Lock(lock) => lock.wl_surface(),
         }
     }
 
@@ -108,6 +115,7 @@ impl Shell {
             Shell::Window(window) => window.commit(),
             Shell::Layer(layer) => layer.commit(),
             Shell::Popup(popup) => popup.wl_surface().commit(),
+            Shell::Lock(lock) => lock.wl_surface().commit(),
         }
     }
 
@@ -156,6 +164,8 @@ fn lifecycle_message(active: bool) -> &'static str {
 
 /// The channel for the input region and keyboard of a layer (shell components).
 const LAYER_CHANNEL: &str = "silica/layer";
+/// The lock screen: `lock` takes the session lock, `unlock` ends it (JSON method channel).
+const LOCK_CHANNEL: &str = "silica/lock";
 
 /// The window appearance channel (`silica-window-v1`): full-size content with the app's
 /// toolbar, and moving the window by dragging its bar.
@@ -384,6 +394,9 @@ struct App {
     xdg_shell: Option<XdgShell>,
     /// For the shell layers drawn as more views of this engine (`--view`, #201).
     layer_shell: Option<LayerShell>,
+    /// ext-session-lock-v1, for the lock screen view, and the lock held now.
+    session_lock_state: SessionLockState,
+    session_lock: Option<SessionLock>,
     view_events: Option<channel::Sender<ViewEvent>>,
     /// The view under the pointer and the one with the keyboard.
     pointer_view: i64,
@@ -886,6 +899,8 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         next_view: MAIN_VIEW + 1,
         xdg_shell,
         layer_shell,
+        session_lock_state: SessionLockState::new(&globals, &qh),
+        session_lock: None,
         view_events: Some(view_sender),
         pointer_view: MAIN_VIEW,
         keyboard_view: None,
@@ -1063,6 +1078,7 @@ impl App {
             shell::CHANNEL => self.shell.handle_call(&message.data, &self.qh),
             crate::menu::CHANNEL => self.menu.handle_call(&message.data, &self.qh),
             LAYER_CHANNEL => self.handle_layer_call(&message.data),
+            LOCK_CHANNEL => self.handle_lock_call(&message.data),
             WINDOW_CHANNEL => self.handle_window_call(&message.data),
             crate::drag::CHANNEL => self.handle_drag_call(&message.data),
             crate::app_lifecycle::CHANNEL => self.handle_app_call(&message.data),
@@ -1561,6 +1577,59 @@ impl App {
                 Some(serde_json::json!({ "viewId": id, "namespace": namespace }))
             })
             .collect()
+    }
+
+    /// The lock screen's views go and the lock is let go (the session is unlocked, or the
+    /// compositor refused it).
+    fn release_lock(&mut self) {
+        let ids: Vec<i64> = self
+            .views
+            .iter()
+            .filter(|(_, view)| matches!(view.surface, Shell::Lock(_)))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            self.remove_view(id);
+        }
+        self.session_lock = None;
+    }
+
+    /// A call on `silica/lock` from the shell's lock component:
+    /// - `lock`: takes the session lock (true if it holds it, or asked for it);
+    /// - `unlock`: ends it with `unlock_and_destroy`, after the password was right.
+    fn handle_lock_call(&mut self, data: &[u8]) -> Vec<u8> {
+        let Ok(call) = serde_json::from_slice::<serde_json::Value>(data) else {
+            return Vec::new();
+        };
+        let done = match call.get("method").and_then(serde_json::Value::as_str) {
+            Some("lock") => {
+                if self.session_lock.is_some() {
+                    true
+                } else {
+                    match self.session_lock_state.lock(&self.qh) {
+                        Ok(lock) => {
+                            // Held from now; the surfaces come with `locked`.
+                            self.session_lock = Some(lock);
+                            true
+                        }
+                        Err(err) => {
+                            warn!("session lock: {err}");
+                            false
+                        }
+                    }
+                }
+            }
+            Some("unlock") => match self.session_lock.take() {
+                Some(lock) => {
+                    lock.unlock();
+                    self.release_lock();
+                    true
+                }
+                None => false,
+            },
+            _ => false,
+        };
+        text_input::success(serde_json::json!(done))
     }
 
     /// One more shell layer drawn by this engine (`--view`, #201): its own layer surface,
@@ -2679,7 +2748,7 @@ impl App {
                         layer.set_keyboard_interactivity(mode);
                         true
                     }
-                    Shell::Window(_) | Shell::Popup(_) => false,
+                    Shell::Window(_) | Shell::Popup(_) | Shell::Lock(_) => false,
                 }
             }
             Some("outputSize") => {
@@ -3272,6 +3341,76 @@ impl App {
             self.answer_vsync(baton);
         }
         self.present(id, qh);
+    }
+}
+
+impl SessionLockHandler for App {
+    /// Ossido locked the session: one lock surface for the output, drawn by a view of the
+    /// engine (the shell's `lock` component).
+    fn locked(&mut self, _: &Connection, qh: &QueueHandle<Self>, session_lock: SessionLock) {
+        let Some(output) = self.output_state.outputs().next() else {
+            warn!("session lock: no output");
+            return;
+        };
+        let size = self
+            .output_state
+            .info(&output)
+            .and_then(|info| info.logical_size)
+            .map_or((1280, 800), |(w, h)| {
+                (
+                    u32::try_from(w).unwrap_or(1280),
+                    u32::try_from(h).unwrap_or(800),
+                )
+            });
+        let Some(engine) = &self.engine else {
+            return;
+        };
+        let id = self.next_view;
+        self.next_view = self.next_view.saturating_add(1);
+        let surface = self.compositor.create_surface(qh);
+        let lock_surface = session_lock.create_lock_surface(surface, &output, qh);
+        let scale = self.views.get(&MAIN_VIEW).map_or(1, |view| view.scale);
+        let mut view = View::new(Shell::Lock(lock_surface), size, scale, false);
+        view.namespace = Some("lock".to_owned());
+        if let Some(gl) = engine.gl()
+            && let Err(err) = gl.add_view(id, view.surface.wl_surface(), view.physical())
+        {
+            warn!("lock view: {err}");
+            return;
+        }
+        if let Some(vulkan) = engine.vulkan()
+            && let Err(err) = vulkan.add_view(id, view.surface.wl_surface())
+        {
+            warn!("lock view: {err}");
+            return;
+        }
+        self.glass.insert(
+            id,
+            self.glass_manager.clone(),
+            &self.conn,
+            view.surface.wl_surface(),
+        );
+        info!("lock view {id} opened");
+        self.views.insert(id, view);
+        self.session_lock = Some(session_lock);
+    }
+
+    /// The compositor refused the lock (someone holds it) or ended it.
+    fn finished(&mut self, _: &Connection, _: &QueueHandle<Self>, _: SessionLock) {
+        self.release_lock();
+    }
+
+    fn configure(
+        &mut self,
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+        surface: SessionLockSurface,
+        configure: SessionLockSurfaceConfigure,
+        _: u32,
+    ) {
+        if let Some(id) = self.view_of(surface.wl_surface()) {
+            self.configured(id, qh, configure.new_size);
+        }
     }
 }
 
@@ -3887,6 +4026,7 @@ delegate_xdg_shell!(App);
 delegate_xdg_window!(App);
 delegate_xdg_popup!(App);
 delegate_layer!(App);
+delegate_session_lock!(App);
 delegate_registry!(App);
 delegate_data_device!(App);
 wayland_client::delegate_noop!(App: ignore SilicaGlassManagerV1);

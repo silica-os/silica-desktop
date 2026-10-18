@@ -161,6 +161,8 @@ pub struct RenderContext<'a> {
     pub drag_icon: Option<(WlSurface, Point<f64, Logical>)>,
     /// The window screenshot veil: the frame of the window under the pointer (K-05).
     pub window_veil: Option<Rectangle<i32, Logical>>,
+    /// The session is locked: only these lock surfaces are drawn (none: the plain screen).
+    pub lock_surfaces: Option<Vec<WlSurface>>,
 }
 
 /// The veil over the window to capture (K-05): `#88bae7` at alpha ~0.51, premultiplied.
@@ -1003,6 +1005,23 @@ pub fn output_elements(
         .output_geometry(output)
         .map(|geo| geo.loc)
         .unwrap_or_default();
+    // Locked: the lock surfaces alone, no window, layer, glass or drag icon.
+    if let Some(surfaces) = &context.lock_surfaces {
+        return surfaces
+            .iter()
+            .flat_map(|surface| {
+                render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<_>>(
+                    renderer,
+                    surface,
+                    (0, 0),
+                    scale,
+                    1.0,
+                    Kind::Unspecified,
+                )
+            })
+            .map(OutputElement::Surface)
+            .collect();
+    }
     let mut elements = Vec::new();
     let mut anchors: Vec<GlassAnchor> = Vec::new();
 

@@ -1,7 +1,8 @@
-//! Unlocking the session: the lock screen sends the password to `System1.Unlock`, the daemon
+//! Checking the lock screen's password: the lock screen sends it to `System1.Unlock`, the daemon
 //! checks it for the user it runs as with PAM's own helper, `unix_chkpwd` (what screen lockers
-//! use for the password of the logged-in user), and on success asks Ossido to unlock
-//! (`session.unlock`). The password never reaches the compositor.
+//! use for the password of the logged-in user) and answers. The lock screen, which holds the
+//! session lock (ext-session-lock-v1), unlocks itself on a true answer. The password never
+//! reaches the compositor.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

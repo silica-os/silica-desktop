@@ -83,7 +83,7 @@ impl State {
             "displayOffMinutes": self.power_config.display_off_minutes,
             "sleepMinutes": self.power_config.sleep_minutes,
             "preventSleep": self.power_config.prevent_sleep,
-            "lock": self.lock_state(),
+            "lock": self.lock_info(),
         })
     }
 }

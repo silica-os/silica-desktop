@@ -154,6 +154,9 @@ pub struct State {
     /// counts from there).
     pub locked: bool,
     pub locked_focus: Option<smithay::desktop::Window>,
+    /// ext-session-lock: the manager's state and the client that holds the lock.
+    pub session_lock_state: smithay::wayland::session_lock::SessionLockManagerState,
+    pub lock_client: crate::lock::LockClient,
     pub lock_config: crate::config::LockConfig,
     pub saver_config: crate::config::SaverConfig,
     pub saver_active: bool,
@@ -344,6 +347,11 @@ impl State {
         let app_menus = crate::app_menu::AppMenus::new(&dh);
         let foreign_toplevel_list = crate::shell::toplevel_list(&dh);
         let shell_manager_state = crate::shell::ShellManagerState::new(&dh);
+        // Only the shell's locker may lock the session.
+        let session_lock_state = smithay::wayland::session_lock::SessionLockManagerState::new::<
+            State,
+            _,
+        >(&dh, crate::shell::is_shell_client);
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(&dh, "seat0");
         let (delay, rate) = key_repeat();
@@ -457,6 +465,8 @@ impl State {
             idle_slept: false,
             locked: false,
             locked_focus: None,
+            session_lock_state,
+            lock_client: crate::lock::LockClient::default(),
             lock_config: crate::config::LockConfig::default(),
             saver_config: crate::config::SaverConfig::default(),
             saver_active: false,
