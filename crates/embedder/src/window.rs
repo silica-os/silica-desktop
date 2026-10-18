@@ -2113,8 +2113,14 @@ impl App {
     fn hide_main(&mut self, last: bool) {
         // The menus and popovers of the window go with it: hidden, they would come back with
         // the window when it is shown again (silica-os/mustache#25).
-        for child in self.popups_of(MAIN_VIEW) {
-            self.remove_view(child);
+        let popups = self.popups_of(MAIN_VIEW);
+        for child in &popups {
+            self.remove_view(*child);
+        }
+        if !popups.is_empty() {
+            // The engine removes their views on its next frames, which a hidden window would
+            // not draw.
+            self.free_run(TEARDOWN);
         }
         let Some(View {
             surface: Shell::Window(window),
