@@ -30,12 +30,16 @@ use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+use alacritty_terminal::selection::SelectionType;
+use alacritty_terminal::vte::ansi::CursorShape;
 use rustix::fs::{Mode, OFlags};
 use rustix::io::Errno;
 use rustix::process::{Pid, Signal};
 use rustix::pty::OpenptFlags;
 use rustix::termios::Winsize;
 use serde_json::{Value, json};
+
+use crate::termgrid::{MAX_SCROLLBACK, Options, ScrollBy, Theme};
 
 pub const CHANNEL: &str = "silica/pty";
 
@@ -86,6 +90,8 @@ pub struct SpawnArgs {
     pub cols: u16,
     /// Emulate the terminal here and send rows (`grid`), not bytes (`output`).
     pub grid: bool,
+    /// For `grid` sessions: the scrollback size and what OSC 52 may do.
+    pub options: Options,
 }
 
 /// A call from the app.
@@ -113,6 +119,96 @@ pub enum Call {
     Busy {
         id: u32,
     },
+    /// The working directory of the shell (OSC 7, else the process's).
+    Cwd {
+        id: u32,
+    },
+    /// A call on the emulator of a `grid` session.
+    Grid {
+        id: u32,
+        op: GridOp,
+    },
+}
+
+/// How a mouse selection starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectOp {
+    Start {
+        view: u8,
+        kind: SelectionKind,
+        x: usize,
+        y: usize,
+        right: bool,
+    },
+    Update {
+        view: u8,
+        x: usize,
+        y: usize,
+        right: bool,
+    },
+    Clear,
+    All,
+    Marks,
+}
+
+/// The shapes of a selection: characters, words, lines, a rectangle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionKind {
+    Simple,
+    Semantic,
+    Lines,
+    Block,
+}
+
+impl SelectionKind {
+    fn alacritty(self) -> SelectionType {
+        match self {
+            Self::Simple => SelectionType::Simple,
+            Self::Semantic => SelectionType::Semantic,
+            Self::Lines => SelectionType::Lines,
+            Self::Block => SelectionType::Block,
+        }
+    }
+}
+
+/// What `clear` removes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClearOp {
+    Scrollback,
+    ToStart,
+    ToMark,
+    Screen,
+}
+
+/// A call on the emulator of a `grid` session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GridOp {
+    /// Moves view 0 (the screen) or view 1 (the other half of a split).
+    Scroll(ScrollBy, u8),
+    /// Opens, resizes (`rows`) or closes the second view of a split.
+    Split(Option<usize>),
+    Select(SelectOp),
+    /// → the selected text (null: none).
+    SelectionText,
+    /// → the text of the whole buffer.
+    Text,
+    /// → the matches (see `TermGrid::search`).
+    Search {
+        query: String,
+        case_sensitive: bool,
+    },
+    /// Mark the cursor row, or remove the nearest mark above it.
+    Mark {
+        add: bool,
+    },
+    Clear(ClearOp),
+    Reset {
+        hard: bool,
+    },
+    /// Changes the options in the call (scrollback size, OSC 52 permissions).
+    Configure(Value),
+    /// The answer to an OSC 52 read: the clipboard's text.
+    ClipboardReply(String),
 }
 
 fn field<'a>(args: &'a Value, key: &str) -> Option<&'a Value> {
@@ -142,6 +238,185 @@ fn bounded_string(value: &Value) -> Option<String> {
         .as_str()
         .filter(|s| !s.is_empty() && s.len() <= MAX_STRING && !s.contains('\0'))
         .map(str::to_owned)
+}
+
+/// The options of a `grid` session from `spawn` or `configure`: `scrollback` (lines),
+/// `clipboardWrite` and `clipboardRead` (OSC 52), `cursor` and `cursorBlink` (the default
+/// cursor).
+fn options_of(args: &Value, base: Options) -> Result<Options, String> {
+    let mut options = base;
+    if let Some(value) = field(args, "scrollback") {
+        let lines = value
+            .as_u64()
+            .and_then(|v| usize::try_from(v).ok())
+            .filter(|&v| v <= MAX_SCROLLBACK)
+            .ok_or("scrollback must be 0 to 1000000 lines")?;
+        options.scrollback = lines;
+    }
+    if let Some(value) = field(args, "theme") {
+        options.theme = theme_of(value, options.theme)?;
+    }
+    if let Some(value) = field(args, "cursor") {
+        options.cursor = match value.as_str() {
+            Some("block") => CursorShape::Block,
+            Some("underline") => CursorShape::Underline,
+            Some("beam") => CursorShape::Beam,
+            _ => return Err("cursor must be block, underline or beam".to_owned()),
+        };
+    }
+    for (key, slot) in [
+        ("cursorBlink", &mut options.cursor_blink),
+        ("clipboardWrite", &mut options.clipboard_write),
+        ("clipboardRead", &mut options.clipboard_read),
+    ] {
+        if let Some(value) = field(args, key) {
+            *slot = value
+                .as_bool()
+                .ok_or_else(|| format!("{key} must be a boolean"))?;
+        }
+    }
+    Ok(options)
+}
+
+/// The colours of the profile: `{foreground, background, cursor, ansi: [16 × 0xRRGGBB]}`.
+fn theme_of(value: &Value, base: Theme) -> Result<Theme, String> {
+    let colour = |key: &str, fallback: u32| -> Result<u32, String> {
+        match field(value, key) {
+            None => Ok(fallback),
+            Some(v) => v
+                .as_u64()
+                .and_then(|c| u32::try_from(c).ok())
+                .filter(|&c| c <= 0xff_ffff)
+                .ok_or_else(|| format!("theme {key} must be a colour 0xRRGGBB")),
+        }
+    };
+    let mut theme = Theme {
+        foreground: colour("foreground", base.foreground)?,
+        background: colour("background", base.background)?,
+        cursor: colour("cursor", base.cursor)?,
+        ansi: base.ansi,
+    };
+    if let Some(list) = field(value, "ansi") {
+        let list = list
+            .as_array()
+            .filter(|l| l.len() == 16)
+            .ok_or("theme ansi needs 16 colours")?;
+        for (slot, v) in theme.ansi.iter_mut().zip(list) {
+            *slot = v
+                .as_u64()
+                .and_then(|c| u32::try_from(c).ok())
+                .filter(|&c| c <= 0xff_ffff)
+                .ok_or("theme ansi colours must be 0xRRGGBB")?;
+        }
+    }
+    Ok(theme)
+}
+
+fn view_of(args: &Value) -> Result<u8, String> {
+    match field(args, "view").and_then(Value::as_u64) {
+        None | Some(0) => Ok(0),
+        Some(1) => Ok(1),
+        Some(_) => Err("view must be 0 or 1".to_owned()),
+    }
+}
+
+fn cell_of(args: &Value, key: &str) -> usize {
+    field(args, key)
+        .and_then(Value::as_u64)
+        .and_then(|v| usize::try_from(v).ok())
+        .unwrap_or(0)
+        .min(10_000)
+}
+
+/// The `grid` calls: `scroll`, `select`, `selectionText`, `text`, `search`, `mark`, `clear`,
+/// `reset`, `configure`, `clipboard`.
+fn grid_call(method: &str, args: &Value) -> Result<Option<GridOp>, String> {
+    let text = |key: &str| field(args, key).and_then(Value::as_str);
+    let flag = |key: &str| field(args, key).and_then(Value::as_bool).unwrap_or(false);
+    Ok(Some(match method {
+        "scroll" => {
+            let lines = |key: &str| {
+                field(args, key)
+                    .and_then(Value::as_i64)
+                    .map(|v| v.clamp(-1_000_000, 1_000_000) as i32)
+            };
+            GridOp::Scroll(
+                match (text("to"), lines("lines"), lines("page")) {
+                    (Some("top"), _, _) => ScrollBy::Top,
+                    (Some("bottom"), _, _) => ScrollBy::Bottom,
+                    (Some("previousPrompt"), _, _) => ScrollBy::Prompt(true),
+                    (Some("nextPrompt"), _, _) => ScrollBy::Prompt(false),
+                    (Some("row"), _, _) => ScrollBy::Reveal(cell_of(args, "row")),
+                    (Some(other), _, _) => return Err(format!("unknown scroll target {other:?}")),
+                    (None, Some(n), _) => ScrollBy::Lines(n),
+                    (None, None, Some(n)) => ScrollBy::Page(n > 0),
+                    _ => return Err("scroll needs lines, page or to".to_owned()),
+                },
+                view_of(args)?,
+            )
+        }
+        "select" => GridOp::Select(match text("op") {
+            Some("start") => SelectOp::Start {
+                view: view_of(args)?,
+                kind: match text("kind") {
+                    None | Some("simple") => SelectionKind::Simple,
+                    Some("semantic") => SelectionKind::Semantic,
+                    Some("lines") => SelectionKind::Lines,
+                    Some("block") => SelectionKind::Block,
+                    Some(other) => return Err(format!("unknown selection kind {other:?}")),
+                },
+                x: cell_of(args, "x"),
+                y: cell_of(args, "y"),
+                right: flag("right"),
+            },
+            Some("update") => SelectOp::Update {
+                view: view_of(args)?,
+                x: cell_of(args, "x"),
+                y: cell_of(args, "y"),
+                right: flag("right"),
+            },
+            Some("clear") => SelectOp::Clear,
+            Some("all") => SelectOp::All,
+            Some("marks") => SelectOp::Marks,
+            _ => return Err("select needs op: start, update, clear, all or marks".to_owned()),
+        }),
+        "split" => GridOp::Split(match text("op") {
+            Some("open" | "resize") => Some(cell_of(args, "rows").max(1)),
+            Some("close") => None,
+            _ => return Err("split needs op: open, resize or close".to_owned()),
+        }),
+        "selectionText" => GridOp::SelectionText,
+        "text" => GridOp::Text,
+        "search" => GridOp::Search {
+            query: text("query")
+                .filter(|q| q.len() <= MAX_STRING)
+                .ok_or("search needs a query")?
+                .to_owned(),
+            case_sensitive: flag("caseSensitive"),
+        },
+        "mark" => GridOp::Mark {
+            add: text("op") != Some("remove"),
+        },
+        "clear" => GridOp::Clear(match text("what") {
+            Some("scrollback") => ClearOp::Scrollback,
+            Some("toStart") => ClearOp::ToStart,
+            Some("toMark") => ClearOp::ToMark,
+            Some("screen") => ClearOp::Screen,
+            _ => return Err("clear needs what: scrollback, toStart, toMark or screen".to_owned()),
+        }),
+        "reset" => GridOp::Reset { hard: flag("hard") },
+        "configure" => {
+            options_of(args, Options::default())?;
+            GridOp::Configure(args.clone())
+        }
+        "clipboard" => GridOp::ClipboardReply(
+            text("text")
+                .filter(|t| t.len() <= MAX_WRITE_QUEUE)
+                .unwrap_or_default()
+                .to_owned(),
+        ),
+        _ => return Ok(None),
+    }))
 }
 
 /// Reads a call; errors name what is wrong, for the app's PlatformException.
@@ -207,6 +482,7 @@ pub fn parse_call(data: &[u8]) -> Result<Call, String> {
                 grid: field(&args, "grid")
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
+                options: options_of(&args, Options::default())?,
             }))
         }
         "write" => {
@@ -240,7 +516,14 @@ pub fn parse_call(data: &[u8]) -> Result<Call, String> {
         }
         "close" => Ok(Call::Close { id: id_of(&args)? }),
         "busy" => Ok(Call::Busy { id: id_of(&args)? }),
-        other => Err(format!("unknown method {other:?}")),
+        "cwd" => Ok(Call::Cwd { id: id_of(&args)? }),
+        other => match grid_call(other, &args)? {
+            Some(op) => Ok(Call::Grid {
+                id: id_of(&args)?,
+                op,
+            }),
+            None => Err(format!("unknown method {other:?}")),
+        },
     }
 }
 
@@ -301,6 +584,8 @@ pub enum Read {
 pub struct Pty {
     master: OwnedFd,
     child: Child,
+    /// The child has been waited for: its pid is no longer ours to signal.
+    reaped: bool,
 }
 
 impl Pty {
@@ -357,7 +642,11 @@ impl Pty {
         crate::ffi::pty::controlling_terminal(&mut command);
         let child = command.spawn()?;
         rustix::io::ioctl_fionbio(&master, true)?;
-        Ok(Self { master, child })
+        Ok(Self {
+            master,
+            child,
+            reaped: false,
+        })
     }
 
     pub fn master(&self) -> BorrowedFd<'_> {
@@ -403,9 +692,23 @@ impl Pty {
     }
 
     pub fn signal(&self, signal: Signal) {
+        // A reaped pid may belong to another process by now.
+        if self.reaped {
+            return;
+        }
         if let Err(err) = rustix::process::kill_process(Pid::from_child(&self.child), signal) {
             tracing::debug!("pty signal: {err}");
         }
+    }
+
+    /// The working directory of the child process, from /proc.
+    pub fn process_cwd(&self) -> Option<String> {
+        if self.reaped {
+            return None;
+        }
+        std::fs::read_link(format!("/proc/{}/cwd", self.child.id()))
+            .ok()
+            .and_then(|p| p.to_str().map(str::to_owned))
     }
 
     /// Whether a process other than the shell is in the foreground of the terminal: its
@@ -423,7 +726,9 @@ impl Pty {
 
     /// The exit status if the child has exited (it is then reaped).
     pub fn try_exit(&mut self) -> Option<ExitStatus> {
-        self.child.try_wait().ok().flatten()
+        let status = self.child.try_wait().ok().flatten();
+        self.reaped |= status.is_some();
+        status
     }
 }
 
@@ -449,6 +754,9 @@ struct Session {
     paused: bool,
     /// Closed by the app: not reported, killed if it ignores SIGHUP.
     closing: Option<Instant>,
+    /// The child has ended and the app was told. A grid session stays (its text can still be
+    /// scrolled, selected and copied) until the app closes it.
+    exited: bool,
     last_exit_poll: Instant,
     /// The emulator, for `grid` sessions.
     grid: Option<crate::termgrid::GridWorker>,
@@ -538,8 +846,12 @@ impl PtyHost {
                 let pty = Pty::spawn(&args).map_err(|e| format!("spawn: {e}"))?;
                 let grid = match args.grid {
                     true => Some(
-                        crate::termgrid::GridWorker::new(args.cols, args.rows)
-                            .map_err(|e| format!("terminal thread: {e}"))?,
+                        crate::termgrid::GridWorker::with_options(
+                            args.cols,
+                            args.rows,
+                            args.options,
+                        )
+                        .map_err(|e| format!("terminal thread: {e}"))?,
                     ),
                     false => None,
                 };
@@ -554,6 +866,7 @@ impl PtyHost {
                         eof: false,
                         paused: false,
                         closing: None,
+                        exited: false,
                         last_exit_poll: Instant::now(),
                         grid,
                         last_sent: None,
@@ -584,7 +897,11 @@ impl PtyHost {
                 let session = self.live(id)?;
                 session.pty.resize(rows, cols, pixel_width, pixel_height);
                 if let Some(grid) = &session.grid {
-                    grid.resize(cols, rows);
+                    grid.resize(
+                        cols,
+                        rows,
+                        (pixel_width / cols.max(1), pixel_height / rows.max(1)),
+                    );
                 }
                 Ok(done(Value::Null))
             }
@@ -593,6 +910,28 @@ impl PtyHost {
                 Ok(done(Value::Null))
             }
             Call::Busy { id } => Ok(done(Value::Bool(self.live(id)?.pty.busy()))),
+            Call::Cwd { id } => {
+                let session = self.live(id)?;
+                let reported = session
+                    .grid
+                    .as_ref()
+                    .and_then(|grid| grid.with(|g| g.cwd().map(str::to_owned)))
+                    .flatten();
+                let cwd = reported.or_else(|| session.pty.process_cwd());
+                Ok(done(cwd.map_or(Value::Null, Value::String)))
+            }
+            Call::Grid { id, op } => {
+                let session = self.live(id)?;
+                let Some(worker) = &session.grid else {
+                    return Err("not a grid terminal".to_owned());
+                };
+                let (value, write) = run_grid_op(worker, op);
+                if !write.is_empty() && session.writes.len() < MAX_WRITE_QUEUE {
+                    session.writes.extend(write);
+                    flush_writes(session);
+                }
+                Ok(done(value))
+            }
             Call::Close { id } => {
                 let session = self.live(id)?;
                 session.pty.signal(Signal::HUP);
@@ -682,14 +1021,16 @@ impl PtyHost {
             let send = session.may_send(now);
             if let Some(grid) = &session.grid {
                 if send {
-                    let (frame, replies) = grid.frame(id);
+                    let (frames, replies) = grid.frames(id);
                     if !replies.is_empty() && session.writes.len() < MAX_WRITE_QUEUE {
                         session.writes.extend(replies);
                         flush_writes(session);
                     }
-                    if let Some(frame) = frame {
-                        tick.messages.push(message("grid", frame));
+                    if !frames.is_empty() {
                         session.last_sent = Some(now);
+                    }
+                    for frame in frames {
+                        tick.messages.push(message("grid", frame));
                     }
                 }
             } else if send && !session.pending.is_empty() {
@@ -705,6 +1046,9 @@ impl PtyHost {
                 session.paused = false;
                 tick.resume.push(id);
             }
+            if session.exited {
+                continue;
+            }
             // Exit: at once after the end of the output, otherwise now and then (a
             // background job may keep the terminal open after the shell is gone).
             let poll =
@@ -718,7 +1062,12 @@ impl PtyHost {
                         continue;
                     }
                     tick.messages.push(message("exit", exit_args(id, status)));
-                    finished.push(id);
+                    if session.grid.is_some() {
+                        session.exited = true;
+                        tick.gone.push(id);
+                    } else {
+                        finished.push(id);
+                    }
                 }
             }
         }
@@ -726,9 +1075,104 @@ impl PtyHost {
             self.sessions.remove(&id);
             tick.gone.push(id);
         }
-        tick.idle = self.sessions.is_empty();
+        tick.idle = self.sessions.values().all(|s| s.exited);
         tick
     }
+}
+
+/// Runs a call on the emulator: its answer, and bytes for the program (an OSC 52 reply).
+fn run_grid_op(worker: &crate::termgrid::GridWorker, op: GridOp) -> (Value, Vec<u8>) {
+    let none = (Value::Null, Vec::new());
+    worker
+        .with(|grid| match op {
+            GridOp::Scroll(by, view) => {
+                grid.scroll_view(view, by);
+                none.clone()
+            }
+            GridOp::Split(rows) => {
+                match rows {
+                    Some(rows) => grid.split_open(rows),
+                    None => grid.split_close(),
+                }
+                none.clone()
+            }
+            GridOp::Select(select) => {
+                let found = match select {
+                    SelectOp::Start {
+                        view,
+                        kind,
+                        x,
+                        y,
+                        right,
+                    } => {
+                        grid.select_start(view, kind.alacritty(), x, y, right);
+                        true
+                    }
+                    SelectOp::Update { view, x, y, right } => {
+                        grid.select_update(view, x, y, right);
+                        true
+                    }
+                    SelectOp::Clear => {
+                        grid.select_clear();
+                        true
+                    }
+                    SelectOp::All => {
+                        grid.select_all();
+                        true
+                    }
+                    SelectOp::Marks => grid.select_between_marks(),
+                };
+                (Value::Bool(found), Vec::new())
+            }
+            GridOp::SelectionText => (
+                grid.selection_text().map_or(Value::Null, Value::String),
+                Vec::new(),
+            ),
+            GridOp::Text => (Value::String(grid.text()), Vec::new()),
+            GridOp::Search {
+                query,
+                case_sensitive,
+            } => (grid.search(&query, case_sensitive), Vec::new()),
+            GridOp::Mark { add } => {
+                let done = if add {
+                    grid.mark_cursor_row();
+                    true
+                } else {
+                    grid.unmark()
+                };
+                (Value::Bool(done), Vec::new())
+            }
+            GridOp::Clear(what) => {
+                let done = match what {
+                    ClearOp::Scrollback => {
+                        grid.clear_scrollback();
+                        true
+                    }
+                    ClearOp::ToStart => {
+                        grid.clear_to_start();
+                        true
+                    }
+                    ClearOp::ToMark => grid.clear_to_previous_mark(),
+                    ClearOp::Screen => {
+                        grid.clear_screen();
+                        true
+                    }
+                };
+                (Value::Bool(done), Vec::new())
+            }
+            GridOp::Reset { hard } => {
+                grid.reset(hard);
+                none.clone()
+            }
+            GridOp::Configure(args) => {
+                if let Ok(options) = options_of(&args, grid.options()) {
+                    grid.configure(options);
+                }
+                none.clone()
+            }
+            GridOp::ClipboardReply(text) => (Value::Null, grid.clipboard_reply(&text)),
+        })
+        .unwrap_or((Value::Null, Vec::new()))
 }
 
 fn flush_writes(session: &mut Session) {
@@ -788,6 +1232,7 @@ mod tests {
                 rows: 24,
                 cols: 80,
                 grid: false,
+                options: Options::default(),
             })
         );
         let Call::Spawn(args) = parse_call(&call(
@@ -945,11 +1390,231 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         let frame = seen.expect("a grid frame with the text");
-        assert_eq!(frame["lines"][0]["runs"][0], json!(["hi", -1, -1, 0]));
+        assert_eq!(frame["lines"][0]["runs"][0], json!(["hi", -1, -1, 0, 2]));
         assert_eq!(
             frame["lines"][0]["runs"][1],
-            json!(["red", 0xcd0000, -1, 0])
+            json!(["red", crate::termgrid::PALETTE + 1, -1, 0, 3])
         );
+    }
+
+    #[test]
+    fn grid_calls_are_parsed_and_bounded() {
+        let parse = |method: &str, args: Value| parse_call(&call(method, args));
+        assert_eq!(
+            parse("scroll", json!({"id": 1, "lines": 3})).unwrap(),
+            Call::Grid {
+                id: 1,
+                op: GridOp::Scroll(ScrollBy::Lines(3), 0)
+            }
+        );
+        assert_eq!(
+            parse("scroll", json!({"id": 1, "to": "previousPrompt"})).unwrap(),
+            Call::Grid {
+                id: 1,
+                op: GridOp::Scroll(ScrollBy::Prompt(true), 0)
+            }
+        );
+        assert_eq!(
+            parse("scroll", json!({"id": 1, "to": "row", "row": 12})).unwrap(),
+            Call::Grid {
+                id: 1,
+                op: GridOp::Scroll(ScrollBy::Reveal(12), 0)
+            }
+        );
+        assert!(parse("scroll", json!({"id": 1})).is_err());
+        assert_eq!(
+            parse("scroll", json!({"id": 1, "view": 1, "page": -1})).unwrap(),
+            Call::Grid {
+                id: 1,
+                op: GridOp::Scroll(ScrollBy::Page(false), 1)
+            }
+        );
+        assert!(parse("scroll", json!({"id": 1, "view": 2, "lines": 1})).is_err());
+        assert_eq!(
+            parse("split", json!({"id": 1, "op": "open", "rows": 12})).unwrap(),
+            Call::Grid {
+                id: 1,
+                op: GridOp::Split(Some(12))
+            }
+        );
+        assert_eq!(
+            parse("split", json!({"id": 1, "op": "close"})).unwrap(),
+            Call::Grid {
+                id: 1,
+                op: GridOp::Split(None)
+            }
+        );
+        assert!(parse("split", json!({"id": 1})).is_err());
+        assert!(parse("scroll", json!({"id": 1, "to": "sideways"})).is_err());
+        assert_eq!(
+            parse(
+                "select",
+                json!({"id": 2, "op": "start", "kind": "block", "x": 3, "y": 4, "right": true})
+            )
+            .unwrap(),
+            Call::Grid {
+                id: 2,
+                op: GridOp::Select(SelectOp::Start {
+                    view: 0,
+                    kind: SelectionKind::Block,
+                    x: 3,
+                    y: 4,
+                    right: true
+                })
+            }
+        );
+        assert!(parse("select", json!({"id": 2, "op": "start", "kind": "round"})).is_err());
+        assert!(parse("select", json!({"id": 2})).is_err());
+        assert_eq!(
+            parse(
+                "search",
+                json!({"id": 1, "query": "x", "caseSensitive": true})
+            )
+            .unwrap(),
+            Call::Grid {
+                id: 1,
+                op: GridOp::Search {
+                    query: "x".into(),
+                    case_sensitive: true
+                }
+            }
+        );
+        assert!(parse("search", json!({"id": 1})).is_err());
+        assert!(parse("clear", json!({"id": 1, "what": "everything"})).is_err());
+        assert!(parse("configure", json!({"id": 1, "scrollback": 2_000_000})).is_err());
+        assert!(parse("configure", json!({"id": 1, "clipboardRead": "yes"})).is_err());
+        let Call::Grid {
+            op: GridOp::Configure(args),
+            ..
+        } = parse(
+            "configure",
+            json!({"id": 1, "theme": {"foreground": 255, "ansi": vec![0; 16]}}),
+        )
+        .unwrap()
+        else {
+            panic!("not a configure");
+        };
+        let theme = options_of(&args, Options::default()).unwrap().theme;
+        assert_eq!((theme.foreground, theme.background), (255, 0xffffff));
+        assert!(parse("configure", json!({"id": 1, "theme": {"background": -1}})).is_err());
+        assert!(parse("configure", json!({"id": 1, "theme": {"ansi": [1, 2]}})).is_err());
+        assert!(parse("configure", json!({"id": 1, "theme": {"cursor": 16777216}})).is_err());
+        assert!(
+            parse("scroll", json!({"lines": 1})).is_err(),
+            "an id is needed"
+        );
+        let Call::Spawn(args) = parse(
+            "spawn",
+            json!({"rows": 2, "cols": 2, "grid": true, "scrollback": 50, "clipboardRead": true}),
+        )
+        .unwrap() else {
+            panic!("not a spawn");
+        };
+        assert_eq!(args.options.scrollback, 50);
+        assert!(args.options.clipboard_read && args.options.clipboard_write);
+        assert!(parse("spawn", json!({"rows": 2, "cols": 2, "scrollback": -1})).is_err());
+    }
+
+    #[test]
+    fn a_grid_session_keeps_its_text_after_the_process_ends() {
+        let mut host = PtyHost::default();
+        let id = spawn(&mut host, "printf 'kept text'", true);
+        let start = Instant::now();
+        let mut exits = 0;
+        while start.elapsed() < Duration::from_secs(5) && exits == 0 {
+            let _ = host.readable(id);
+            for m in host.tick(Instant::now()).messages {
+                let v: Value = serde_json::from_slice(&m).unwrap();
+                exits += usize::from(v["method"] == "exit");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(exits, 1);
+        // The exit is reported once, and the text can still be read and searched.
+        for _ in 0..30 {
+            for m in host.tick(Instant::now() + Duration::from_secs(1)).messages {
+                let v: Value = serde_json::from_slice(&m).unwrap();
+                assert_ne!(v["method"], "exit", "reported again");
+            }
+        }
+        let text = host
+            .handle(Call::Grid {
+                id,
+                op: GridOp::Text,
+            })
+            .unwrap()
+            .value;
+        assert_eq!(text, json!("kept text"));
+        // Closing it removes it.
+        host.handle(Call::Close { id }).unwrap();
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(5) && !host.sessions.is_empty() {
+            host.tick(Instant::now());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(host.sessions.is_empty());
+    }
+
+    #[test]
+    fn grid_calls_work_on_a_grid_session_only() {
+        let mut host = PtyHost::default();
+        let plain = spawn(&mut host, "sleep 2", false);
+        assert!(
+            host.handle(Call::Grid {
+                id: plain,
+                op: GridOp::Text
+            })
+            .is_err(),
+            "not a grid terminal"
+        );
+        let mut host = PtyHost::default();
+        let id = spawn(
+            &mut host,
+            "printf 'one two\\r\\nthree\\033]7;file:///tmp/x\\007'; sleep 2",
+            true,
+        );
+        let start = Instant::now();
+        loop {
+            let _ = host.readable(id);
+            host.tick(Instant::now());
+            let text = host
+                .handle(Call::Grid {
+                    id,
+                    op: GridOp::Text,
+                })
+                .unwrap()
+                .value;
+            if text.as_str().is_some_and(|t| t.contains("three"))
+                || start.elapsed() > Duration::from_secs(5)
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let mut ask = |op| host.handle(Call::Grid { id, op }).unwrap().value;
+        assert_eq!(ask(GridOp::Text), json!("one two\nthree"));
+        ask(GridOp::Select(SelectOp::Start {
+            view: 0,
+            kind: SelectionKind::Semantic,
+            x: 5,
+            y: 0,
+            right: false,
+        }));
+        assert_eq!(ask(GridOp::SelectionText), json!("two"));
+        ask(GridOp::Select(SelectOp::Clear));
+        assert_eq!(ask(GridOp::SelectionText), Value::Null);
+        assert_eq!(
+            ask(GridOp::Search {
+                query: "T".into(),
+                case_sensitive: false
+            }),
+            json!([[[0, 4, 4]], [[1, 0, 0]]])
+        );
+        assert_eq!(ask(GridOp::Mark { add: false }), json!(false));
+        ask(GridOp::Configure(json!({"scrollback": 3})));
+        let cwd = host.handle(Call::Cwd { id }).unwrap().value;
+        assert_eq!(cwd, json!("/tmp/x"));
+        host.handle(Call::Close { id }).unwrap();
     }
 
     #[test]
@@ -963,6 +1628,7 @@ mod tests {
                 rows: 5,
                 cols: 5,
                 grid: false,
+                options: Options::default(),
             }))
             .unwrap()
             .spawned
@@ -993,6 +1659,7 @@ mod tests {
                 rows: 24,
                 cols: 80,
                 grid: false,
+                options: Options::default(),
             }))
             .unwrap()
             .spawned
@@ -1034,6 +1701,7 @@ mod tests {
             rows: 24,
             cols: 80,
             grid,
+            options: Options::default(),
         }))
         .unwrap()
         .spawned
@@ -1109,8 +1777,10 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(5));
             // Parsed meanwhile: the frame shows it.
-            if let (Some(frame), _) = host.sessions[&id].grid.as_ref().unwrap().frame(id)
-                && frame["lines"].to_string().contains("hello")
+            if let (frames, _) = host.sessions[&id].grid.as_ref().unwrap().frames(id)
+                && frames
+                    .iter()
+                    .any(|frame| frame["lines"].to_string().contains("hello"))
             {
                 break;
             }
