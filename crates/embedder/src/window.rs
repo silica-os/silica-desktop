@@ -485,6 +485,9 @@ struct App {
     /// app ends with its last window, since when its window is hidden, and this process in
     /// the app registry with its socket.
     app_id: String,
+    /// The Flutter bundle the app runs (`silica/app` `appInfo`: the About panel finds the app's
+    /// `icon/` folder next to it, silica-ui#99).
+    bundle: std::path::PathBuf,
     quit_with_last_window: bool,
     /// A helper process (`--helper`): it ends with its window, whatever the app asks.
     helper: bool,
@@ -973,6 +976,7 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         vsync: None,
         exit: false,
         app_id: options.app_id.clone(),
+        bundle: options.bundle.clone(),
         quit_with_last_window: false,
         helper: options.helper,
         hidden_since: None,
@@ -2427,6 +2431,10 @@ impl App {
             Some("isHidden") => {
                 crate::text_input::success(serde_json::json!(self.hidden_since.is_some()))
             }
+            Some("appInfo") => crate::text_input::success(crate::app_lifecycle::app_info(
+                &self.app_id,
+                &self.bundle,
+            )),
             _ => Vec::new(),
         }
     }

@@ -16,7 +16,8 @@
 //!
 //! The `silica/app` channel (JSONMethodCodec):
 //! - from the app: `setQuitWhenLastWindowCloses {value}`, `setHandlesReopen {value}`,
-//!   `setQuitEnabled {value}`, `openWindow`, `closeWindow`, `quit`, `isHidden`;
+//!   `setQuitEnabled {value}`, `openWindow`, `closeWindow`, `quit`, `isHidden`, `appInfo`
+//!   (`{appId, bundle}`: the app id and the Flutter bundle it runs, for its About panel);
 //! - to the app: `lastWindowClosed`, `reopen {windowless}`, `open {args}` (the files of a
 //!   second launch, `open <JSON array>` on the socket).
 
@@ -147,9 +148,33 @@ pub fn check_period(limit: Duration) -> Duration {
     CHECK_PERIOD.min(limit.max(Duration::from_secs(1)))
 }
 
+/// The answer to `appInfo` on `silica/app`: the app id and the Flutter bundle it runs (the
+/// About panel finds the app's `icon/` folder next to the bundle, silica-ui#99).
+pub fn app_info(app_id: &str, bundle: &std::path::Path) -> serde_json::Value {
+    serde_json::json!({
+        "appId": app_id,
+        "bundle": bundle.to_string_lossy(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_info_names_the_app_and_its_bundle() {
+        let info = app_info(
+            "dev.frascella.Calculator",
+            std::path::Path::new(
+                "/var/lib/silica-dev/apps/dev.frascella.Calculator/flutter_assets",
+            ),
+        );
+        assert_eq!(info["appId"], "dev.frascella.Calculator");
+        assert_eq!(
+            info["bundle"],
+            "/var/lib/silica-dev/apps/dev.frascella.Calculator/flutter_assets"
+        );
+    }
 
     #[test]
     fn requests_are_parsed() {
