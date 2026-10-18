@@ -858,3 +858,43 @@ fn deviations() {
     assert_eq!(grid.history_size(), 2);
     // Soft hyphens, bidirectional text and ligatures are the font's business.
 }
+
+/// The frame the Terminal app is tested against: the same literal is parsed by
+/// `test/contract_test.dart` of the Terminal app (silica-os/terminal), so a change of the
+/// message breaks one of the two.
+#[test]
+fn the_frame_contract_with_the_app() {
+    let mut grid = term(20, 3);
+    grid.advance(
+        b"\x1b]7;file:///home/me/src\x07\x1b]133;A\x07$ \x1b]133;B\x07ls \x1b[1;31mred\x1b[0m ",
+    );
+    grid.advance(b"\x1b]8;;https://example.org\x07link\x1b]8;;\x07\x07\x1b]52;c;aGk=\x07");
+    grid.select_start(0, SelectionType::Simple, 0, 0, false);
+    grid.select_update(0, 3, 0, true);
+    grid.advance(b"\x1b[?1000h\x1b[?1006h");
+    let frame = grid.frame(5).unwrap_or(Value::Null);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&frame).unwrap_or_default()
+    );
+    assert_eq!(frame, contract_frame());
+}
+
+pub(super) fn contract_frame() -> Value {
+    json!({
+        "id": 5, "cols": 20, "rows": 3, "full": true,
+        "lines": [
+            {"y": 0, "runs": [["$ ls ", -1, -1, 0, 5], ["red", PALETTE + 1, -1, 1, 3], [" ", -1, -1, 0, 1], ["link", -1, -1, 0, 4, "https://example.org"]]},
+            {"y": 1, "runs": []},
+            {"y": 2, "runs": []}
+        ],
+        "cursor": {"x": 13, "y": 0, "visible": true, "shape": "block", "blink": false},
+        "modes": 2060,
+        "scroll": {"offset": 0, "history": 0},
+        "selection": [[0, 0, 3]],
+        "marks": [0],
+        "cwd": "/home/me/src",
+        "bell": true,
+        "clipboard": [{"set": "hi", "selection": false}]
+    })
+}
