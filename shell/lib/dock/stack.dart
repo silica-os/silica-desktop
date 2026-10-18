@@ -1003,16 +1003,30 @@ class PileIcon extends StatelessWidget {
   static const double itemLeft = 7;
   static const List<double> itemTops = [17, 15, 13];
 
+  /// User decision (issue #244, no new measurement): each sheet further back is drawn this
+  /// much smaller than the one in front of it (4 % per layer), centred on the spec column and
+  /// keeping the spec top offsets.
+  static const double layerScale = 0.96;
+
   /// The frames of `count` items (at most 3, front first) in tile coordinates, for the icon
   /// canvas `canvas`. `rounded` snaps them to whole points (the resting Dock); magnified they
   /// scale smoothly.
   static List<Rect> frames(double canvas, int count, {bool rounded = true}) {
     final k = canvas / defaultCanvas;
     double snap(double v) => rounded ? v.roundToDouble() : v;
-    final edge = snap(itemCanvas * k);
+    final full = itemCanvas * k;
     return [
       for (var i = 0; i < math.min(count, 3); i++)
-        Rect.fromLTWH(snap(itemLeft * k), snap(itemTops[i] * k), edge, edge),
+        () {
+          final raw = full * math.pow(layerScale, i);
+          final edge = snap(raw.toDouble());
+          return Rect.fromLTWH(
+            snap(itemLeft * k + (full - raw) / 2),
+            snap(itemTops[i] * k),
+            edge,
+            edge,
+          );
+        }(),
     ];
   }
 

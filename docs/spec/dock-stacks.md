@@ -17,6 +17,9 @@ viewed **automatically**.
   - Each item is drawn on a **50 pt canvas** of the default 64 x 80 tile (never the full 60),
     at x = 7 and y = 17 (front), 15 and 13. Everything scales by k = canvas / 60 and rounds to
     whole points.
+  - **User decision (issue #244):** the earlier measurement is considered wrong and will not be
+    redone. Each sheet further back is drawn 4 % smaller than the one in front of it (1, 0.96,
+    0.9216), centred on the same column and keeping the top offsets above.
   - A folder inside the stack uses the same 50 pt canvas.
 - **Empty folder, or Display as Folder:** the folder's own icon on the full 60 pt canvas at
   (2, 10).
