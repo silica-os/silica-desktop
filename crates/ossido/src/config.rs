@@ -427,6 +427,9 @@ pub struct ThemeConfig {
     pub reduce_transparency: bool,
     /// Accessibility › Display › Reduce Motion: Ossido's own animations are skipped.
     pub reduce_motion: bool,
+    /// Accessibility › Pointer › Pointer size: the cursor's nominal size in logical pixels
+    /// (`cursorSize`, 16–128); the environment's (24 by default) without it.
+    pub cursor_size: Option<u32>,
 }
 
 impl Default for ThemeConfig {
@@ -435,6 +438,7 @@ impl Default for ThemeConfig {
             glass: ossido_render::glass_profile::GLASS_LEVEL_DEFAULT,
             reduce_transparency: false,
             reduce_motion: false,
+            cursor_size: None,
         }
     }
 }
@@ -452,6 +456,9 @@ impl ThemeConfig {
             reduce_motion: map
                 .and_then(|map| bool_of(map, "reduceMotion"))
                 .unwrap_or(false),
+            cursor_size: map
+                .and_then(|map| int_in(map, "cursorSize", (16, 128)))
+                .map(|size| size as u32),
         }
     }
 }
@@ -594,7 +601,11 @@ impl State {
         let config = ThemeConfig::parse(read_json(&dir, THEME_FILE).as_ref());
         if config != self.theme_config {
             let was = self.theme_config.reduce_motion;
+            let cursor_was = self.theme_config.cursor_size;
             self.theme_config = config;
+            if config.cursor_size != cursor_was {
+                self.cursor_theme.set_size(config.cursor_size);
+            }
             // Reduce Motion: no animation of Ossido's own, and back to the chosen speed after.
             if config.reduce_motion && !was {
                 self.saved_animation_speed = self.animation_speed;
@@ -953,5 +964,14 @@ mod tests {
         assert_eq!(time(r#"{"doubleClickMs": 650}"#), Some(650));
         assert_eq!(time(r#"{"doubleClickMs": 5}"#), None);
         assert_eq!(time("{}"), None);
+    }
+
+    #[test]
+    fn theme_file_cursor_size() {
+        let size = |text| ThemeConfig::parse(Some(&map(text))).cursor_size;
+        assert_eq!(ThemeConfig::parse(None).cursor_size, None);
+        assert_eq!(size(r#"{"cursorSize": 48}"#), Some(48));
+        assert_eq!(size(r#"{"cursorSize": 8}"#), None);
+        assert_eq!(size(r#"{"cursorSize": "big"}"#), None);
     }
 }

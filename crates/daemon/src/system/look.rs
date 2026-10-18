@@ -56,6 +56,8 @@ pub struct Look {
     pub reduce_motion: bool,
     /// The high-contrast palette (Accessibility › Display).
     pub increase_contrast: bool,
+    /// The size of the apps' text relative to the design's, 1–1.5 (Accessibility › Larger Text).
+    pub text_scale: f64,
 }
 
 impl Default for Look {
@@ -75,6 +77,7 @@ impl Default for Look {
             reduce_transparency: false,
             reduce_motion: false,
             increase_contrast: false,
+            text_scale: 1.0,
         }
     }
 }
@@ -115,6 +118,10 @@ impl Look {
                 "reduceTransparency" => value.as_bool().map(|b| next.reduce_transparency = b),
                 "reduceMotion" => value.as_bool().map(|b| next.reduce_motion = b),
                 "increaseContrast" => value.as_bool().map(|b| next.increase_contrast = b),
+                "textScale" => value
+                    .as_f64()
+                    .filter(|t| t.is_finite() && (1.0..=1.5).contains(t))
+                    .map(|t| next.text_scale = t),
                 "doubleClickMs" => value
                     .as_f64()
                     .filter(|n| n.fract() == 0.0 && n.is_finite())
@@ -174,6 +181,7 @@ impl Look {
         );
         put("look.reduceMotion", Value::Bool(self.reduce_motion));
         put("look.increaseContrast", Value::Bool(self.increase_contrast));
+        put("look.textScale", Value::F64(self.text_scale));
     }
 }
 
@@ -213,6 +221,11 @@ mod tests {
         assert!(look.merge(&json!({"increaseContrast": true})));
         assert!(look.increase_contrast);
         assert!(!look.merge(&json!({"increaseContrast": 1})));
+        assert!(look.merge(&json!({"textScale": 1.25})));
+        assert_eq!(look.text_scale, 1.25);
+        assert!(!look.merge(&json!({"textScale": 2.0})));
+        assert!(!look.merge(&json!({"textScale": 0.5})));
+        assert_eq!(look.text_scale, 1.25);
         assert!(!look.merge(&json!({"doubleClickMs": 50})));
         assert!(!look.merge(&json!({"doubleClickMs": 400.5})));
         assert_eq!(look.double_click_ms, 500);

@@ -216,6 +216,7 @@ Settings' Appearance choices. Ossido reads one key; the rest is the look the app
 | --- | --- | --- |
 | `reduceTransparency` | boolean | Accessibility › Display: the glass is drawn opaque (the `opaque` quality, no blur); off by default |
 | `reduceMotion` | boolean | Accessibility › Display: Ossido's own animations are skipped (the window genie, closing, space switch, Panorama); off by default |
+| `cursorSize` | integer 16–128 | Accessibility › Pointer: the pointer's size in logical pixels (the cursor theme at that size); the environment's (`XCURSOR_SIZE`, 24 by default) without it |
 | `glass` | number 0–1 | how tinted the glass is: 0 clearest, 1 most tinted; 0.5 (default) is the measured material. Only the tint's strength changes (`GlassProfile::with_glass_level`); clear glass has no tint and stays. A value out of range is the default. |
 
 ### input.json

@@ -240,6 +240,8 @@ pub struct CursorTheme {
     /// The theme folders, in lookup order; empty when the theme is missing.
     dirs: Vec<PathBuf>,
     size: u32,
+    /// The size of the environment, back when the user's choice is removed.
+    env_size: u32,
     epoch: Instant,
     cache: HashMap<(&'static str, u32), Option<Rc<Animation>>>,
 }
@@ -256,6 +258,7 @@ impl CursorTheme {
         Self {
             dirs: Vec::new(),
             size: DEFAULT_SIZE,
+            env_size: DEFAULT_SIZE,
             epoch: Instant::now(),
             cache: HashMap::new(),
         }
@@ -277,7 +280,18 @@ impl CursorTheme {
         Self {
             dirs,
             size: env.nominal_size(),
+            env_size: env.nominal_size(),
             ..Self::empty()
+        }
+    }
+
+    /// The user's pointer size (`cursorSize` of `theme.json`); `None`: the environment's.
+    /// The shapes are loaded again at the new size.
+    pub fn set_size(&mut self, size: Option<u32>) {
+        let size = size.filter(|s| *s > 0).unwrap_or(self.env_size);
+        if size != self.size {
+            self.size = size;
+            self.cache.clear();
         }
     }
 
@@ -310,7 +324,9 @@ impl CursorTheme {
         let elapsed =
             u64::try_from(now.saturating_duration_since(self.epoch).as_millis()).unwrap_or(0);
         let (index, image) = animation.frame_at(elapsed)?;
-        Some(((animation.name.clone(), scale_key, index), image.clone()))
+        // The size is part of the key: the frames already uploaded at another size stay apart.
+        let key = scale_key.saturating_add(self.size.saturating_mul(1_000_000));
+        Some(((animation.name.clone(), key, index), image.clone()))
     }
 
     /// Whether `icon` at `scale` is an animated cursor (it changes frame with time alone).
