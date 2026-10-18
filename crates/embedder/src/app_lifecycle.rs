@@ -17,9 +17,10 @@
 //! The `silica/app` channel (JSONMethodCodec):
 //! - from the app: `setQuitWhenLastWindowCloses {value}`, `setHandlesReopen {value}`,
 //!   `setQuitEnabled {value}`, `openWindow`, `closeWindow`, `quit`, `isHidden`, `appInfo`
-//!   (`{appId, bundle}`: the app id and the Flutter bundle it runs, for its About panel);
-//! - to the app: `lastWindowClosed`, `reopen {windowless}`, `open {args}` (the files of a
-//!   second launch, `open <JSON array>` on the socket).
+//!   (`{appId, bundle}`: the app id and the Flutter bundle it runs, for its About panel),
+//!   `stayWindowless` (a reopen answered with no window for now: a document app's Open panel);
+//! - to the app: `lastWindowClosed`, `reopen {windowless, files}` (`files`: an `open` follows),
+//!   `open {args}` (the files of a second launch, `open <JSON array>` on the socket).
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;

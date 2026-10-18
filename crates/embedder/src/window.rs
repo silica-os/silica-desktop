@@ -2162,7 +2162,7 @@ impl App {
                     answer(&stream, "ok");
                 }
                 Some(Request::Open(args)) => {
-                    self.reopen();
+                    self.reopen_with(true);
                     self.send_app("open", serde_json::json!({ "args": args }));
                     answer(&stream, "ok");
                 }
@@ -2271,6 +2271,12 @@ impl App {
     /// app only learns about it. With none, an app that answers reopen builds its new window
     /// and calls `openWindow`; any other app gets its hidden window back at once.
     fn reopen(&mut self) {
+        self.reopen_with(false);
+    }
+
+    /// A reopen; `files`: files follow it (`open`, a second launch with documents), so a document
+    /// app has something to show and does not ask for a document first.
+    fn reopen_with(&mut self, files: bool) {
         let windowless = self.windowless();
         if windowless && self.handles_reopen {
             if !self.show_pending {
@@ -2296,7 +2302,10 @@ impl App {
         } else {
             self.activate_main();
         }
-        self.send_app("reopen", serde_json::json!({ "windowless": windowless }));
+        self.send_app(
+            "reopen",
+            serde_json::json!({ "windowless": windowless, "files": files }),
+        );
     }
 
     /// The app built its window (`openWindow`): it is shown after the frame being drawn, so
@@ -2430,6 +2439,13 @@ impl App {
             }
             Some("isHidden") => {
                 crate::text_input::success(serde_json::json!(self.hidden_since.is_some()))
+            }
+            // The app answers a reopen without a window for now (a document app showing its
+            // Open panel, APP-LC): the hidden window is not shown by the reopen's timer; the
+            // app calls openWindow if a document is chosen.
+            Some("stayWindowless") => {
+                self.show_pending = false;
+                crate::text_input::success(serde_json::Value::Null)
             }
             Some("appInfo") => crate::text_input::success(crate::app_lifecycle::app_info(
                 &self.app_id,
