@@ -347,6 +347,8 @@ pub enum TitleBarDoubleClick {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DockConfig {
     pub title_bar_double_click: TitleBarDoubleClick,
+    /// Windows minimize into their app's icon, not into the Dock's right section.
+    pub minimize_to_app: bool,
 }
 
 impl DockConfig {
@@ -361,6 +363,9 @@ impl DockConfig {
         };
         Self {
             title_bar_double_click,
+            minimize_to_app: map
+                .and_then(|map| bool_of(map, "minimizeToApp"))
+                .unwrap_or(false),
         }
     }
 }
@@ -938,6 +943,8 @@ mod tests {
             parse(r#"{"titleBarDoubleClick": "none"}"#),
             TitleBarDoubleClick::Nothing
         );
+        assert!(DockConfig::parse(Some(&map(r#"{"minimizeToApp": true}"#))).minimize_to_app);
+        assert!(!DockConfig::parse(None).minimize_to_app);
         assert_eq!(
             parse(r#"{"titleBarDoubleClick": 3}"#),
             TitleBarDoubleClick::Zoom

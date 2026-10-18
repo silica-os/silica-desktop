@@ -123,6 +123,30 @@ void main() {
     expect(items[2].kind, ItemKind.separator);
   });
 
+  test('minimized windows go into their app icon with minimizeToApp', () {
+    const editor = DesktopEntry(id: 'editor', name: 'Editor', exec: 'editor');
+    const windows = [Toplevel(id: 'a', title: 'Documento', appId: 'editor')];
+    List<String> labels(bool toApp) => [
+      for (final i in dockItems(
+        {'editor': editor},
+        const [],
+        windows,
+        minimized: const ['a'],
+        minimizeToApp: toApp,
+      ))
+        i.label,
+    ];
+    // Separate section: the window's own cell before the Trash.
+    expect(labels(false), [
+      'Editor',
+      '',
+      downloadsName(),
+      'Documento',
+      'Trash',
+    ]);
+    expect(labels(true), ['Editor', '', downloadsName(), 'Trash']);
+  });
+
   test(
     'recent apps (D-08): second separator, open unpinned and closed, at most 3',
     () {

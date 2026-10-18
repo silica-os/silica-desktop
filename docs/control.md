@@ -28,6 +28,7 @@ parameter schemas. Every catalog id is run by Ossido (test
 | `ui.screenshot` | `path?` | `width`, `height`, `path` or `png_base64` |
 | `ui.animation_scale` | `scale` (0–1000) | — (multiplies the animation durations; 0 turns them off) |
 | `ui.glass_quality` | `quality` (`auto`, `full`, `frosted`, `opaque`) | `quality` in use |
+| `dock.icons` | `icons` (`app_id`, `x`, `y`: the center of each app icon in the Dock surface) | `icons` kept; the shell sends it, windows then minimize into their app's icon (`dock.json` `minimizeToApp`) |
 | `engine.commands` | — | the catalog |
 | `engine.execute` | `id`, `params?` | the command's result |
 | `window.list` | — | windows from top to bottom, then the minimized ones: `id`, `title`, `app_id`, `x`, `y`, `width`, `height` (of the content, without the bar), `focused`, `minimized`, `fullscreen`, `space` |
@@ -184,11 +185,12 @@ settings files.
 
 ### dock.json
 
-Ossido reads one key of the Dock's file (the rest is the shell's):
+Ossido reads two keys of the Dock's file (the rest is the shell's):
 
 | Key | Type | Meaning |
 | --- | --- | --- |
 | `titleBarDoubleClick` | `zoom` (default), `minimize`, `none` | what a double click on the title bar Ossido draws does; the apps that draw their own bar read the same key (silica_ui) |
+| `minimizeToApp` | boolean, default false | a window minimizes into its app's icon (the target of the genie or scale effect) instead of the Dock's right section; the shell tells where the icons are with `dock.icons` |
 
 ### shortcuts.json
 

@@ -35,6 +35,9 @@ use silica_control::commands::{
 use silica_control::commands::{
     DESKTOP_SHOW, PANORAMA_APP, PANORAMA_SPACES_BAR, PANORAMA_STATE, PANORAMA_TOGGLE,
 };
+use silica_control::commands::{
+    DOCK_ICONS, DockIconsParams, MinimizeEffectParams, WINDOW_MINIMIZE_EFFECT,
+};
 use silica_control::commands::{IDLE_STATE, INPUT_STATE, KEYBOARD_NEXT_SOURCE, KEYBOARD_STATE};
 use silica_control::commands::{
     IndexParams, MoveToSpaceParams, SPACE_ADD, SPACE_GOTO, SPACE_LIST, SPACE_NEXT, SPACE_PREVIOUS,
@@ -44,7 +47,6 @@ use silica_control::commands::{
     LAUNCHER_TOGGLE, SWITCHER_CANCEL, SWITCHER_COMMIT, SWITCHER_EXPOSE, SWITCHER_NEXT,
     SWITCHER_PREVIOUS,
 };
-use silica_control::commands::{MinimizeEffectParams, WINDOW_MINIMIZE_EFFECT};
 use silica_control::commands::{OUTPUT_COLOR_TEMPERATURE, OUTPUT_CONFIGURE, OUTPUT_LIST};
 use silica_control::{CaptureAnnouncement, CaptureOptions, ScreenshotSettings};
 use silica_control::{Request, Response, Screenshot, ScreenshotParams, Shortcut};
@@ -225,6 +227,16 @@ impl State {
                 self.minimize_effect = crate::render::MinimizeEffect::parse(&effect)
                     .ok_or_else(|| format!("unknown minimize effect (genie, scale): {effect}"))?;
                 Ok(json!({ "effect": effect }))
+            }
+            DOCK_ICONS => {
+                let DockIconsParams { icons } = parse_required(params)?;
+                let count = icons.len();
+                self.dock_icons = icons
+                    .into_iter()
+                    .filter(|icon| icon.x.is_finite() && icon.y.is_finite())
+                    .map(|icon| (icon.app_id, (icon.x, icon.y)))
+                    .collect();
+                Ok(json!({ "icons": count }))
             }
             UI_GLASS_QUALITY => {
                 let GlassQualityParams { quality } = parse_required(params)?;

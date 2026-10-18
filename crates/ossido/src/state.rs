@@ -121,6 +121,8 @@ pub struct State {
     /// `dock.json`, and the last press on a title bar (window, time in ms, place) for the
     /// double click.
     pub dock_config: crate::config::DockConfig,
+    /// The centers of the Dock's app icons in its surface, by app id (`dock.icons`).
+    pub dock_icons: Vec<(String, (f64, f64))>,
     pub bar_press: Option<(smithay::desktop::Window, u32, Point<f64, Logical>)>,
     /// Keycodes for the synthetic keys (`input.key`, `input.type`).
     pub keys: crate::keys::KeyLookup,
@@ -429,6 +431,7 @@ impl State {
             shortcuts: crate::commands::shortcuts(),
             shortcuts_capture: false,
             dock_config: crate::config::DockConfig::default(),
+            dock_icons: Vec::new(),
             bar_press: None,
             keys: crate::keys::KeyLookup::new()?,
             keys_for: None,

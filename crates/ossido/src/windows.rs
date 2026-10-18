@@ -204,6 +204,8 @@ impl State {
         const FROM_RIGHT: f64 = 71.0;
         const WIDTH: f64 = 57.0;
         const MAX_HEIGHT: f64 = 47.0;
+        /// The window shrinks to about the icon's size.
+        const ICON: f64 = 40.0;
         let geometry = self.space.element_geometry(window)?;
         let frame = crate::decorations::frame_of(window, geometry).to_f64();
         let height = if frame.size.w > 0.0 {
@@ -229,6 +231,33 @@ impl State {
             })
             .next();
         let output = self.space.output_geometry(&self.output)?.to_f64();
+        // Into the icon of the window's app (Dock › Minimize windows into application icon).
+        let icon = self
+            .dock_config
+            .minimize_to_app
+            .then(|| crate::panorama::window_app(window))
+            .flatten()
+            .and_then(|app| {
+                self.dock_icons
+                    .iter()
+                    .find(|(known, _)| *known == app)
+                    .map(|(_, at)| *at)
+            })
+            .and_then(|(x, y)| {
+                let origin = map
+                    .layers()
+                    .find(|layer| layer.namespace() == "dock")
+                    .and_then(|layer| map.layer_geometry(layer))?
+                    .loc
+                    .to_f64();
+                Some(Rectangle::<f64, Logical>::new(
+                    (origin.x + x - ICON / 2.0, origin.y + y - ICON / 2.0).into(),
+                    (ICON, ICON).into(),
+                ))
+            });
+        if let Some(icon) = icon {
+            return Some(icon);
+        }
         let center: Point<f64, Logical> = match panel {
             Some(panel) => (
                 panel.loc.x + panel.size.w - FROM_RIGHT,

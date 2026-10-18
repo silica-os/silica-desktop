@@ -34,6 +34,8 @@ pub const WINDOW_MOVE: &str = "window.move";
 pub const WINDOW_MINIMIZE: &str = "window.minimize";
 /// The minimize effect (Dock setting): genie or scale.
 pub const WINDOW_MINIMIZE_EFFECT: &str = "window.minimize_effect";
+/// Where the Dock's app icons are, for windows that minimize into their app's icon.
+pub const DOCK_ICONS: &str = "dock.icons";
 pub const WINDOW_FULLSCREEN: &str = "window.fullscreen";
 pub const WINDOW_TILE_LEFT: &str = "window.tile_left";
 pub const WINDOW_TILE_RIGHT: &str = "window.tile_right";
@@ -361,6 +363,34 @@ pub const CATALOG: &[CommandSpec] = &[
                 "type": "object",
                 "properties": {"effect": {"type": "string", "enum": ["genie", "scale"]}},
                 "required": ["effect"],
+                "additionalProperties": false
+            })
+        },
+    },
+    CommandSpec {
+        id: DOCK_ICONS,
+        label: "Dock icons",
+        description: "The shell tells where the Dock's app icons are (centers, in the Dock surface), so that a window minimizes into its app's icon when the Dock setting minimizeToApp is on.",
+        shortcut: None,
+        params: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "icons": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "app_id": {"type": "string"},
+                                "x": {"type": "number"},
+                                "y": {"type": "number"}
+                            },
+                            "required": ["app_id", "x", "y"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["icons"],
                 "additionalProperties": false
             })
         },
@@ -1568,6 +1598,22 @@ pub struct ValueParams {
 #[serde(deny_unknown_fields)]
 pub struct GlassQualityParams {
     pub quality: String,
+}
+
+/// One app icon of [`DOCK_ICONS`]: the app id of its windows and the center of the icon.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DockIcon {
+    pub app_id: String,
+    pub x: f64,
+    pub y: f64,
+}
+
+/// Parameters of [`DOCK_ICONS`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DockIconsParams {
+    pub icons: Vec<DockIcon>,
 }
 
 /// Parameters of [`WINDOW_MINIMIZE_EFFECT`]: `genie` or `scale`.
