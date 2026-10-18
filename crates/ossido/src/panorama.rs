@@ -103,8 +103,14 @@ const THUMBS_FROM: f64 = 0.6;
 const THUMBS_FULL: f64 = 0.8;
 /// Beyond this distance from the press, a click on a window becomes a drag.
 const DRAG_THRESHOLD: f64 = 4.0;
-/// The window dragged over the bar shrinks to this scale.
-const DRAG_OVER_BAR_SCALE: f64 = 0.25;
+/// Climbing toward the bar the dragged window shrinks linearly with height: ~1.65 pt of width
+/// per pt climbed (spaces.md, PA-13; −0.0027 of scale per pt for a 600 pt window), and grows
+/// back the same way going down.
+const DRAG_SHRINK_PER_PT: f64 = 1.65;
+/// Over the bar it is a miniature of about 0.066–0.073 of the window's real size, following the
+/// pointer about 55 % down it.
+const DRAG_OVER_BAR_FACTOR: f64 = 0.07;
+const DRAG_OVER_BAR_GRAB_Y: f64 = 0.55;
 
 /// Bar expansion (ms, 0–1): height from 40 to 169 pt in the video, frame by frame. Closing is
 /// not measured: same curve.
@@ -755,19 +761,43 @@ pub fn interpolate(p: &Placement, progress: f64) -> Rectangle<f64, Logical> {
 
 /// The frame of the dragged window: it follows the pointer from the grab point; over the
 /// bar it shrinks.
-fn drag_rect(drag: &Drag, frame: Rectangle<f64, Logical>, bar: f64) -> Rectangle<f64, Logical> {
-    let scale = if drag.pointer.y < bar {
-        DRAG_OVER_BAR_SCALE
+/// Where the dragged window is drawn: its arranged `frame` scaled down as it climbs from the
+/// press toward the bar, a miniature of its `real` width over the bar (spaces.md, PA-13).
+fn drag_rect(
+    drag: &Drag,
+    frame: Rectangle<f64, Logical>,
+    real_width: f64,
+    bar: f64,
+) -> Rectangle<f64, Logical> {
+    drag_geometry(drag.press, drag.pointer, drag.grab, frame, real_width, bar)
+}
+
+/// [`drag_rect`] from the press and the pointer, the grab point (proportions of the frame).
+fn drag_geometry(
+    press: Point<f64, Logical>,
+    pointer: Point<f64, Logical>,
+    grab: (f64, f64),
+    frame: Rectangle<f64, Logical>,
+    real_width: f64,
+    bar: f64,
+) -> Rectangle<f64, Logical> {
+    let full = frame.size.w.max(1.0);
+    let mini = (real_width * DRAG_OVER_BAR_FACTOR).clamp(1.0, full);
+    let over_bar = pointer.y < bar;
+    let width = if over_bar {
+        mini
     } else {
-        1.0
+        let climbed = (press.y - pointer.y).max(0.0);
+        (full - DRAG_SHRINK_PER_PT * climbed).max(mini)
     };
-    let size = frame.size.upscale(scale);
+    let size = frame.size.upscale(width / full);
+    let grab_y = if over_bar {
+        DRAG_OVER_BAR_GRAB_Y
+    } else {
+        grab.1
+    };
     Rectangle::new(
-        (
-            drag.pointer.x - drag.grab.0 * size.w,
-            drag.pointer.y - drag.grab.1 * size.h,
-        )
-            .into(),
+        (pointer.x - grab.0 * size.w, pointer.y - grab_y * size.h).into(),
         size,
     )
 }
@@ -1049,7 +1079,12 @@ impl State {
         let Some(placement) = panorama.placements.iter().find(|p| p.window == drag.window) else {
             return;
         };
-        let from = drag_rect(drag, placement.to, bar_height(panorama.expansion));
+        let from = drag_rect(
+            drag,
+            placement.to,
+            placement.from.size.w,
+            bar_height(panorama.expansion),
+        );
         panorama.returning = Some(Returning {
             window: drag.window.clone(),
             from,
@@ -1103,7 +1138,12 @@ impl State {
                 .find(|p| p.window == drag.window)?;
             Some((
                 drag.window.clone(),
-                drag_rect(drag, placement.to, bar_height(panorama.expansion)),
+                drag_rect(
+                    drag,
+                    placement.to,
+                    placement.from.size.w,
+                    bar_height(panorama.expansion),
+                ),
             ))
         });
         let drag = dragging.or_else(|| {
@@ -1931,6 +1971,31 @@ mod tests {
         // Slowed down x2 it takes twice as long; with animations off it is immediate.
         assert!(return_fraction(ms(500), 2.0) < 1.0);
         assert_eq!(return_fraction(ms(0), 0.0), 1.0);
+    }
+
+    #[test]
+    fn a_dragged_window_shrinks_as_it_climbs_and_is_a_miniature_over_the_bar() {
+        // A 600 × 400 window arranged at 300 × 200, pressed at y 700, grabbed in its middle.
+        let frame = Rectangle::<f64, Logical>::new((200.0, 600.0).into(), (300.0, 200.0).into());
+        let press = Point::from((350.0, 700.0));
+        let at = |y: f64| drag_geometry(press, (350.0, y).into(), (0.5, 0.5), frame, 600.0, 168.0);
+        // At the press, or below it: full size.
+        assert_eq!(at(700.0).size, frame.size);
+        assert_eq!(at(760.0).size, frame.size);
+        // 100 pt up: 165 pt narrower (1.65 pt of width per pt), the height in proportion.
+        let up = at(600.0);
+        assert!((up.size.w - 135.0).abs() < 1e-9, "{:?}", up.size);
+        assert!((up.size.h - 90.0).abs() < 1e-9);
+        // The pointer keeps its place in it.
+        assert!((up.loc.x + up.size.w / 2.0 - 350.0).abs() < 1e-9);
+        // Never below the miniature: 0.07 of the real width (42 pt), and that over the bar,
+        // with the pointer 55 % down it.
+        assert!((at(200.0).size.w - 42.0).abs() < 1e-9);
+        let over = at(100.0);
+        assert!((over.size.w - 42.0).abs() < 1e-9);
+        assert!((over.loc.y + 0.55 * over.size.h - 100.0).abs() < 1e-9);
+        // Going back down it grows back the same way.
+        assert_eq!(at(600.0), up);
     }
 
     #[test]
