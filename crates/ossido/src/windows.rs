@@ -71,6 +71,10 @@ pub fn arrangement(area: Rectangle<i32, Logical>, count: usize) -> Vec<Rectangle
 impl State {
     /// Moves the window to a half of the usable area, or to all of it (outside full screen).
     pub fn tile_window(&mut self, window: &Window, tile: Tile) -> Result<(), String> {
+        // Fill is a zoom: not for a window that cannot be resized (silica-desktop#245).
+        if tile == Tile::Fill && crate::render::buttons_disabled(window).zoom() {
+            return Ok(());
+        }
         let area = self.usable_area();
         let (x, y) = (area.loc.x, area.loc.y);
         let (w, h) = (area.size.w, area.size.h);
@@ -90,6 +94,16 @@ impl State {
     /// frame; `on` false (`unset_maximized`) puts it back. Full-screen windows leave full screen
     /// first, as with the tiles.
     pub fn zoom_window(&mut self, window: &Window, on: bool) -> Result<(), String> {
+        // A window that cannot be resized (min size = max size, Calculator) does not zoom,
+        // whoever asks: its zoom button is disabled, and the app's title bar double click
+        // (`set_maximized`) follows the same rule (silica-desktop#245). The client learns it
+        // stays as it is.
+        if on && crate::render::buttons_disabled(window).zoom() {
+            if let Some(toplevel) = window.toplevel() {
+                toplevel.send_pending_configure();
+            }
+            return Ok(());
+        }
         window.user_data().insert_if_missing(BeforeZoom::default);
         let before = window
             .user_data()
