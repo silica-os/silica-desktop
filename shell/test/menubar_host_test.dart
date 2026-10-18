@@ -298,7 +298,7 @@ void main() {
       },
     );
 
-    testWidgets('moving the pointer onto another title switches after ~85 ms', (
+    testWidgets('moving the pointer onto another title switches at once', (
       tester,
     ) async {
       await pumpBar(tester);
@@ -309,10 +309,8 @@ void main() {
       addTearDown(mouse.removePointer);
       await mouse.addPointer(location: tester.getCenter(find.text('Window')));
       await mouse.moveTo(tester.getCenter(find.text('Help')));
-      await tester.pump(const Duration(milliseconds: 40));
-      expect(find.text('Silica Help'), findsNothing);
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
       expect(find.text('Silica Help'), findsOneWidget);
     });
 

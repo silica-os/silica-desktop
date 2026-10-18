@@ -66,7 +66,6 @@ const double barSide = 8;
 /// menu), 8 pt below the bar (the menu at y 40, 4 lower than with the 28 pt bar).
 const double menuLeftOfItem = 4;
 const double menuBelowBar = 8;
-const Duration menuSwitchDelay = Duration(milliseconds: 85);
 
 /// Room below the menu for its shadow, when the surface grows.
 const double menuShadowRoom = 40;
@@ -254,7 +253,6 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
 
   /// The next menu opens with its first row highlighted (it was reached with ← or →).
   bool _highlightFirst = false;
-  Timer? _switchTimer;
 
   /// The bar items with a menu: the logo, the app menu, then the app's own menus
   /// (`menu0`, `menu1`… from its model) or the generic ones.
@@ -469,7 +467,6 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
     if (entries.isEmpty || rect == null) return;
     if (name == 'logo') _recent = _loadRecent();
     final anchor = Offset(rect.left - menuLeftOfItem, barHeight + menuBelowBar);
-    _switchTimer?.cancel();
     setState(() {
       _open = name;
       _openEntries = entries;
@@ -544,7 +541,6 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
   }
 
   void _closeMenu() {
-    _switchTimer?.cancel();
     if (_open == null) return;
     setState(() {
       _open = null;
@@ -590,15 +586,11 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
 
   void _pointerMoved(Offset p) {
     if (_open == null) return;
-    // With a menu open, moving onto another item the menu changes after ~85 ms.
+    // With a menu open, the pointer entering another title switches to its menu at once
+    // (user decision, issue #249; the reference waited ~85 ms).
     final item = _itemAt(p);
     if (item != null && item != _open && _entries(item).isNotEmpty) {
-      _switchTimer?.cancel();
-      _switchTimer = Timer(menuSwitchDelay, () {
-        if (_open != null) _openMenu(item);
-      });
-    } else if (item == null || item == _open) {
-      _switchTimer?.cancel();
+      _openMenu(item);
     }
   }
 
@@ -887,7 +879,6 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
     _ownConfig?.dispose();
     _inputSources.dispose();
     _timer?.cancel();
-    _switchTimer?.cancel();
     _autohideTimer?.cancel();
     _shown.dispose();
     ShellChannel.instance.toplevels.removeListener(_changed);

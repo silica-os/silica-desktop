@@ -260,7 +260,7 @@ Indicative matrix (`out = M · in + b`):
 | Choosing an item | the highlight **blinks once**: off in the next frame (+7 ms), back on at +74 ms, then the menu fades |
 | Closing after a choice | fade of about 190 ms, from +114 to about +300 ms after the release |
 | Esc | closes with the same 190 ms fade; a single Esc closes everything, even after moving with the arrows |
-| Pointer onto another title while a menu is open | the menu switches in one frame, about 80–90 ms after the pointer enters the new title |
+| Pointer onto another title while a menu is open | the menu switches in one frame, about 80–90 ms after the pointer enters the new title. **User decision (issue #249):** Silica switches at once, as soon as the pointer enters the new title |
 | Rest on an item with a submenu | the submenu opens about **295 ms** later, in one frame |
 | Moving diagonally towards the submenu across other items | the submenu stays open, as long as the pointer heads towards it |
 | Back onto another item of the parent menu | the submenu closes immediately, within about 50 ms |
