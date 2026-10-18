@@ -151,5 +151,5 @@ Not measured: delay from click to the first jump; extra jumps for slow apps; the
 
 ## Not measured
 
-- Menu item hover and accent; alert animation; stack opening; lock screen and login window
-  themselves.
+- Menu item hover and accent; alert animation; stack opening; the login window. The lock screen
+  itself is in [lock.md](lock.md).

@@ -97,6 +97,7 @@ says otherwise. Labels are in English.
 | [stage-view.md](stage-view.md) | Stage view: the strip of window groups |
 | [displays.md](displays.md) | Several displays |
 | [shortcuts.md](shortcuts.md) | System shortcuts and their Silica actions |
+| [lock.md](lock.md) | Lock screen: layout, clock, password field, hint, transitions, shake |
 | [misc.md](misc.md) | Shared panel material, alerts, context menus, launch bounce, system panels |
 | [icon-geometry.md](icon-geometry.md) | Icon sizes, mask, shadow and edge light |
 | [inventory-shell.md](inventory-shell.md) | Inventory of shell features with their status in Silica |
