@@ -320,3 +320,40 @@ fn input_type_follows_the_active_keymap_with_a_temporary_key_fallback() {
         json!(["it"])
     );
 }
+
+#[test]
+fn hot_corners_run_their_action_when_the_pointer_arrives() {
+    let ossido = Headless::start("hot-corners");
+    let mut client = ossido.client();
+    let pointer = |client: &mut silica_control::Client, x: f64, y: f64| {
+        client
+            .call("input.pointer_move", json!({"x": x, "y": y}))
+            .unwrap();
+    };
+    let open = |client: &mut silica_control::Client| {
+        client.call("panorama.state", Value::Null).unwrap()["open"] == true
+    };
+    // Without a file, the corner does nothing.
+    pointer(&mut client, 160.0, 120.0);
+    pointer(&mut client, 0.0, 0.0);
+    assert!(!open(&mut client));
+    write_setting(
+        &ossido,
+        "hotcorners.json",
+        &json!({"topLeft": "panorama", "bottomRight": "nonsense"}),
+    );
+    // The file is read as it lands: arrive again until the corner is armed with its action.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        pointer(&mut client, 160.0, 120.0);
+        pointer(&mut client, 0.0, 0.0);
+        if open(&mut client) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the corner did not run its action"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}

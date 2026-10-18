@@ -45,6 +45,7 @@ impl State {
         if self.resizing.is_some() {
             self.resize_to(location);
         }
+        self.hot_corner_check(location);
         // Dragging by the bar: the frame follows the grab point.
         if let Some((window, grab)) = self.moving.clone() {
             let bar = decorations::titlebar_height(&window);

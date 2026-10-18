@@ -132,6 +132,9 @@ pub struct State {
     pub power_config: crate::config::PowerConfig,
     /// `theme.json`: the glass level.
     pub theme_config: crate::config::ThemeConfig,
+    /// `hotcorners.json`, and the corner the pointer is in now.
+    pub hot_corners: crate::config::HotCornersConfig,
+    pub hot_corner_inside: Option<crate::config::Corner>,
     pub last_activity: Instant,
     pub display_off: bool,
     /// Something happened that may change the screen (a client request, input, a command):
@@ -425,6 +428,8 @@ impl State {
             input_config: crate::config::InputConfig::default(),
             power_config: crate::config::PowerConfig::default(),
             theme_config: crate::config::ThemeConfig::default(),
+            hot_corners: crate::config::HotCornersConfig::default(),
+            hot_corner_inside: None,
             last_activity: Instant::now(),
             display_off: false,
             redraw: true,
