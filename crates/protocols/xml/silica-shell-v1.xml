@@ -12,14 +12,31 @@
     what the shell asks of the compositor.
   </description>
 
-  <interface name="silica_shell_manager_v1" version="9">
+  <interface name="silica_shell_manager_v1" version="10">
     <request name="destroy" type="destructor"/>
 
     <request name="activate">
       <description summary="brings a window to the front">
         The window with this identifier (the identifier event of
-        ext_foreign_toplevel_handle_v1) gets the focus and goes above the others; if it is
-        minimized, it comes back where it was. An unknown identifier does nothing.
+        ext_foreign_toplevel_handle_v1) gets the focus and goes above the others, with its
+        child windows above it; the other windows of its app stay where they are (a window
+        picked in the Window menu, the Dock menu or Mission Control). If it is minimized, it
+        comes back where it was; if its app is hidden, the app shows again. An unknown
+        identifier does nothing.
+
+        Before version 10 this brought every window of the app forward, as activate_app
+        does.
+      </description>
+      <arg name="identifier" type="string"/>
+    </request>
+
+    <request name="activate_app" since="10">
+      <description summary="brings an app to the front">
+        Activates the app of the window with this identifier, as a click on its Dock icon,
+        the app switcher or Bring All to Front do: every window of the app on screen comes
+        forward keeping their order, and this window goes on top with the focus. A
+        minimized window comes back by itself; the app's other minimized windows stay
+        minimized. An unknown identifier does nothing.
       </description>
       <arg name="identifier" type="string"/>
     </request>

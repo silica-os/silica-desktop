@@ -272,7 +272,13 @@ class ShellChannel {
     }
   }
 
+  /// Brings window [id] to the front with the focus; the app's other windows stay where
+  /// they are (a window chosen in a menu, silica-ui#101).
   Future<bool> activate(String id) => _call('activate', {'id': id});
+
+  /// Activates the app of window [id]: all its windows on screen come forward in their
+  /// order, [id] on top (the app switcher, Bring All to Front).
+  Future<bool> activateApp(String id) => _call('activateApp', {'id': id});
 
   Future<bool> launch(String command) => _call('launch', {'command': command});
 

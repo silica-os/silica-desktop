@@ -797,7 +797,12 @@ class LockGlyphGlass extends StatelessWidget {
             inset: inset,
             child: Stack(
               children: [
+                // Off the mask's edges (silica-desktop#250): see [_GlyphMask.edge].
                 Positioned.fill(
+                  left: _GlyphMask.edge,
+                  top: _GlyphMask.edge,
+                  right: _GlyphMask.edge,
+                  bottom: _GlyphMask.edge,
                   child: ClipRect(
                     child: BackdropFilter(
                       filter: ui.ImageFilter.compose(
@@ -830,7 +835,17 @@ class LockGlyphGlass extends StatelessWidget {
 
 /// Keeps [child] only inside the glyphs of [text] (destination-in with an image of the glyphs,
 /// drawn at the display's resolution): the glass clipped to the digits.
+///
+/// The child must leave [edge] empty around it. The mask is applied over the layer's bounds as
+/// an anti-aliased rectangle: where a bound falls inside a device pixel (a cell at a fractional
+/// x at 1.5×, a digit rolling by fractions of a point) that pixel is only partly covered, and
+/// destination-in keeps the uncovered part of the child unmasked, a one-pixel line of glass
+/// down the whole box (silica-desktop#250).
 class _GlyphMask extends StatefulWidget {
+  /// The empty margin the child leaves inside the mask's bounds: more than one device pixel
+  /// at any scale the lock screen runs at, and inside the cell's bleed, where no ink falls.
+  static const double edge = 2;
+
   const _GlyphMask({
     required this.text,
     required this.style,

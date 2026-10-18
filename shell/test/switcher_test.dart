@@ -216,12 +216,12 @@ Exec=files %U
       await tester.pump(const Duration(milliseconds: 200));
       expect(find.byType(SwitcherPanel), findsNothing);
       final names = [for (final c in calls) c.method];
-      expect(names.where((m) => m == 'activate'), hasLength(1));
+      expect(names.where((m) => m == 'activateApp'), hasLength(1));
       final execute = calls.lastWhere((c) => c.method == 'execute');
       expect((execute.arguments as Map)['id'], 'panorama.app');
       // Activated first, then Exposé.
       expect(
-        names.lastIndexOf('activate'),
+        names.lastIndexOf('activateApp'),
         lessThan(names.lastIndexOf('execute')),
       );
     });

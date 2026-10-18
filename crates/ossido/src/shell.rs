@@ -50,10 +50,14 @@ pub fn is_shell_client(client: &Client) -> bool {
 
 pub struct ShellManagerState;
 
+/// The version of `silica_shell_manager_v1` Ossido offers: 10 splits `activate` (one window)
+/// from `activate_app` (all the app's windows, silica-ui#101).
+pub const SHELL_VERSION: u32 = 10;
+
 impl ShellManagerState {
     pub fn new(dh: &DisplayHandle) -> Self {
         dh.create_global::<State, SilicaShellManagerV1, _>(
-            crate::popup_menu::SHELL_VERSION,
+            SHELL_VERSION,
             ShellGlobal {
                 filter: Box::new(is_shell_client),
             },
@@ -349,7 +353,10 @@ impl State {
     }
 
     /// The window with this list identifier: focus, and it comes back if it was minimized.
-    pub fn activate_identifier(&mut self, identifier: &str) {
+    /// With `whole_app` its app activates: all of the app's windows on screen come forward
+    /// (a Dock click, the app switcher, Bring All to Front); without, only this window (and
+    /// its children) does, as a click on it (a window picked in a menu, silica-ui#101).
+    pub fn activate_identifier(&mut self, identifier: &str, whole_app: bool) {
         let window = self
             .space
             .elements()
@@ -365,7 +372,8 @@ impl State {
         // Like a click on the app in the Dock (dock.md, D-03): all the app windows on screen
         // come forward in their order, with the requested one on top. A minimized window
         // comes back by itself (the Dock, if they are all minimized, asks for the last one).
-        if self.space.elements().any(|w| *w == window)
+        if whole_app
+            && self.space.elements().any(|w| *w == window)
             && let Some(app) = crate::panorama::window_app(&window)
         {
             let same: Vec<Window> = self
@@ -377,11 +385,11 @@ impl State {
             for w in &same {
                 self.space.raise_element(w, false);
             }
-            // The requested window on top (the Dock passes the app's most recently used one).
-            self.focus_window(Some(window));
-            return;
         }
-        self.restore_window(&window);
+        // The requested window on top (the Dock passes the app's most recently used one).
+        if !self.space.elements().any(|w| *w == window) {
+            self.restore_window(&window);
+        }
         self.focus_window(Some(window));
     }
 }
@@ -460,8 +468,12 @@ impl Dispatch<SilicaShellManagerV1, ()> for State {
         _data_init: &mut DataInit<'_, Self>,
     ) {
         match request {
+            // Before version 10 `activate` brought the whole app, as `activate_app` does now.
             silica_shell_manager_v1::Request::Activate { identifier } => {
-                state.activate_identifier(&identifier);
+                state.activate_identifier(&identifier, manager.version() < 10);
+            }
+            silica_shell_manager_v1::Request::ActivateApp { identifier } => {
+                state.activate_identifier(&identifier, true);
             }
             silica_shell_manager_v1::Request::Launch { command } => match state.launch(&command) {
                 Ok(pid) => info!("shell: started {command} (pid {pid})"),

@@ -5,8 +5,8 @@
 //!
 //! Messages (JSON method codec):
 //! - from Dart: `list` → the list; `focused` → the focused identifier;
-//!   `activate {id}`; `launch {command}`; `execute {id}` (catalog command) → `true`
-//!   if sent;
+//!   `activate {id}` (that window), `activateApp {id}` (all its app's windows);
+//!   `launch {command}`; `execute {id}` (catalog command) → `true` if sent;
 //! - to Dart: `toplevels [{id, title, app_id, minimized}]` and `focused id` on every
 //!   change, `command id` when Ossido forwards a command to the shell (e.g.
 //!   `faro.toggle`), `broadcast {topic, value}` (a state of another shell component),
@@ -340,6 +340,18 @@ impl ShellLink {
             Some("activate") => {
                 let sent = self.manager.as_ref().is_some_and(|manager| {
                     manager.activate(text("id"));
+                    true
+                });
+                success(json!(sent))
+            }
+            // The whole app (version 10); an older Ossido's `activate` already brings it.
+            Some("activateApp") => {
+                let sent = self.manager.as_ref().is_some_and(|manager| {
+                    if manager.version() >= 10 {
+                        manager.activate_app(text("id"));
+                    } else {
+                        manager.activate(text("id"));
+                    }
                     true
                 });
                 success(json!(sent))

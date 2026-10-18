@@ -964,7 +964,7 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         ),
         shell: ShellLink::new(
             globals
-                .bind::<SilicaShellManagerV1, App, ()>(&qh, 1..=9, ())
+                .bind::<SilicaShellManagerV1, App, ()>(&qh, 1..=10, ())
                 .ok(),
             globals
                 .bind::<ExtForeignToplevelListV1, App, ()>(&qh, 1..=1, ())

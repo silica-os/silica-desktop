@@ -990,4 +990,40 @@ void main() {
     expect(inputOf(tester).controller.text, isEmpty);
     expect(stateOf(tester).fieldState, LockFieldState.placeholder);
   });
+
+  testWidgets(
+    'the clock glass stays off the edges of its glyph mask (silica-desktop#250)',
+    (tester) async {
+      // A cell at a fractional x, as at 1.5x: the mask's bounds cut device pixels.
+      await tester.pumpWidget(
+        const Directionality(
+          textDirection: TextDirection.ltr,
+          child: Stack(
+            children: [
+              Positioned(
+                left: 10.3,
+                top: 0,
+                width: 180,
+                height: 200,
+                child: LockGlyphGlass('2', look: LockLook(), inset: 24),
+              ),
+            ],
+          ),
+        ),
+      );
+      final mask = tester.getRect(find.byType(ShaderMask));
+      final glass = tester.getRect(
+        find.descendant(
+          of: find.byType(ShaderMask),
+          matching: find.byType(ClipRect),
+        ),
+      );
+      // Destination-in keeps the child where a bound only partly covers a pixel: the glass
+      // leaves more than a device pixel empty on every side.
+      expect(glass.left - mask.left, greaterThanOrEqualTo(2));
+      expect(glass.top - mask.top, greaterThanOrEqualTo(2));
+      expect(mask.right - glass.right, greaterThanOrEqualTo(2));
+      expect(mask.bottom - glass.bottom, greaterThanOrEqualTo(2));
+    },
+  );
 }
