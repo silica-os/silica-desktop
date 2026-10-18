@@ -98,7 +98,7 @@ generated in code are preferred.
 | `tools/sounds/candidates/alert-pebble-A.wav` | Silica project | MIT OR Apache-2.0 | original, synthesized by `tools/sounds/synth.py` |
 | `tools/sounds/candidates/alert-woodblock-A.wav` | Silica project | MIT OR Apache-2.0 | original, synthesized by `tools/sounds/synth.py` |
 | `tools/sounds/candidates/volume-feedback-A.wav` | Silica project | MIT OR Apache-2.0 | original, synthesized by `tools/sounds/synth.py` |
-| `crates/daemon/src/icons/body.svg` | Emanuele Frascella | CC BY-SA 4.0 | the Sketch body outline `tools/body.svg` of [silica-icons](https://github.com/silica-os/silica-icons), clip of the composed app icons |
+| `crates/silica-assets/src/compose/body.svg` | Emanuele Frascella | CC BY-SA 4.0 | the Sketch body outline `tools/body.svg` of [silica-icons](https://github.com/silica-os/silica-icons), clip of the composed app icons |
 | `crates/daemon/tests/fixtures/appicon/golden/clock-128-clear-dark.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
 | `crates/daemon/tests/fixtures/appicon/golden/clock-128-clear.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
 | `crates/daemon/tests/fixtures/appicon/golden/clock-128-dark.png` | Emanuele Frascella | CC BY-SA 4.0 | render of a pilot icon of [silica-icons](https://github.com/silica-os/silica-icons) by `tools/compose.py` (`gen.py`), test golden |
