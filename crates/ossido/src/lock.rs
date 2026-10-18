@@ -199,17 +199,18 @@ impl State {
         pointer.frame(self);
     }
 
-    /// `lockscreen.json` and `screensaver.json` changed.
+    /// `lockscreen.passwordDelay` or `screensaver.*` changed.
     pub fn apply_lock_config(&mut self) {
-        let Some(dir) = self.config_dir.clone() else {
-            return;
-        };
-        self.lock_config = crate::config::LockConfig::parse(
-            crate::config::read_json(&dir, crate::config::LOCK_FILE).as_ref(),
-        );
-        self.saver_config = crate::config::SaverConfig::parse(
-            crate::config::read_json(&dir, crate::config::SAVER_FILE).as_ref(),
-        );
+        // `lockscreen.passwordDelay` -1 is never (`null` for the parser).
+        let lock = self.service_settings.object("lockscreen").map(|mut map| {
+            if map.get("passwordDelay").and_then(serde_json::Value::as_i64) == Some(-1) {
+                map.insert("passwordDelay".to_owned(), serde_json::Value::Null);
+            }
+            map
+        });
+        self.lock_config = crate::config::LockConfig::parse(lock.as_ref());
+        self.saver_config =
+            crate::config::SaverConfig::parse(self.service_settings.object("screensaver").as_ref());
     }
 
     /// Every idle check: starts the screen saver, locks when the time has come.

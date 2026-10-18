@@ -47,6 +47,8 @@ pub struct State {
     pub session_bus: Option<String>,
     /// The `system.*` commands towards silica-daemon.
     pub system: crate::system::SystemLink,
+    /// The settings of the Settings service (`settings_service.rs`).
+    pub service_settings: crate::settings_service::ServiceSettings,
     /// The appearance forced with `--appearance` (tests, sessions without the daemon): it wins
     /// over silica-daemon's state.
     pub appearance: Option<bool>,
@@ -409,6 +411,7 @@ impl State {
             socket_name,
             session_bus: None,
             system: crate::system::SystemLink::disconnected(),
+            service_settings: crate::settings_service::ServiceSettings::default(),
             appearance: None,
             drag_icon: None,
             drag_icon_offset: Point::default(),

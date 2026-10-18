@@ -37,6 +37,7 @@ mod reap;
 mod render;
 mod resize;
 mod session_bus;
+pub mod settings_service;
 mod shell;
 pub mod state;
 mod system;
@@ -168,7 +169,7 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // The user's settings (keyboard.json, …), applied now and whenever Settings changes them.
+    // The settings still kept in files (displays.json, power.json), applied now and on change.
     if let Some(dir) = config::config_dir() {
         match config::watch(&event_loop.handle(), &dir) {
             Ok(()) => {
@@ -200,7 +201,30 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
-    ossido.state.system = system::SystemLink::start(ossido.state.session_bus.clone());
+    // The look of silica-daemon (the glass, the accessibility of the display) whenever it
+    // changes, and the settings of the Settings service.
+    let (look_tx, look_rx) = smithay::reexports::calloop::channel::channel::<()>();
+    event_loop
+        .handle()
+        .insert_source(look_rx, |event, _, ossido| {
+            if let smithay::reexports::calloop::channel::Event::Msg(()) = event {
+                ossido.state.apply_theme_config();
+                ossido.state.apply_input_config();
+            }
+        })
+        .map_err(|e| format!("look source: {e}"))?;
+    ossido.state.system =
+        system::SystemLink::start(ossido.state.session_bus.clone(), Some(look_tx));
+    let (settings_tx, settings_rx) = smithay::reexports::calloop::channel::channel();
+    event_loop
+        .handle()
+        .insert_source(settings_rx, |event, _, ossido| {
+            if let smithay::reexports::calloop::channel::Event::Msg(event) = event {
+                ossido.state.settings_event(event);
+            }
+        })
+        .map_err(|e| format!("settings source: {e}"))?;
+    settings_service::start(ossido.state.session_bus.clone(), settings_tx);
     if let Some(port) = options.control {
         let addr = control::listen(&event_loop.handle(), port)?;
         println!("OSSIDO_CONTROL={addr}");

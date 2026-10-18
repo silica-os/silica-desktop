@@ -176,10 +176,9 @@ handled yet.
   `folderColour` (an accent name, or `automatic`), `sidebarIconSize` (`small|medium|large`),
   `scrollBars` (`automatic|whenScrolling|always`), `scrollClick` (`page|spot`), `iconStyle`
   (`default|dark|clear|tinted`) as strings, `glass` (d, 0–1), `windowTint` (b), `keyboardNavigation` (b: Tab reaches every control) and
-  `doubleClickMs` (150–1000, default 300: the longest time between the two clicks of a double click), `reduceTransparency`, `reduceMotion` (Ossido reads these two from `theme.json` too) `increaseContrast` (b: Accessibility › Display; silica_ui draws the high-contrast palette) and `textScale` (d, 1–1.5, default 1: Accessibility › Larger Text; silica_ui scales the apps' text). An invalid value
+  `doubleClickMs` (150–1000, default 300: the longest time between the two clicks of a double click), `reduceTransparency`, `reduceMotion` (Ossido follows these two and `glass` through the state below) `increaseContrast` (b: Accessibility › Display; silica_ui draws the high-contrast palette) and `textScale` (d, 1–1.5, default 1: Accessibility › Larger Text; silica_ui scales the apps' text). An invalid value
   is `InvalidArgs` and changes nothing. Not saved by the daemon: Settings keeps them in
-  `$XDG_CONFIG_HOME/silica/theme.json` (its own persistence, read at start; Ossido watches it for
-  `glass` and `windowTint`).
+  `$XDG_CONFIG_HOME/silica/theme.json` (its own persistence, read at start).
 - State keys `look.accent`, `look.highlight`, `look.sidebarIconSize`, `look.scrollBars`,
   `look.scrollClick`, `look.iconStyle`, `look.folderColour`, `look.glass`, `look.windowTint`,
   `look.keyboardNavigation`, `look.doubleClickMs` (u), `look.reduceTransparency`, `look.reduceMotion`, `look.increaseContrast`, `look.textScale` (d).
@@ -289,12 +288,20 @@ showInCenter|sound>`, `controlcenter.modules` (`id:size`), `screenshot.*`.
 On disk: `$XDG_CONFIG_HOME/silica/settings.bin`, binary (format in the module documentation),
 only the values that differ from the default. When it does not exist the values of the old JSON
 files (`dock.json`, `menubar.json`, `wallpaper.json`, `lockscreen.json`, `screensaver.json`,
-`notifications.json`, `controlcenter.json`, `screenshot.json`) are imported once; they are left
-in place. Ossido still reads its own keys from JSON (`input.json`, `theme.json`, `hotcorners.json`,
-`shortcuts.json`, `dock.json` `titleBarDoubleClick` and `minimizeToApp`, `lockscreen.json`
-`passwordDelay`, `screensaver.json`): moving them is open (#236). Until then the daemon writes
-the four keys Ossido reads (`dock.minimizeToApp`, `lockscreen.passwordDelay`,
-`screensaver.minutes`, `screensaver.saver`) into those files as well, keeping their other keys.
+`notifications.json`, `controlcenter.json`, `screenshot.json`, and the files Ossido used to read:
+`keyboard.json`, `input.json`, `hotcorners.json`, `shortcuts.json`, `dock.json`
+`titleBarDoubleClick`, `theme.json` `cursorSize`) are imported once; they are left in place and
+not read again. A version 1 file (before Ossido's keys moved here, #240) imports Ossido's files
+once and is rewritten as version 2.
+
+Ossido's keys (`docs/control.md` › Settings; Ossido reads them through the service and follows
+`Changed`): `dock.titleBarDoubleClick` (`zoom|minimize|none`), `dock.minimizeToApp`,
+`keyboard.repeatDelay|repeatRate|layouts|model|options`,
+`input.mouse.speed|naturalScroll|scrollSpeed|secondaryClick`,
+`input.touchpad.speed|naturalScroll|scrollSpeed|secondaryClick|tapToClick|disableWhileTyping`,
+`hotcorners.topLeft|topRight|bottomLeft|bottomRight`, `shortcuts.capture`, `shortcuts.<catalog
+command id>` (a shortcut, `none`, or empty for the catalog's; an unknown command is refused),
+`accessibility.cursorSize`, `lockscreen.passwordDelay`, `screensaver.minutes|saver`.
 
 ## dev.frascella.Silica.Sound1
 

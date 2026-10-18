@@ -107,6 +107,150 @@ impl Headless {
     }
 }
 
+/// A private session bus with a Settings service on it (`dev.frascella.Silica.Settings1`, the
+/// interface of silica-daemon, here a small stand-in holding what it is given), for an Ossido
+/// started with [`SettingsBus::env`]: the settings Ossido reads from the service. Ossido does not
+/// depend on silica-daemon (the layers of `xtask`), so the tests do not either.
+pub struct SettingsBus {
+    bus: Child,
+    pub address: String,
+    connection: zbus::blocking::Connection,
+}
+
+const SETTINGS_PATH: &str = "/dev/frascella/Silica/Settings1";
+const SETTINGS_INTERFACE: &str = "dev.frascella.Silica.Settings1";
+
+/// The stand-in service: GetAll, Set and Reset, and Changed for every change.
+struct FakeSettings {
+    values: std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+    defaults: std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+}
+
+#[zbus::interface(name = "dev.frascella.Silica.Settings1")]
+impl FakeSettings {
+    fn get_all(&self) -> std::collections::HashMap<String, zbus::zvariant::OwnedValue> {
+        self.values
+            .iter()
+            .filter_map(|(k, v)| Some((k.clone(), v.try_clone().ok()?)))
+            .collect()
+    }
+
+    async fn set(
+        &mut self,
+        key: &str,
+        value: zbus::zvariant::Value<'_>,
+        #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
+    ) -> zbus::fdo::Result<()> {
+        let owned = value
+            .try_to_owned()
+            .map_err(|e| zbus::fdo::Error::InvalidArgs(e.to_string()))?;
+        self.values.insert(key.to_owned(), owned);
+        Self::changed(&emitter, key, value).await?;
+        Ok(())
+    }
+
+    async fn reset(
+        &mut self,
+        key: &str,
+        #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
+    ) -> zbus::fdo::Result<()> {
+        let default = self
+            .defaults
+            .get(key)
+            .and_then(|v| v.try_clone().ok())
+            .ok_or_else(|| zbus::fdo::Error::InvalidArgs(format!("no default for {key}")))?;
+        let value: zbus::zvariant::Value<'_> = default
+            .try_clone()
+            .map(Into::into)
+            .map_err(|e: zbus::zvariant::Error| zbus::fdo::Error::Failed(e.to_string()))?;
+        self.values.insert(key.to_owned(), default);
+        Self::changed(&emitter, key, value).await?;
+        Ok(())
+    }
+
+    #[zbus(signal)]
+    async fn changed(
+        emitter: &zbus::object_server::SignalEmitter<'_>,
+        key: &str,
+        value: zbus::zvariant::Value<'_>,
+    ) -> zbus::Result<()>;
+}
+
+impl SettingsBus {
+    /// The service with `defaults` (silica-daemon's defaults of the keys a test reads).
+    pub fn start(defaults: &[(&str, zbus::zvariant::Value<'_>)]) -> Self {
+        let mut bus = Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--nopidfile", "--print-address=1"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("dbus-daemon (package dbus) is required for these tests");
+        let mut line = String::new();
+        BufReader::new(bus.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let address = line.trim().to_owned();
+        let defaults: std::collections::HashMap<_, _> = defaults
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), v.try_to_owned().unwrap()))
+            .collect();
+        let values = defaults
+            .iter()
+            .map(|(k, v)| (k.clone(), v.try_clone().unwrap()))
+            .collect();
+        let connection = zbus::blocking::connection::Builder::address(address.as_str())
+            .unwrap()
+            .name("dev.frascella.Silica")
+            .unwrap()
+            .serve_at(SETTINGS_PATH, FakeSettings { values, defaults })
+            .unwrap()
+            .build()
+            .unwrap();
+        Self {
+            bus,
+            address,
+            connection,
+        }
+    }
+
+    /// The environment for Ossido: this bus as its session bus.
+    pub fn env(&self) -> [(&str, &str); 1] {
+        [("DBUS_SESSION_BUS_ADDRESS", self.address.as_str())]
+    }
+
+    /// `Set(key, value)` on the service, as Settings does.
+    pub fn set(&self, key: &str, value: zbus::zvariant::Value<'_>) {
+        self.connection
+            .call_method(
+                Some("dev.frascella.Silica"),
+                SETTINGS_PATH,
+                Some(SETTINGS_INTERFACE),
+                "Set",
+                &(key, value),
+            )
+            .unwrap();
+    }
+
+    /// `Reset(key)`: back to the default.
+    pub fn reset(&self, key: &str) {
+        self.connection
+            .call_method(
+                Some("dev.frascella.Silica"),
+                SETTINGS_PATH,
+                Some(SETTINGS_INTERFACE),
+                "Reset",
+                &(key,),
+            )
+            .unwrap();
+    }
+}
+
+impl Drop for SettingsBus {
+    fn drop(&mut self) {
+        let _ = self.bus.kill();
+        let _ = self.bus.wait();
+    }
+}
+
 impl Drop for Headless {
     fn drop(&mut self) {
         let _ = self.child.kill();

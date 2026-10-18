@@ -525,7 +525,7 @@ impl State {
             }
             InputEvent::PointerAxis { event } => {
                 let source = event.source();
-                // Scroll speed (input.json): wheels are mice, fingers are touchpads.
+                // Scroll speed (input.*): wheels are mice, fingers are touchpads.
                 let factor = match source {
                     AxisSource::Finger | AxisSource::Continuous => {
                         self.input_config.touchpad.scroll_speed

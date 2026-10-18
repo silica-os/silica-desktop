@@ -149,6 +149,10 @@ class ScreenshotLayerState extends State<ScreenshotLayer>
   late final SilicaSettings _store = widget.settings ?? SilicaSettings.instance;
   late ScreenshotSettings _settings = ScreenshotSettings.of(_store);
 
+  /// The `screenshot.*` keys of the service: a change made elsewhere (Settings, another run, the
+  /// values arriving after the layer started) shows at once (silica-desktop#240).
+  late final Listenable _settingsChanges = _store.watchPrefix('screenshot.');
+
   StreamSubscription<String>? _commands;
   StreamSubscription<String>? _drags;
   final FocusNode _focus = FocusNode();
@@ -222,7 +226,22 @@ class ScreenshotLayerState extends State<ScreenshotLayer>
     });
     _drags = _services.dragFinished.listen(_dragFinished);
     ShellChannel.instance.states.addListener(_statesChanged);
+    _settingsChanges.addListener(_storeChanged);
     _pushSettings();
+  }
+
+  /// The service's `screenshot.*` keys changed: the options follow them.
+  void _storeChanged() {
+    if (!mounted) return;
+    final next = ScreenshotSettings.of(_store);
+    if (next.showPointer != _settings.showPointer) {
+      _settings = next;
+      _pushSettings();
+    }
+    setState(() {
+      _settings = next;
+      _optionsEntries = null;
+    });
   }
 
   @override
@@ -231,6 +250,7 @@ class ScreenshotLayerState extends State<ScreenshotLayer>
     _commands?.cancel();
     _drags?.cancel();
     ShellChannel.instance.states.removeListener(_statesChanged);
+    _settingsChanges.removeListener(_storeChanged);
     _dwell.dispose();
     _ticker?.cancel();
     _settle.dispose();
