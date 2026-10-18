@@ -52,6 +52,8 @@ impl State {
         if self.windowless_front.as_deref() == Some(app) {
             self.set_windowless_front(None);
         }
+        // A hidden app does not come back to the front by itself.
+        self.windowless_history.retain(|a| a != app);
         let front = self.focused_window();
         if front.is_none() || windows.iter().any(|w| Some(w) == front.as_ref()) {
             let next = self.space.elements().last().cloned();

@@ -378,6 +378,13 @@ impl State {
         if self.windowless_front == app {
             return;
         }
+        if let Some(previous) = self.windowless_front.take() {
+            self.windowless_history.retain(|a| *a != previous);
+            self.windowless_history.push(previous);
+        }
+        if let Some(app) = &app {
+            self.windowless_history.retain(|a| a != app);
+        }
         self.windowless_front = app;
         let value = self.windowless_front.clone().unwrap_or_default();
         self.broadcast_to_shell("app.frontmost".to_owned(), value);
