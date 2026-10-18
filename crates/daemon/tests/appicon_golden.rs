@@ -139,9 +139,9 @@ fn reference(dir: &Path, name: &str, side: usize) -> Option<Vec<u8>> {
             }
             let n = (k * k) as f64;
             let a = acc[3] / n;
-            for c in 0..3 {
+            for sum in acc.iter().take(3) {
                 out.push(if a > 0.0 {
-                    (acc[c] / n / a).round() as u8
+                    (sum / n / a).round() as u8
                 } else {
                     0
                 });
