@@ -1,11 +1,12 @@
 // The screenshot settings: where captures go, the timer, the thumbnail, the pointer, the
-// mode and selection the ⇧⌘5 bar remembers and where the bar was left. Kept in
-// $XDG_CONFIG_HOME/silica/screenshot.json; ⇧⌘3 and ⇧⌘4 follow the same place and thumbnail
+// mode and selection the ⇧⌘5 bar remembers and where the bar was left. Kept in the
+// `screenshot.*` keys of the Settings service; ⇧⌘3 and ⇧⌘4 follow the same place and thumbnail
 // choices as the bar (as on the reference system).
 
-import 'dart:convert';
-import 'dart:io';
+import 'dart:async';
 import 'dart:ui' show Offset, Rect;
+
+import 'package:silica_ui/silica_ui.dart';
 
 /// Where a capture goes.
 sealed class ShotDestination {
@@ -114,58 +115,58 @@ class ScreenshotSettings {
 
   static const int maxRecentFolders = 3;
 
-  Map<String, Object?> toJson() => {
-    'destination': destination.saved,
-    'timer': timer,
-    'thumbnail': showThumbnail,
-    'remember_selection': rememberSelection,
-    'pointer': showPointer,
-    'mode': mode.name,
-    if (selection case final s?)
-      'selection': [s.left, s.top, s.width, s.height],
-    if (barCenter case final c?) 'bar': [c.dx, c.dy],
-    'recent_folders': recentFolders,
+  /// The `screenshot.*` keys, with the values of these settings.
+  Map<String, Object> toValues() => {
+    'screenshot.destination': destination.saved,
+    'screenshot.timer': timer,
+    'screenshot.thumbnail': showThumbnail,
+    'screenshot.rememberSelection': rememberSelection,
+    'screenshot.pointer': showPointer,
+    'screenshot.mode': mode.name,
+    'screenshot.selection': [
+      if (selection case final s?) ...[s.left, s.top, s.width, s.height],
+    ],
+    'screenshot.bar': [
+      if (barCenter case final c?) ...[c.dx, c.dy],
+    ],
+    'screenshot.recentFolders': recentFolders,
   };
 
-  static ScreenshotSettings fromJson(Object? json) {
-    if (json is! Map) return ScreenshotSettings();
-    bool flag(String key, bool fallback) =>
-        json[key] is bool ? json[key] as bool : fallback;
-    List<double>? numbers(Object? value, int count) {
-      if (value is! List || value.length != count) return null;
-      final out = <double>[];
-      for (final v in value) {
-        if (v is! num || !v.isFinite) return null;
-        out.add(v.toDouble());
-      }
-      return out;
-    }
-
-    final rect = numbers(json['selection'], 4);
-    final bar = numbers(json['bar'], 2);
-    final timer = json['timer'];
+  /// The settings now in the service.
+  static ScreenshotSettings of(SilicaSettings s) {
+    final rect = s.getNumbers('screenshot.selection');
+    final bar = s.getNumbers('screenshot.bar');
+    final timer = s.getInt('screenshot.timer', fallback: 0);
     return ScreenshotSettings(
-      destination: ShotDestination.parse(json['destination']),
-      timer: timer is int && timerChoices.contains(timer) ? timer : 0,
-      showThumbnail: flag('thumbnail', true),
-      rememberSelection: flag('remember_selection', true),
-      showPointer: flag('pointer', false),
-      mode:
-          ToolbarChoice.values
-              .where((m) => m.name == json['mode'])
-              .firstOrNull ??
-          ToolbarChoice.selection,
-      selection: rect != null && rect[2] > 0 && rect[3] > 0
+      destination: ShotDestination.parse(
+        s.getText('screenshot.destination', fallback: 'desktop'),
+      ),
+      timer: timerChoices.contains(timer) ? timer : 0,
+      showThumbnail: s.getBool('screenshot.thumbnail', fallback: true),
+      rememberSelection: s.getBool(
+        'screenshot.rememberSelection',
+        fallback: true,
+      ),
+      showPointer: s.getBool('screenshot.pointer', fallback: false),
+      mode: s.getEnum(
+        'screenshot.mode',
+        ToolbarChoice.values,
+        fallback: ToolbarChoice.selection,
+      ),
+      selection: rect.length == 4 && rect[2] > 0 && rect[3] > 0
           ? Rect.fromLTWH(rect[0], rect[1], rect[2], rect[3])
           : null,
-      barCenter: bar == null ? null : Offset(bar[0], bar[1]),
+      barCenter: bar.length == 2 ? Offset(bar[0], bar[1]) : null,
       recentFolders: [
-        if (json['recent_folders'] case final List list)
-          for (final f in list.take(maxRecentFolders))
-            if (f is String && f.startsWith('/')) f,
+        for (final f
+            in s.getTexts('screenshot.recentFolders').take(maxRecentFolders))
+          if (f.startsWith('/')) f,
       ],
     );
   }
+
+  /// Sends the settings to the service (all keys at once).
+  void save(SilicaSettings s) => unawaited(s.setMany(toValues()));
 
   /// A folder chosen with "Other Folder…": it becomes the destination and the first of the
   /// recent ones.
@@ -176,33 +177,6 @@ class ScreenshotSettings {
       ..insert(0, path);
     if (recentFolders.length > maxRecentFolders) {
       recentFolders.removeRange(maxRecentFolders, recentFolders.length);
-    }
-  }
-
-  /// The settings file: $XDG_CONFIG_HOME/silica/screenshot.json.
-  static File file({Map<String, String>? env}) {
-    final e = env ?? Platform.environment;
-    final home = e['HOME'] ?? '/tmp';
-    final config = e['XDG_CONFIG_HOME'] ?? '$home/.config';
-    return File('$config/silica/screenshot.json');
-  }
-
-  static ScreenshotSettings load(File file) {
-    try {
-      return fromJson(jsonDecode(file.readAsStringSync()));
-    } on FileSystemException {
-      return ScreenshotSettings();
-    } on FormatException {
-      return ScreenshotSettings();
-    }
-  }
-
-  void save(File file) {
-    try {
-      file.parent.createSync(recursive: true);
-      file.writeAsStringSync(jsonEncode(toJson()));
-    } on FileSystemException {
-      // Settings that cannot be written stay for this session.
     }
   }
 }

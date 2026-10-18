@@ -25,9 +25,8 @@ File _dockConfig(Map<String, String>? env) {
   return File('$config/silica/dock.json');
 }
 
-/// The Dock configuration ($XDG_CONFIG_HOME/silica/dock.json, usually ~/.config):
-/// `pinned`, `magnify`, `recents`, `autohide`, `position`, `minimizeEffect`, `indicators`
-/// (options.dart).
+/// The Dock's own data ($XDG_CONFIG_HOME/silica/dock.json, usually ~/.config): `pinned` and
+/// `folders`. The options (`magnify`, `autohide`, ...) are Settings service keys, options.dart.
 Map<String, Object?> readDockConfig({Map<String, String>? env}) {
   final file = _dockConfig(env);
   try {
@@ -54,12 +53,6 @@ void saveDockOption(String key, Object? value, {Map<String, String>? env}) {
   } on FileSystemException {
     // Without a writable configuration the choice lasts until the end of the session.
   }
-}
-
-/// A yes/no Dock option.
-bool dockFlag(String key, {required bool fallback, Map<String, String>? env}) {
-  final value = readDockConfig(env: env)[key];
-  return value is bool ? value : fallback;
 }
 
 /// Saves the pinned apps ("Keep in Dock" and "Remove").

@@ -1,17 +1,16 @@
 // The desktop wallpaper (background layer). Default: Ravello of the Amalfi set of
 // silica-wallpapers (CC BY-SA 4.0), light or dark with the appearance, the square image
-// aspect-filled and centred (the excess is cropped). From ~/.config/silica/wallpaper.json:
-// {"wallpaper": "positano-1"} (an id of the set), {"color": "#7a7b80"} or {"image": "/path"}.
+// aspect-filled and centred (the excess is cropped). From the Settings service: `wallpaper.id`
+// (an id of the set), `wallpaper.color` (`#7a7b80`) or `wallpaper.image` (a path), in that
+// order of preference reversed: image, color, id.
 // Without the set installed, the Silica wallpaper rendered in code from its recipe.
 
-import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart';
+import 'package:silica_ui/silica_ui.dart';
 
-import '../system/config_events.dart';
 import '../system/shell_channel.dart';
 import 'amalfi_wallpapers.dart';
 
@@ -48,8 +47,14 @@ Color? parseHexColor(String text) {
   return value == null ? null : Color(0xFF000000 | value);
 }
 
-/// The choice from the JSON configuration; the default if missing or invalid.
-WallpaperChoice parseWallpaperChoice(String? json, {Map<String, String>? env}) {
+/// The choice of the `wallpaper.*` settings: [image] if the file exists, else [color]
+/// (`#rrggbb`), else the Amalfi wallpaper [id]; the default if none is usable.
+WallpaperChoice chooseWallpaper({
+  String image = '',
+  String color = '',
+  String id = '',
+  Map<String, String>? env,
+}) {
   final amalfi = loadAmalfiWallpapers(env: env);
   WallpaperChoice byId(String? id) {
     for (final w in amalfi) {
@@ -64,25 +69,31 @@ WallpaperChoice parseWallpaperChoice(String? json, {Map<String, String>? env}) {
         : AmalfiWallpaper(amalfi.first);
   }
 
-  if (json == null) return byId(null);
-  try {
-    final value = jsonDecode(json);
-    if (value is Map) {
-      if (value['image'] case final String path when File(path).existsSync()) {
-        return ImageWallpaper(path);
-      }
-      if (value['color'] case final String color) {
-        if (parseHexColor(color) case final parsed?) {
-          return ColorWallpaper(parsed);
-        }
-      }
-      if (value['wallpaper'] case final String id) return byId(id);
-    }
-  } on FormatException {
-    // Broken configuration: the default.
+  if (image.isNotEmpty && File(image).existsSync())
+    return ImageWallpaper(image);
+  if (color.isNotEmpty) {
+    if (parseHexColor(color) case final parsed?) return ColorWallpaper(parsed);
   }
-  return byId(null);
+  return byId(id.isEmpty ? null : id);
 }
+
+/// The wallpaper in the settings now.
+WallpaperChoice wallpaperChoiceOf(
+  SilicaSettings s, {
+  Map<String, String>? env,
+}) => chooseWallpaper(
+  image: s.getText('wallpaper.image', fallback: ''),
+  color: s.getText('wallpaper.color', fallback: ''),
+  id: s.getText('wallpaper.id', fallback: ''),
+  env: env,
+);
+
+/// The fill mode in the settings now.
+WallpaperFit wallpaperFitOf(SilicaSettings s) => s.getEnum(
+  'wallpaper.fit',
+  WallpaperFit.values,
+  fallback: WallpaperFit.fill,
+);
 
 /// How an image fills the screen (wallpaper.json `fit`, Settings › Wallpaper).
 enum WallpaperFit {
@@ -102,82 +113,42 @@ enum WallpaperFit {
   tile,
 }
 
-/// The fill mode from the JSON configuration; [WallpaperFit.fill] if missing or invalid.
-WallpaperFit parseWallpaperFit(String? json) {
-  if (json == null) return WallpaperFit.fill;
-  try {
-    final value = jsonDecode(json);
-    if (value is Map) {
-      for (final fit in WallpaperFit.values) {
-        if (value['fit'] == fit.name) return fit;
-      }
-    }
-  } on FormatException {
-    // Broken configuration: the default.
-  }
-  return WallpaperFit.fill;
-}
-
-/// `$XDG_CONFIG_HOME/silica/wallpaper.json` (usually `~/.config`).
-File wallpaperFile({Map<String, String>? env}) {
-  final e = env ?? Platform.environment;
-  final home = e['HOME'] ?? '';
-  final xdg = e['XDG_CONFIG_HOME'];
-  final config = xdg != null && xdg.isNotEmpty ? xdg : '$home/.config';
-  return File('$config/silica/wallpaper.json');
-}
-
-String? _readWallpaperFile({Map<String, String>? env}) {
-  try {
-    return wallpaperFile(env: env).readAsStringSync();
-  } on FileSystemException {
-    return null;
-  }
-}
-
-WallpaperChoice loadWallpaperChoice({Map<String, String>? env}) =>
-    parseWallpaperChoice(_readWallpaperFile(env: env), env: env);
-
-WallpaperFit loadWallpaperFit({Map<String, String>? env}) =>
-    parseWallpaperFit(_readWallpaperFile(env: env));
-
-/// The wallpaper layer: the choice in wallpaper.json, drawn again as soon as Settings changes
-/// it (the folder is watched; Settings writes a temporary file and renames it over).
+/// The wallpaper layer: the `wallpaper.*` settings, drawn again as soon as Settings changes
+/// them.
 class WallpaperLayer extends StatefulWidget {
-  const WallpaperLayer({super.key, this.env});
+  const WallpaperLayer({super.key, this.env, this.settings});
 
   final Map<String, String>? env;
+
+  /// The settings; the system's by default.
+  final SilicaSettings? settings;
 
   @override
   State<WallpaperLayer> createState() => _WallpaperLayerState();
 }
 
 class _WallpaperLayerState extends State<WallpaperLayer> {
-  late WallpaperChoice _choice = loadWallpaperChoice(env: widget.env);
-  late WallpaperFit _fit = loadWallpaperFit(env: widget.env);
-  StreamSubscription<FileSystemEvent>? _events;
-  Timer? _debounce;
+  late final SilicaSettings _settings =
+      widget.settings ?? SilicaSettings.instance;
+  late final Listenable _keys = _settings.watch(const [
+    'wallpaper.image',
+    'wallpaper.color',
+    'wallpaper.id',
+    'wallpaper.fit',
+  ]);
+  late WallpaperChoice _choice = wallpaperChoiceOf(_settings, env: widget.env);
+  late WallpaperFit _fit = wallpaperFitOf(_settings);
 
   @override
   void initState() {
     super.initState();
-    final dir = wallpaperFile(env: widget.env).parent;
-    try {
-      if (!dir.existsSync()) dir.createSync(recursive: true);
-      _events = dir.watch().listen((event) {
-        if (!eventTouchesFile(event, 'wallpaper.json')) return;
-        _debounce?.cancel();
-        _debounce = Timer(const Duration(milliseconds: 50), _reload);
-      });
-    } on FileSystemException {
-      // No configuration folder: the wallpaper read at the start stays.
-    }
+    _keys.addListener(_reload);
   }
 
   void _reload() {
     if (!mounted) return;
-    final choice = loadWallpaperChoice(env: widget.env);
-    final fit = loadWallpaperFit(env: widget.env);
+    final choice = wallpaperChoiceOf(_settings, env: widget.env);
+    final fit = wallpaperFitOf(_settings);
     if (choice.runtimeType == _choice.runtimeType &&
         _sameChoice(choice, _choice) &&
         fit == _fit) {
@@ -203,8 +174,7 @@ class _WallpaperLayerState extends State<WallpaperLayer> {
 
   @override
   void dispose() {
-    _debounce?.cancel();
-    _events?.cancel();
+    _keys.removeListener(_reload);
     super.dispose();
   }
 

@@ -19,6 +19,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -114,24 +115,6 @@ abstract final class LockControl {
     // The login name stays.
   }
   return (login: login, name: name);
-}
-
-/// Whether the lock screen shows the user's name and picture (lockscreen.json `showUser`).
-bool readShowUser({Map<String, String>? env}) {
-  final e = env ?? Platform.environment;
-  final base = e['XDG_CONFIG_HOME'] ?? '${e['HOME'] ?? ''}/.config';
-  try {
-    final json = jsonDecode(
-      File('$base/silica/lockscreen.json').readAsStringSync(),
-    );
-    return json is Map && json['showUser'] is bool
-        ? json['showUser'] as bool
-        : true;
-  } on FileSystemException {
-    return true;
-  } on FormatException {
-    return true;
-  }
 }
 
 /// Takes the session lock whenever Ossido says the session is locked: at once, again every few
@@ -244,15 +227,12 @@ class _ScreenSaverLayerState extends State<ScreenSaverLayer> {
 
 /// The locked screen itself.
 class LockScreen extends StatefulWidget {
-  const LockScreen({
-    super.key,
-    required this.source,
-    this.showUser = true,
-    this.now,
-  });
+  const LockScreen({super.key, required this.source, this.settings, this.now});
 
   final LockSource source;
-  final bool showUser;
+
+  /// Where `lockscreen.showUser` (the user's name and picture) comes from; the system's.
+  final SilicaSettings? settings;
   final DateTime Function()? now;
 
   @override
@@ -269,13 +249,23 @@ class LockScreenState extends State<LockScreen>
   );
   Timer? _tick;
   bool _busy = false;
+  late final ValueListenable<bool> _showUser =
+      (widget.settings ?? SilicaSettings.instance).boolean(
+        'lockscreen.showUser',
+        fallback: true,
+      );
 
   /// The last try failed: the password was wrong (false) or could not be checked (true).
   bool? _failed;
 
+  void _userSettingChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
+    _showUser.addListener(_userSettingChanged);
     _tick = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
@@ -286,6 +276,7 @@ class LockScreenState extends State<LockScreen>
 
   @override
   void dispose() {
+    _showUser.removeListener(_userSettingChanged);
     _tick?.cancel();
     _password.dispose();
     _focus.dispose();
@@ -374,7 +365,7 @@ class LockScreenState extends State<LockScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (widget.showUser) ...[
+                  if (_showUser.value) ...[
                     _Avatar(name: user.name),
                     const SizedBox(height: 10),
                     Text(

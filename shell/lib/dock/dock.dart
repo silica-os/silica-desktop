@@ -104,7 +104,7 @@ class _LiveDockState extends State<LiveDock> {
     }
   }
 
-  /// Dock options (dock.json), reloaded when Settings changes them.
+  /// Dock options (the `dock.*` settings), following Settings live.
   final DockOptionsWatcher _options = DockOptionsWatcher();
 
   /// Badges, progress and attention asked by the apps (LauncherEntry on D-Bus).
@@ -260,14 +260,14 @@ class _LiveDockState extends State<LiveDock> {
   /// appeared theirs.
   void _entriesChanged() => _changed();
 
-  /// The separator was dragged to a new size: the same key Settings writes (dock.json `tileSize`);
+  /// The separator was dragged to a new size: the same key Settings writes (`dock.tileSize`);
   /// the magnified size never goes below it.
   void _resized(double canvas) {
-    saveDockOption('tileSize', canvas.round());
-    if (_o.magnifiedSize < canvas) {
-      saveDockOption('magnifiedSize', canvas.round());
+    final raiseMagnified = _o.magnifiedSize < canvas;
+    setDockOption('tileSize', canvas.round());
+    if (raiseMagnified) {
+      setDockOption('magnifiedSize', canvas.round());
     }
-    _options.reload();
   }
 
   void _optionsChanged() {
@@ -352,7 +352,6 @@ class _LiveDockState extends State<LiveDock> {
 
   void _setOption(String key, Object value) {
     saveDockOption(key, value);
-    _options.reload();
   }
 
   /// The separator menu (D-04): hiding, magnification, position, minimize effect, then the
@@ -1039,7 +1038,7 @@ class Dock extends StatefulWidget {
   final double? magnified;
 
   /// The size was changed by dragging the separator and the pointer was released: the
-  /// canvas to keep (dock.json `tileSize`).
+  /// canvas to keep (`dock.tileSize`).
   final ValueChanged<double>? onResize;
 
   /// Hidden below the screen until the pointer reaches the last row (SH-DK-07).

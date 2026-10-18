@@ -260,7 +260,14 @@ class _ControlCenterState extends State<ControlCenter>
   bool _open = false;
 
   /// The arrangement: the user's, or the reference's default.
-  late List<CcModule> _modules = loadModules(env: widget.env);
+  late List<CcModule> _modules = loadModules();
+  late final Listenable _modulesKey = SilicaSettings.instance.watch(const [
+    modulesKey,
+  ]);
+
+  void _modulesChanged() {
+    if (mounted) setState(() => _modules = loadModules());
+  }
 
   @override
   void initState() {
@@ -269,6 +276,7 @@ class _ControlCenterState extends State<ControlCenter>
     _anim = AnimationController(vsync: this)
       ..addListener(() => setState(() {}));
     widget.system.addListener(_changed);
+    _modulesKey.addListener(_modulesChanged);
     _commands = ShellChannel.instance.commands.listen((id) {
       if (id == 'controlcenter.toggle') _toggle();
     });
@@ -287,6 +295,7 @@ class _ControlCenterState extends State<ControlCenter>
   @override
   void dispose() {
     widget.system.removeListener(_changed);
+    _modulesKey.removeListener(_modulesChanged);
     ShellChannel.instance.states.removeListener(_statesChanged);
     _commands?.cancel();
     _dismissed?.cancel();
@@ -1064,7 +1073,7 @@ class _ControlCenterState extends State<ControlCenter>
 
   void _setModules(List<CcModule> modules) {
     setState(() => _modules = modules);
-    saveModules(modules, env: widget.env);
+    saveModules(modules);
   }
 
   void _removeModule(String key) => _setModules([
@@ -1132,16 +1141,16 @@ class _ControlCenterState extends State<ControlCenter>
       size(l.ccSizeLarge, ModuleSize.large),
       const MenuDivider(),
       // Only the controls with a status item can go to the bar; the rest stay disabled.
-      if (menubarShows(readMenubarConfig(widget.env), key))
+      if (menubarShows(MenubarConfig.of(SilicaSettings.instance), key))
         MenuAction(
           l.ccRemoveFromMenuBar,
-          onSelected: () => setMenubarModule(key, false, widget.env),
+          onSelected: () => setMenubarModule(key, false),
         )
       else
         MenuAction(
           l.ccCopyToMenuBar,
           enabled: menubarModules.contains(key),
-          onSelected: () => setMenubarModule(key, true, widget.env),
+          onSelected: () => setMenubarModule(key, true),
         ),
       const MenuDivider(),
       MenuAction(l.ccRemove, onSelected: () => _removeModule(key)),

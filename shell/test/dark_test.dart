@@ -229,7 +229,7 @@ void main() {
     final dir = Directory.systemTemp.createTempSync('shot-dark');
     addTearDown(() => dir.deleteSync(recursive: true));
     await tester.pumpWidget(
-      dark(ScreenshotLayer(settingsFile: File('${dir.path}/screenshot.json'))),
+      dark(ScreenshotLayer(settings: SilicaSettings.withValues({}))),
     );
     await send(tester, 'screenshot.toolbar');
     await tester.pumpAndSettle();

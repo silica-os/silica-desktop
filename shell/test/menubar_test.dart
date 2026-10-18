@@ -57,37 +57,36 @@ void main() {
     );
   });
 
-  test(
-    'menubar.json clock and recentItems: valid values, defaults otherwise',
-    () {
-      final config = MenubarConfig.fromJson({
-        'clock': {
-          'hour24': false,
-          'seconds': true,
-          'weekday': false,
-          'date': 'never',
-        },
-        'recentItems': 20,
-      });
-      expect(
-        config.clock,
-        const ClockStyle(
-          hour24: false,
-          seconds: true,
-          weekday: false,
-          date: ClockDate.never,
-        ),
-      );
-      expect(config.recentItems, 20);
-      final odd = MenubarConfig.fromJson({
-        'clock': {'hour24': 'yes', 'date': 'sometimes'},
-        'recentItems': 7,
-      });
-      expect(odd.clock, const ClockStyle());
-      expect(odd.recentItems, 10);
-      expect(MenubarConfig.fromJson({'clock': 3}).clock, const ClockStyle());
-    },
-  );
+  test('menubar clock and recentItems: valid values, defaults otherwise', () {
+    final config = MenubarConfig.of(
+      SilicaSettings.withValues({
+        'menubar.clock.hour24': false,
+        'menubar.clock.seconds': true,
+        'menubar.clock.weekday': false,
+        'menubar.clock.date': 'never',
+        'menubar.recentItems': 20,
+      }),
+    );
+    expect(
+      config.clock,
+      const ClockStyle(
+        hour24: false,
+        seconds: true,
+        weekday: false,
+        date: ClockDate.never,
+      ),
+    );
+    expect(config.recentItems, 20);
+    final odd = MenubarConfig.of(
+      SilicaSettings.withValues({
+        'menubar.clock.hour24': 'yes',
+        'menubar.clock.date': 'sometimes',
+        'menubar.recentItems': 7,
+      }),
+    );
+    expect(odd.clock, const ClockStyle());
+    expect(odd.recentItems, 10);
+  });
 
   testWidgets(
     'the name of the focused app, in bold, from the .desktop entries',
@@ -130,17 +129,19 @@ void main() {
     expect(wifiArcs(0.1), 1);
   });
 
-  test('menubar.json autohide and background', () {
-    expect(MenubarConfig.fromJson({}).autohide, MenubarAutohide.fullscreen);
-    expect(MenubarConfig.fromJson({}).background, isFalse);
-    final config = MenubarConfig.fromJson({
-      'autohide': 'always',
-      'background': true,
+  test('menubar autohide and background', () {
+    MenubarConfig of(Map<String, Object?> values) =>
+        MenubarConfig.of(SilicaSettings.withValues(values));
+    expect(of({}).autohide, MenubarAutohide.fullscreen);
+    expect(of({}).background, isFalse);
+    final config = of({
+      'menubar.autohide': 'always',
+      'menubar.background': true,
     });
     expect(config.autohide, MenubarAutohide.always);
     expect(config.background, isTrue);
     expect(
-      MenubarConfig.fromJson({'autohide': 'sometimes'}).autohide,
+      of({'menubar.autohide': 'sometimes'}).autohide,
       MenubarAutohide.fullscreen,
     );
   });

@@ -1,14 +1,12 @@
-// The Dock options in dock.json (Settings › Desktop & Dock and the separator menu write them):
-// one place that reads them with their defaults, and a watcher so a change made by Settings
-// applies at once.
+// The Dock options, the `dock.*` keys of the Settings service (Settings › Desktop & Dock and
+// the separator menu write them): one place that reads them, and a watcher so a change made
+// by Settings applies at once.
 
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:silica_ui/silica_ui.dart';
 
-import '../system/config_events.dart';
-import 'apps.dart';
 import 'model.dart';
 
 /// Where the Dock sits (dock.md › SH-DK-05/06). Only the bottom is implemented: the side
@@ -62,31 +60,34 @@ class DockOptions {
   /// The dots under open apps (SH-DK-12).
   final bool indicators;
 
-  static DockOptions read({Map<String, String>? env}) {
-    final c = readDockConfig(env: env);
-    bool flag(String key, bool fallback) =>
-        c[key] is bool ? c[key] as bool : fallback;
-    double number(Object? v, double fallback) =>
-        v is num ? v.toDouble() : fallback;
-    T named<T extends Enum>(String key, List<T> values, T fallback) =>
-        values.where((v) => v.name == c[key]).firstOrNull ?? fallback;
-    final tile = clampCanvas(number(c['tileSize'], defaultCanvas));
-    final magnified = number(c['magnifiedSize'], defaultMagnifiedCanvas);
+  /// The options as the settings hold them now.
+  static DockOptions of(SilicaSettings s) {
+    final tile = clampCanvas(
+      s.getInt('dock.tileSize', fallback: defaultCanvas.round()).toDouble(),
+    );
+    final magnified = s
+        .getInt('dock.magnifiedSize', fallback: defaultMagnifiedCanvas.round())
+        .toDouble();
     return DockOptions(
-      magnify: flag('magnify', false),
+      magnify: s.getBool('dock.magnify', fallback: false),
       tileSize: tile,
       magnifiedSize: magnified.clamp(tile, maxCanvas).roundToDouble(),
-      recents: flag('recents', false),
-      autohide: flag('autohide', false),
-      position: named('position', DockPosition.values, DockPosition.bottom),
-      minimizeEffect: named(
-        'minimizeEffect',
-        MinimizeEffect.values,
-        MinimizeEffect.genie,
+      recents: s.getBool('dock.recents', fallback: false),
+      autohide: s.getBool('dock.autohide', fallback: false),
+      position: s.getEnum(
+        'dock.position',
+        DockPosition.values,
+        fallback: DockPosition.bottom,
       ),
-      indicators: flag('indicators', true),
-      launchAnimation: c['launchAnimation'] != 'none',
-      minimizeToApp: flag('minimizeToApp', false),
+      minimizeEffect: s.getEnum(
+        'dock.minimizeEffect',
+        MinimizeEffect.values,
+        fallback: MinimizeEffect.genie,
+      ),
+      indicators: s.getBool('dock.indicators', fallback: true),
+      launchAnimation:
+          s.getText('dock.launchAnimation', fallback: 'bounce') != 'none',
+      minimizeToApp: s.getBool('dock.minimizeToApp', fallback: false),
     );
   }
 
@@ -119,38 +120,46 @@ class DockOptions {
   );
 }
 
-/// The options, reloaded when dock.json changes (Settings writes it).
+/// The `dock.*` keys of [DockOptions].
+const List<String> dockOptionKeys = [
+  'magnify',
+  'recents',
+  'autohide',
+  'position',
+  'minimizeEffect',
+  'indicators',
+  'tileSize',
+  'magnifiedSize',
+  'launchAnimation',
+  'minimizeToApp',
+];
+
+/// Changes one option (a key of [dockOptionKeys]); it applies at once and is sent to the
+/// Settings service.
+void setDockOption(String key, Object value, {SilicaSettings? settings}) {
+  unawaited((settings ?? SilicaSettings.instance).set('dock.$key', value));
+}
+
+/// The options, following the Settings service.
 class DockOptionsWatcher {
-  DockOptionsWatcher({Map<String, String>? env}) : _env = env {
-    value.value = DockOptions.read(env: env);
-    _watch();
+  DockOptionsWatcher({SilicaSettings? settings})
+    : _settings = settings ?? SilicaSettings.instance {
+    _sources = _settings.watch([for (final k in dockOptionKeys) 'dock.$k']);
+    value = ValueNotifier(DockOptions.of(_settings));
+    _sources.addListener(_changed);
   }
 
-  final Map<String, String>? _env;
-  final ValueNotifier<DockOptions> value = ValueNotifier(const DockOptions());
-  StreamSubscription<FileSystemEvent>? _events;
-  Timer? _debounce;
+  final SilicaSettings _settings;
+  late final Listenable _sources;
+  late final ValueNotifier<DockOptions> value;
 
-  void _watch() {
-    final dir = dockConfigFile(env: _env).parent;
-    try {
-      if (!dir.existsSync()) dir.createSync(recursive: true);
-      _events = dir.watch().listen((event) {
-        if (!eventTouchesFile(event, 'dock.json')) return;
-        // Writers replace the file in a few steps: read once they are done.
-        _debounce?.cancel();
-        _debounce = Timer(const Duration(milliseconds: 50), reload);
-      });
-    } on FileSystemException {
-      // No configuration folder: the options change only from the Dock itself.
-    }
+  void _changed() {
+    final next = DockOptions.of(_settings);
+    if (next != value.value) value.value = next;
   }
-
-  void reload() => value.value = DockOptions.read(env: _env);
 
   void dispose() {
-    _debounce?.cancel();
-    _events?.cancel();
+    _sources.removeListener(_changed);
     value.dispose();
   }
 }

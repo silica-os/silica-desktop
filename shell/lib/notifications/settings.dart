@@ -1,10 +1,10 @@
-// Per-app notification settings ($XDG_CONFIG_HOME/silica/notifications.json, written by the
+// Notification settings, the `notifications.*` keys of the Settings service (written by the
 // Settings app's Notifications pane):
 //
-//   {"previews": "always" | "unlocked" | "never", "grouping": "automatic" | "byApp" | "off",
-//    "apps": {"<desktop entry or app name>": {"style": "banners" | "alerts" | "none",
-//      "previews": "default" | "always" | "unlocked" | "never", "grouping": "auto" | "app" |
-//      "off", "showInCenter": true}}}
+//   notifications.previews  always | unlocked | never        notifications.grouping  auto | app | off
+//   notifications.apps.<desktop entry or app name>.<field>:
+//     style (banners | alerts | none), previews (default | always | unlocked | never),
+//     grouping (default | auto | app | off), showInCenter (bool), sound (bool)
 //
 // - banners (default): the banner leaves by itself after ~5 s;
 // - alerts: the banner stays until the user acts on it (SH-NC-05; the reference style was not
@@ -12,8 +12,7 @@
 //   provisional);
 // - none: no banner, the notification goes straight to the Center.
 
-import 'dart:convert';
-import 'dart:io';
+import 'package:silica_ui/silica_ui.dart';
 
 import 'model.dart';
 
@@ -77,51 +76,52 @@ class NotificationSettings {
   NotificationStyle styleOf(ShellNotification n) =>
       styles[n.group] ?? styles[n.appName] ?? NotificationStyle.banners;
 
-  static File file({Map<String, String>? env}) {
-    final e = env ?? Platform.environment;
-    final config = e['XDG_CONFIG_HOME'] ?? '${e['HOME'] ?? ''}/.config';
-    return File('$config/silica/notifications.json');
-  }
+  /// The settings now (`notifications.*` of the Settings service); read again for every
+  /// notification, so a change applies at once.
+  static NotificationSettings read() => of(SilicaSettings.instance);
 
-  /// The settings on disk; the defaults when the file is missing or unreadable.
-  static NotificationSettings read({Map<String, String>? env}) {
-    try {
-      final f = file(env: env);
-      if (!f.existsSync()) return const NotificationSettings();
-      return parse(f.readAsStringSync());
-    } on FileSystemException {
-      return const NotificationSettings();
-    }
-  }
+  static NotificationSettings of(SilicaSettings settings) => fromValues({
+    'notifications.previews': settings.getText(
+      'notifications.previews',
+      fallback: 'always',
+    ),
+    'notifications.grouping': settings.getText(
+      'notifications.grouping',
+      fallback: 'auto',
+    ),
+    ...settings.withPrefix(appKeyPrefix),
+  });
 
-  static NotificationSettings parse(String text) {
-    Object? json;
-    try {
-      json = jsonDecode(text);
-    } on FormatException {
-      return const NotificationSettings();
+  /// The key of one field of one app: `notifications.apps.<app>.<field>`.
+  static const String appKeyPrefix = 'notifications.apps.';
+
+  /// From the flat keys (`notifications.previews`, `notifications.apps.<app>.style`...).
+  static NotificationSettings fromValues(Map<String, Object?> values) {
+    final apps = <String, Map<String, Object?>>{};
+    for (final MapEntry(:key, :value) in values.entries) {
+      if (!key.startsWith(appKeyPrefix)) continue;
+      final rest = key.substring(appKeyPrefix.length);
+      final dot = rest.lastIndexOf('.');
+      if (dot <= 0) continue;
+      (apps[rest.substring(0, dot)] ??= {})[rest.substring(dot + 1)] = value;
     }
-    if (json is! Map) return const NotificationSettings();
-    final apps = json['apps'] is Map ? json['apps'] as Map : const {};
     Map<String, T> perApp<T>(T? Function(Object?) read, String field) => {
       for (final MapEntry(:key, :value) in apps.entries)
-        if (key is String && value is Map)
-          if (read(value[field]) case final parsed?) key: parsed,
+        if (read(value[field]) case final parsed?) key: parsed,
     };
     return NotificationSettings(
       perApp(_style, 'style'),
-      _preview(json['previews']) ?? PreviewMode.always,
+      _preview(values['notifications.previews']) ?? PreviewMode.always,
       perApp(_preview, 'previews'),
       perApp(_grouping, 'grouping'),
       {
         for (final MapEntry(:key, :value) in apps.entries)
-          if (key is String && value is Map && value['showInCenter'] == false)
-            key,
+          if (value['showInCenter'] == false) key,
       },
-      _grouping(json['grouping']) ?? GroupingMode.auto,
+      _grouping(values['notifications.grouping']) ?? GroupingMode.auto,
       {
         for (final MapEntry(:key, :value) in apps.entries)
-          if (key is String && value is Map && value['sound'] == false) key,
+          if (value['sound'] == false) key,
       },
     );
   }

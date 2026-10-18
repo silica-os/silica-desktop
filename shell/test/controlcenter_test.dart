@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -19,6 +17,8 @@ import 'package:silica_shell/system/glass_profile.dart';
 import 'package:silica_shell/system/shell_channel.dart';
 import 'package:silica_shell/system/system_status.dart';
 import 'package:silica_ui/silica_ui.dart';
+
+import 'support/settings.dart';
 
 class FakeSystem extends ValueNotifier<SystemSnapshot> implements SystemSource {
   FakeSystem(super.value);
@@ -664,14 +664,12 @@ void main() {
       tester.view.physicalSize = const Size(1600, 1000);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
-      final dir = Directory.systemTemp.createTempSync('silica-cc-');
-      addTearDown(() => dir.deleteSync(recursive: true));
-      final env = {'XDG_CONFIG_HOME': dir.path};
+      await useSettings();
       final system = FakeSystem(laptop);
       await tester.pumpWidget(
         Directionality(
           textDirection: TextDirection.ltr,
-          child: ControlCenter(env: env, system: system),
+          child: ControlCenter(env: noConfig, system: system),
         ),
       );
       await sendCommand(tester, 'controlcenter.toggle');
@@ -708,7 +706,7 @@ void main() {
         find.byType(RemoveBadge),
         findsNWidgets(defaultModules.length - 1),
       );
-      final saved = loadModules(env: env);
+      final saved = loadModules();
       expect(saved.map((m) => m.id), isNot(contains('wifi')));
 
       // A click on a gallery control adds it at the end.
@@ -717,10 +715,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Battery').last);
       await tester.pumpAndSettle();
-      expect(
-        loadModules(env: env).last,
-        const CcModule('battery', ModuleSize.small),
-      );
+      expect(loadModules().last, const CcModule('battery', ModuleSize.small));
 
       // Done leaves edit mode, the Center stays open.
       await tester.tap(find.text('Done'));
@@ -736,14 +731,12 @@ void main() {
     tester.view.physicalSize = const Size(1600, 1000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final dir = Directory.systemTemp.createTempSync('silica-cc-');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final env = {'XDG_CONFIG_HOME': dir.path};
+    await useSettings();
     final system = FakeSystem(laptop);
     await tester.pumpWidget(
       Directionality(
         textDirection: TextDirection.ltr,
-        child: ControlCenter(env: env, system: system),
+        child: ControlCenter(env: noConfig, system: system),
       ),
     );
     await sendCommand(tester, 'controlcenter.toggle');
@@ -765,7 +758,7 @@ void main() {
     await choose(tester, 'Medium');
     await tester.pumpAndSettle();
     expect(
-      loadModules(env: env).firstWhere((m) => m.id == 'dark').size,
+      loadModules().firstWhere((m) => m.id == 'dark').size,
       ModuleSize.medium,
     );
     // Medium: a capsule with the disc and the label.
@@ -778,7 +771,7 @@ void main() {
     await tester.pumpAndSettle();
     await choose(tester, 'Remove');
     expect(find.text('Dark Mode'), findsNothing);
-    expect(loadModules(env: env).map((m) => m.id), isNot(contains('dark')));
+    expect(loadModules().map((m) => m.id), isNot(contains('dark')));
   });
 
   testWidgets(

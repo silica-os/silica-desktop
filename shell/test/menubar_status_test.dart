@@ -1,49 +1,50 @@
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:silica_shell/menubar/menubar.dart';
 import 'package:silica_shell/menubar/menubar_config.dart';
 import 'package:silica_shell/menubar/status_icons.dart';
 import 'package:silica_shell/system/system_status.dart';
+import 'package:silica_ui/silica_ui.dart';
 
 import 'controlcenter_test.dart' show FakeSystem;
+import 'support/settings.dart';
 
 void main() {
-  test('Copy to Menu Bar: setMenubarModule keeps the other keys', () {
-    final dir = Directory.systemTemp.createTempSync('mbcfg');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final env = {'XDG_CONFIG_HOME': dir.path};
-    File(menubarConfigPath(env))
-      ..parent.createSync(recursive: true)
-      ..writeAsStringSync(jsonEncode({'batteryPercent': true, 'x': 1}));
-    expect(menubarShows(readMenubarConfig(env), 'bluetooth'), isFalse);
-    expect(setMenubarModule('bluetooth', true, env), isTrue);
-    expect(setMenubarModule('sound', true, env), isTrue);
-    expect(setMenubarModule('dnd', true, env), isTrue);
-    final c = readMenubarConfig(env);
+  test('Copy to Menu Bar: setMenubarModule sets the matching keys', () async {
+    final backend = await useSettings({'menubar.batteryPercent': true});
+    final settings = SilicaSettings.instance;
+    expect(menubarShows(MenubarConfig.of(settings), 'bluetooth'), isFalse);
+    expect(await setMenubarModule('bluetooth', true), isTrue);
+    expect(await setMenubarModule('sound', true), isTrue);
+    expect(await setMenubarModule('dnd', true), isTrue);
+    final c = MenubarConfig.of(settings);
     expect(c.batteryPercent, isTrue);
     expect([
       for (final m in menubarModules) menubarShows(c, m),
     ], everyElement(isTrue));
-    expect(jsonDecode(File(menubarConfigPath(env)).readAsStringSync())['x'], 1);
-    expect(setMenubarModule('sound', false, env), isTrue);
-    expect(readMenubarConfig(env).sound, SoundItem.never);
-    expect(setMenubarModule('display', true, env), isFalse);
+    expect(backend.values['menubar.sound'], 'always');
+    expect(backend.values['menubar.focus'], true);
+    expect(await setMenubarModule('sound', false), isTrue);
+    expect(MenubarConfig.of(settings).sound, SoundItem.never);
+    expect(await setMenubarModule('display', true), isFalse);
   });
 
-  test('menubar.json: defaults as on the reference, values read', () {
-    expect(MenubarConfig.fromJson(null), const MenubarConfig());
+  test('menubar settings: defaults as on the reference, values read', () {
+    expect(
+      MenubarConfig.of(SilicaSettings.withValues({})),
+      const MenubarConfig(),
+    );
     expect(const MenubarConfig().bluetooth, isFalse);
     expect(const MenubarConfig().sound, SoundItem.active);
     expect(
-      MenubarConfig.fromJson({
-        'sound': 'always',
-        'bluetooth': true,
-        'battery': false,
-        'batteryPercent': true,
-      }),
+      MenubarConfig.of(
+        SilicaSettings.withValues({
+          'menubar.sound': 'always',
+          'menubar.bluetooth': true,
+          'menubar.battery': false,
+          'menubar.batteryPercent': true,
+        }),
+      ),
       const MenubarConfig(
         sound: SoundItem.always,
         bluetooth: true,
@@ -51,10 +52,17 @@ void main() {
         batteryPercent: true,
       ),
     );
-    expect(
-      menubarConfigPath({'XDG_CONFIG_HOME': '/c'}),
-      '/c/silica/menubar.json',
-    );
+  });
+
+  testWidgets('the watcher follows the settings', (tester) async {
+    final backend = await useSettings();
+    final watcher = MenubarConfigWatcher();
+    addTearDown(watcher.dispose);
+    expect(watcher.value.background, isFalse);
+    backend.emit('menubar.background', true);
+    backend.emit('menubar.clock.seconds', true);
+    expect(watcher.value.background, isTrue);
+    expect(watcher.value.clock.seconds, isTrue);
   });
 
   testWidgets('Bluetooth and Sound items follow Settings › Menu Bar', (

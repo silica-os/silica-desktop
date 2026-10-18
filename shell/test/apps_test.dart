@@ -241,15 +241,14 @@ void main() {
     expect(items.last.command, contains('/usr/bin/mustache '));
   });
 
-  test('the Dock options do not erase the pinned apps', () {
+  test('the pinned apps and the folders keep each other', () {
     final dir = Directory.systemTemp.createTempSync('dock');
     addTearDown(() => dir.deleteSync(recursive: true));
     final env = {'HOME': dir.path};
     savePinned(['files', 'editor'], env: env);
-    saveDockOption('recents', true, env: env);
+    saveDockOption('folders', ['/tmp'], env: env);
     expect(readDockConfig(env: env)['pinned'], ['files', 'editor']);
-    expect(dockFlag('recents', fallback: false, env: env), isTrue);
-    expect(dockFlag('magnify', fallback: true, env: env), isTrue);
+    expect(readDockConfig(env: env)['folders'], ['/tmp']);
   });
 
   test(

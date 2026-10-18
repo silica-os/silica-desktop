@@ -4,6 +4,9 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:silica_shell/wallpaper/amalfi_wallpapers.dart';
 import 'package:silica_shell/wallpaper/wallpaper.dart';
+import 'package:silica_ui/silica_ui.dart';
+
+import 'support/settings.dart';
 
 /// An environment without the Amalfi set (the developer's machine may have it).
 const Map<String, String> noSet = {
@@ -12,24 +15,25 @@ const Map<String, String> noSet = {
 };
 
 void main() {
-  test('the wallpaper choice from the configuration', () {
-    expect(parseWallpaperChoice(null, env: noSet), isA<GeneratedWallpaper>());
+  test('the wallpaper choice from the settings', () {
+    expect(chooseWallpaper(env: noSet), isA<GeneratedWallpaper>());
+    final color = chooseWallpaper(color: '#7a7b80', env: noSet);
+    expect((color as ColorWallpaper).color, const Color(0xFF7A7B80));
+    // A colour that is not one: the default.
     expect(
-      parseWallpaperChoice('non json', env: noSet),
+      chooseWallpaper(color: 'red', env: noSet),
       isA<GeneratedWallpaper>(),
     );
-    final color = parseWallpaperChoice('{"color": "#7a7b80"}', env: noSet);
-    expect((color as ColorWallpaper).color, const Color(0xFF7A7B80));
     // An image that does not exist: the default.
     expect(
-      parseWallpaperChoice('{"image": "/non/esiste.png"}', env: noSet),
+      chooseWallpaper(image: '/non/esiste.png', env: noSet),
       isA<GeneratedWallpaper>(),
     );
     final file = File(
       '${Directory.systemTemp.createTempSync().path}/sfondo.png',
     )..writeAsBytesSync([0]);
     expect(
-      parseWallpaperChoice('{"image": "${file.path}"}', env: noSet),
+      chooseWallpaper(image: file.path, color: '#101010', env: noSet),
       isA<ImageWallpaper>(),
     );
   });
@@ -83,26 +87,23 @@ void main() {
     test(
       'Ravello is the default; a choice by id; an unknown id falls back',
       () {
-        WallpaperChoice choose(String? json) =>
-            parseWallpaperChoice(json, env: env);
-        expect((choose(null) as AmalfiWallpaper).info.id, 'ravello');
+        WallpaperChoice choose({String id = '', String color = ''}) =>
+            chooseWallpaper(id: id, color: color, env: env);
+        expect((choose() as AmalfiWallpaper).info.id, 'ravello');
         expect(
-          (choose('{"wallpaper": "positano-1"}') as AmalfiWallpaper).info.id,
+          (choose(id: 'positano-1') as AmalfiWallpaper).info.id,
           'positano-1',
         );
-        expect(
-          (choose('{"wallpaper": "nope"}') as AmalfiWallpaper).info.id,
-          'ravello',
-        );
+        expect((choose(id: 'nope') as AmalfiWallpaper).info.id, 'ravello');
         // Colours and images of the user still win when chosen.
-        expect(choose('{"color": "#101010"}'), isA<ColorWallpaper>());
+        expect(choose(color: '#101010'), isA<ColorWallpaper>());
       },
     );
 
     testWidgets('light and dark images, aspect-filled and centred', (
       tester,
     ) async {
-      final choice = parseWallpaperChoice(null, env: env);
+      final choice = chooseWallpaper(env: env);
       for (final brightness in [Brightness.light, Brightness.dark]) {
         await tester.pumpWidget(
           MediaQuery(
@@ -125,14 +126,17 @@ void main() {
   });
 
   test(
-    'wallpaper.json fit: fill by default, the five modes, junk falls back',
-    () {
-      expect(parseWallpaperFit(null), WallpaperFit.fill);
-      expect(parseWallpaperFit('non json'), WallpaperFit.fill);
+    'wallpaper.fit: fill by default, the five modes, junk falls back',
+    () async {
+      final backend = await useSettings();
+      final settings = SilicaSettings.instance;
+      expect(wallpaperFitOf(settings), WallpaperFit.fill);
       for (final fit in WallpaperFit.values) {
-        expect(parseWallpaperFit('{"fit": "${fit.name}"}'), fit);
+        backend.emit('wallpaper.fit', fit.name);
+        expect(wallpaperFitOf(settings), fit);
       }
-      expect(parseWallpaperFit('{"fit": "zoom"}'), WallpaperFit.fill);
+      backend.emit('wallpaper.fit', 'zoom');
+      expect(wallpaperFitOf(settings), WallpaperFit.fill);
     },
   );
 
@@ -155,54 +159,29 @@ void main() {
     expect(tiled.repeat, ImageRepeat.repeat);
   });
 
-  testWidgets('the layer draws again when Settings rewrites wallpaper.json', (
+  testWidgets('the layer draws again when Settings changes the wallpaper', (
     tester,
   ) async {
-    final dir = Directory.systemTemp.createTempSync('wallpaper-layer');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final env = {...noSet, 'XDG_CONFIG_HOME': dir.path};
-    await tester.runAsync(() async {
-      await tester.pumpWidget(
-        Directionality(
-          textDirection: TextDirection.ltr,
-          child: WallpaperLayer(env: env),
-        ),
-      );
-      expect(find.byType(CustomPaint), findsWidgets);
-      File('${dir.path}/silica/wallpaper.json')
-        ..parent.createSync(recursive: true)
-        ..writeAsStringSync('{"color": "#102030", "fit": "tile"}');
-      await Future<void>.delayed(const Duration(milliseconds: 400));
-      await tester.pump();
-    });
+    final backend = await useSettings();
+    await tester.pumpWidget(
+      const Directionality(
+        textDirection: TextDirection.ltr,
+        child: WallpaperLayer(env: noSet),
+      ),
+    );
+    expect(find.byType(CustomPaint), findsWidgets);
+    backend.emit('wallpaper.color', '#102030');
+    backend.emit('wallpaper.fit', 'tile');
+    await tester.pump();
     final box = tester.widget<ColoredBox>(find.byType(ColoredBox).first);
     expect(box.color, const Color(0xFF102030));
+    // A set from the app itself shows at once too.
+    await SilicaSettings.instance.set('wallpaper.color', '#203040');
+    await tester.pump();
+    expect(
+      tester.widget<ColoredBox>(find.byType(ColoredBox).first).color,
+      const Color(0xFF203040),
+    );
     await tester.pumpWidget(const SizedBox());
   });
-
-  testWidgets(
-    'the layer follows an atomic write (temporary file, then rename)',
-    (tester) async {
-      final dir = Directory.systemTemp.createTempSync('wallpaper-rename');
-      addTearDown(() => dir.deleteSync(recursive: true));
-      final env = {...noSet, 'XDG_CONFIG_HOME': dir.path};
-      await tester.runAsync(() async {
-        await tester.pumpWidget(
-          Directionality(
-            textDirection: TextDirection.ltr,
-            child: WallpaperLayer(env: env),
-          ),
-        );
-        File('${dir.path}/silica/wallpaper.json.tmp')
-          ..parent.createSync(recursive: true)
-          ..writeAsStringSync('{"color": "#203040"}')
-          ..renameSync('${dir.path}/silica/wallpaper.json');
-        await Future<void>.delayed(const Duration(milliseconds: 400));
-        await tester.pump();
-      });
-      final box = tester.widget<ColoredBox>(find.byType(ColoredBox).first);
-      expect(box.color, const Color(0xFF203040));
-      await tester.pumpWidget(const SizedBox());
-    },
-  );
 }

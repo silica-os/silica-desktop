@@ -1,14 +1,14 @@
 // Resizing the Dock by dragging the separator, and the sizes dock.json carries.
 
-import 'dart:io';
-
 import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:silica_shell/dock/apps.dart';
 import 'package:silica_shell/dock/dock.dart';
 import 'package:silica_shell/dock/model.dart';
 import 'package:silica_shell/dock/options.dart';
+import 'package:silica_ui/silica_ui.dart';
+
+import 'support/settings.dart';
 
 const _items = [
   Item.app('A', command: 'a'),
@@ -19,35 +19,32 @@ const _items = [
 
 void main() {
   test(
-    'dock.json sizes: defaults, clamped to 16-128, magnified from the size up',
-    () {
-      final dir = Directory.systemTemp.createTempSync('dock-size');
-      addTearDown(() => dir.deleteSync(recursive: true));
-      final env = {'XDG_CONFIG_HOME': dir.path};
-      final defaults = DockOptions.read(env: env);
+    'dock sizes: defaults, clamped to 16-128, magnified from the size up',
+    () async {
+      final backend = await useSettings();
+      final settings = SilicaSettings.instance;
+      final defaults = DockOptions.of(settings);
       expect(defaults.tileSize, 60);
       expect(defaults.magnify, isFalse);
-      saveDockOption('tileSize', 200, env: env);
-      expect(DockOptions.read(env: env).tileSize, 128);
-      saveDockOption('tileSize', 3, env: env);
-      expect(DockOptions.read(env: env).tileSize, 16);
-      saveDockOption('tileSize', 64, env: env);
-      saveDockOption('magnifiedSize', 40, env: env);
-      expect(DockOptions.read(env: env).magnifiedSize, 64);
-      saveDockOption('magnifiedSize', 500, env: env);
-      expect(DockOptions.read(env: env).magnifiedSize, 128);
-      saveDockOption('magnify', true, env: env);
-      expect(DockOptions.read(env: env).magnify, isTrue);
+      backend.emit('dock.tileSize', 200);
+      expect(DockOptions.of(settings).tileSize, 128);
+      backend.emit('dock.tileSize', 3);
+      expect(DockOptions.of(settings).tileSize, 16);
+      backend.emit('dock.tileSize', 64);
+      backend.emit('dock.magnifiedSize', 40);
+      expect(DockOptions.of(settings).magnifiedSize, 64);
+      backend.emit('dock.magnifiedSize', 500);
+      expect(DockOptions.of(settings).magnifiedSize, 128);
+      backend.emit('dock.magnify', true);
+      expect(DockOptions.of(settings).magnify, isTrue);
     },
   );
 
   group('separator drag', () {
     late List<double> saved;
 
-    Future<(TestGesture, Offset)> setUp(
-      WidgetTester tester,
-      Map<String, String> env,
-    ) async {
+    Future<(TestGesture, Offset)> setUp(WidgetTester tester) async {
+      await useSettings();
       tester.view.physicalSize = const Size(1280, 400);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
@@ -59,7 +56,7 @@ void main() {
             items: _items,
             onResize: (canvas) {
               saved.add(canvas);
-              saveDockOption('tileSize', canvas.round(), env: env);
+              setDockOption('tileSize', canvas.round());
             },
           ),
         ),
@@ -80,10 +77,7 @@ void main() {
     testWidgets('up is bigger, 1 pt per point, whole points, kept on release', (
       tester,
     ) async {
-      final dir = Directory.systemTemp.createTempSync('dock-drag');
-      addTearDown(() => dir.deleteSync(recursive: true));
-      final env = {'XDG_CONFIG_HOME': dir.path};
-      final (mouse, start) = await setUp(tester, env);
+      final (mouse, start) = await setUp(tester);
       expect(shelfHeight(tester), 80);
 
       // Over the separator: the ns-resize pointer.
@@ -105,7 +99,7 @@ void main() {
       expect(shelfHeight(tester), 103);
       // Nothing is saved before the release.
       expect(saved, isEmpty);
-      expect(DockOptions.read(env: env).tileSize, 60);
+      expect(DockOptions.of(SilicaSettings.instance).tileSize, 60);
       // Down again, below the starting size.
       await mouse.moveTo(start + const Offset(0, 8));
       await tester.pump();
@@ -115,14 +109,12 @@ void main() {
       await mouse.up();
       await tester.pump();
       expect(saved, [80]);
-      expect(DockOptions.read(env: env).tileSize, 80);
+      expect(DockOptions.of(SilicaSettings.instance).tileSize, 80);
       expect(shelfHeight(tester), 106);
     });
 
     testWidgets('clamped to 16 and 128', (tester) async {
-      final dir = Directory.systemTemp.createTempSync('dock-clamp');
-      addTearDown(() => dir.deleteSync(recursive: true));
-      final (mouse, start) = await setUp(tester, {'XDG_CONFIG_HOME': dir.path});
+      final (mouse, start) = await setUp(tester);
       await mouse.down(start);
       await mouse.moveTo(start - const Offset(0, 300));
       await tester.pump();
@@ -136,9 +128,7 @@ void main() {
     });
 
     testWidgets('a click without moving changes nothing', (tester) async {
-      final dir = Directory.systemTemp.createTempSync('dock-click');
-      addTearDown(() => dir.deleteSync(recursive: true));
-      final (mouse, start) = await setUp(tester, {'XDG_CONFIG_HOME': dir.path});
+      final (mouse, start) = await setUp(tester);
       await mouse.down(start);
       await mouse.up();
       await tester.pump();

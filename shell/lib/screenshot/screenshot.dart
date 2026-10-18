@@ -6,7 +6,7 @@
 //   "screenshot" (JSON: path, width, height, clipboard, seq). The shell plays the shutter
 //   sound (silica-daemon), then shows the thumbnail or sends the capture to its place.
 // - Where captures go, the timer, the thumbnail, the pointer, the bar's mode, selection and
-//   position: `settings.dart` ($XDG_CONFIG_HOME/silica/screenshot.json). ⇧⌘3 and ⇧⌘4 follow
+//   position: `settings.dart` (the `screenshot.*` keys of the Settings service). ⇧⌘3 and ⇧⌘4 follow
 //   the same choices.
 // - The file is named "Screenshot <date> at <time>.png" (localized) from the capture time,
 //   and lands in its place when the thumbnail leaves, or at once on a swipe to the right.
@@ -79,7 +79,7 @@ class ScreenshotLayer extends StatefulWidget {
     this.now,
     this.windowAt,
     this.services,
-    this.settingsFile,
+    this.settings,
     this.entries = const {},
     this.env,
   });
@@ -102,8 +102,8 @@ class ScreenshotLayer extends StatefulWidget {
   /// The system (tests replace it).
   final ScreenshotServices? services;
 
-  /// The settings file (tests); null: $XDG_CONFIG_HOME/silica/screenshot.json.
-  final File? settingsFile;
+  /// The settings service (tests); null: the system's.
+  final SilicaSettings? settings;
 
   /// The installed apps: the image viewer, the file manager.
   final Map<String, DesktopEntry> entries;
@@ -146,9 +146,8 @@ class ScreenshotLayerState extends State<ScreenshotLayer>
 
   late final ScreenshotServices _services =
       widget.services ?? SystemScreenshotServices(entries: widget.entries);
-  late final File _settingsFile =
-      widget.settingsFile ?? ScreenshotSettings.file();
-  late ScreenshotSettings _settings = ScreenshotSettings.load(_settingsFile);
+  late final SilicaSettings _store = widget.settings ?? SilicaSettings.instance;
+  late ScreenshotSettings _settings = ScreenshotSettings.of(_store);
 
   StreamSubscription<String>? _commands;
   StreamSubscription<String>? _drags;
@@ -264,7 +263,7 @@ class ScreenshotLayerState extends State<ScreenshotLayer>
       change(_settings);
       _optionsEntries = null;
     });
-    _settings.save(_settingsFile);
+    _settings.save(_store);
     _pushSettings();
   }
 

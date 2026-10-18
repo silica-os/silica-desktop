@@ -1,18 +1,12 @@
-// Which optional status items the bar shows (Settings › Menu Bar), in
-// `$XDG_CONFIG_HOME/silica/menubar.json`:
-//
-//   {"sound": "always" | "active" | "never", "bluetooth": true, "battery": true,
-//    "batteryPercent": false, "focus": false}
+// Which optional status items the bar shows (Settings › Menu Bar), the `menubar.*` keys of the
+// Settings service: `sound` (always | active | never), `bluetooth`, `battery`,
+// `batteryPercent`, `focus`, `clock.*`, `recentItems`, `autohide`, `background`.
 //
 // Defaults as on the reference (menubar.md › Status items, INV-A1): Bluetooth not in the bar,
-// Sound "when active", battery shown when there is one. The file is watched: Settings changes
-// apply at once.
-
-import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
+// Sound "when active", battery shown when there is one. Settings changes apply at once.
 
 import 'package:flutter/foundation.dart';
+import 'package:silica_ui/silica_ui.dart';
 
 enum SoundItem { always, active, never }
 
@@ -35,21 +29,16 @@ class ClockStyle {
   final bool weekday;
   final ClockDate date;
 
-  factory ClockStyle.fromJson(Object? json) {
-    if (json is! Map) return const ClockStyle();
-    bool flag(String key, bool fallback) =>
-        json[key] is bool ? json[key] as bool : fallback;
-    return ClockStyle(
-      hour24: flag('hour24', true),
-      seconds: flag('seconds', false),
-      weekday: flag('weekday', true),
-      date: switch (json['date']) {
-        'always' => ClockDate.always,
-        'never' => ClockDate.never,
-        _ => ClockDate.auto,
-      },
-    );
-  }
+  factory ClockStyle.of(SilicaSettings s) => ClockStyle(
+    hour24: s.getBool('menubar.clock.hour24', fallback: true),
+    seconds: s.getBool('menubar.clock.seconds', fallback: false),
+    weekday: s.getBool('menubar.clock.weekday', fallback: true),
+    date: s.getEnum(
+      'menubar.clock.date',
+      ClockDate.values,
+      fallback: ClockDate.auto,
+    ),
+  );
 
   @override
   bool operator ==(Object other) =>
@@ -104,34 +93,28 @@ class MenubarConfig {
   /// A translucent background under the bar (off: the bar is bare on the wallpaper).
   final bool background;
 
-  factory MenubarConfig.fromJson(Object? json) {
-    if (json is! Map) return const MenubarConfig();
-    final sound = switch (json['sound']) {
-      'always' => SoundItem.always,
-      'never' => SoundItem.never,
-      _ => SoundItem.active,
-    };
-    bool flag(String key, bool fallback) =>
-        json[key] is bool ? json[key] as bool : fallback;
-    return MenubarConfig(
-      sound: sound,
-      bluetooth: flag('bluetooth', false),
-      battery: flag('battery', true),
-      batteryPercent: flag('batteryPercent', false),
-      focus: flag('focus', false),
-      clock: ClockStyle.fromJson(json['clock']),
-      recentItems: switch (json['recentItems']) {
-        final int n when recentItemChoices.contains(n) => n,
-        _ => 10,
-      },
-      autohide:
-          MenubarAutohide.values
-              .where((v) => v.name == json['autohide'])
-              .firstOrNull ??
-          MenubarAutohide.fullscreen,
-      background: flag('background', false),
-    );
-  }
+  factory MenubarConfig.of(SilicaSettings s) => MenubarConfig(
+    sound: s.getEnum(
+      'menubar.sound',
+      SoundItem.values,
+      fallback: SoundItem.active,
+    ),
+    bluetooth: s.getBool('menubar.bluetooth', fallback: false),
+    battery: s.getBool('menubar.battery', fallback: true),
+    batteryPercent: s.getBool('menubar.batteryPercent', fallback: false),
+    focus: s.getBool('menubar.focus', fallback: false),
+    clock: ClockStyle.of(s),
+    recentItems: switch (s.getInt('menubar.recentItems', fallback: 10)) {
+      final int n when recentItemChoices.contains(n) => n,
+      _ => 10,
+    },
+    autohide: s.getEnum(
+      'menubar.autohide',
+      MenubarAutohide.values,
+      fallback: MenubarAutohide.fullscreen,
+    ),
+    background: s.getBool('menubar.background', fallback: false),
+  );
 
   @override
   bool operator ==(Object other) =>
@@ -160,25 +143,6 @@ class MenubarConfig {
   );
 }
 
-/// The configuration file's path.
-String menubarConfigPath([Map<String, String>? env]) {
-  final e = env ?? Platform.environment;
-  final config = e['XDG_CONFIG_HOME'] ?? '${e['HOME'] ?? ''}/.config';
-  return '$config/silica/menubar.json';
-}
-
-MenubarConfig readMenubarConfig([Map<String, String>? env]) {
-  try {
-    return MenubarConfig.fromJson(
-      jsonDecode(File(menubarConfigPath(env)).readAsStringSync()),
-    );
-  } on FileSystemException {
-    return const MenubarConfig();
-  } on FormatException {
-    return const MenubarConfig();
-  }
-}
-
 /// The Control Center modules that have a status item in the bar, and which ones the bar shows
 /// now (the module menu's Copy to / Remove from Menu Bar, silica-desktop#145). Wi-Fi is always
 /// in the bar and cannot be removed.
@@ -193,9 +157,13 @@ bool menubarShows(MenubarConfig config, String id) => switch (id) {
   _ => false,
 };
 
-/// Shows or hides the status item of module [id] by rewriting `menubar.json` (the other keys
-/// stay as they are, the watcher applies the change). Returns false when it could not write.
-bool setMenubarModule(String id, bool shown, [Map<String, String>? env]) {
+/// Shows or hides the status item of module [id] (`menubar.*`; the watcher applies the change at
+/// once). Returns false for a module the bar has no item for, or when the service refused it.
+Future<bool> setMenubarModule(
+  String id,
+  bool shown, [
+  SilicaSettings? settings,
+]) async {
   final key = switch (id) {
     'bluetooth' => 'bluetooth',
     'sound' => 'sound',
@@ -204,50 +172,44 @@ bool setMenubarModule(String id, bool shown, [Map<String, String>? env]) {
     _ => null,
   };
   if (key == null) return false;
-  final file = File(menubarConfigPath(env));
-  try {
-    var json = <String, Object?>{};
-    try {
-      final read = jsonDecode(file.readAsStringSync());
-      if (read is Map) json = Map<String, Object?>.from(read);
-    } on FileSystemException {
-      // No file yet: the defaults plus this key.
-    } on FormatException {
-      // Unreadable: start again from the defaults.
-    }
-    json[key] = key == 'sound' ? (shown ? 'always' : 'never') : shown;
-    file.parent.createSync(recursive: true);
-    file.writeAsStringSync(
-      '${const JsonEncoder.withIndent('  ').convert(json)}\n',
-    );
-    return true;
-  } on FileSystemException {
-    return false;
-  }
+  return (settings ?? SilicaSettings.instance).set(
+    'menubar.$key',
+    key == 'sound' ? (shown ? 'always' : 'never') : shown,
+  );
 }
 
-/// The configuration, re-read when its folder changes.
+/// Every `menubar.*` key of [MenubarConfig].
+const List<String> menubarKeys = [
+  'menubar.sound',
+  'menubar.bluetooth',
+  'menubar.battery',
+  'menubar.batteryPercent',
+  'menubar.focus',
+  'menubar.clock.hour24',
+  'menubar.clock.seconds',
+  'menubar.clock.weekday',
+  'menubar.clock.date',
+  'menubar.recentItems',
+  'menubar.autohide',
+  'menubar.background',
+];
+
+/// The configuration, following the Settings service.
 class MenubarConfigWatcher extends ValueNotifier<MenubarConfig> {
-  MenubarConfigWatcher([Map<String, String>? env])
-    : _env = env,
-      super(readMenubarConfig(env)) {
-    final dir = File(menubarConfigPath(env)).parent;
-    try {
-      _sub = dir.watch().listen(
-        (_) => value = readMenubarConfig(_env),
-        onError: (Object _) {},
-      );
-    } on FileSystemException {
-      // No folder yet: the defaults stay until the next session.
-    }
+  MenubarConfigWatcher([SilicaSettings? settings])
+    : _settings = settings ?? SilicaSettings.instance,
+      super(MenubarConfig.of(settings ?? SilicaSettings.instance)) {
+    _keys = _settings.watch(menubarKeys)..addListener(_changed);
   }
 
-  final Map<String, String>? _env;
-  StreamSubscription<FileSystemEvent>? _sub;
+  final SilicaSettings _settings;
+  late final Listenable _keys;
+
+  void _changed() => value = MenubarConfig.of(_settings);
 
   @override
   void dispose() {
-    _sub?.cancel();
+    _keys.removeListener(_changed);
     super.dispose();
   }
 }

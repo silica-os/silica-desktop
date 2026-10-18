@@ -7,15 +7,14 @@
 // (292 × 64, Display and Sound). Modules are placed in order, each at the first free spot
 // reading row by row, which reproduces the reference's default layout.
 //
-// The user's arrangement is kept in $XDG_CONFIG_HOME/silica/controlcenter.json:
-// {"modules": [{"id": "wifi", "size": "medium"}, ...]}. Edit mode (Edit Controls) and the
-// module menu change it.
+// The user's arrangement is the `controlcenter.modules` key of the Settings service, a list of
+// `id:size` (`wifi:medium`). Edit mode (Edit Controls) and the module menu change it.
 
-import 'dart:convert';
-import 'dart:io';
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
+import 'package:silica_ui/silica_ui.dart';
 
 import '../system/system_status.dart';
 
@@ -46,8 +45,6 @@ class CcModule {
   final ModuleSize size;
 
   CcModule withSize(ModuleSize size) => CcModule(id, size);
-
-  Map<String, String> toJson() => {'id': id, 'size': size.name};
 
   @override
   bool operator ==(Object other) =>
@@ -145,52 +142,37 @@ List<CcModule> presentModules(List<CcModule> modules, SystemSnapshot s) => [
     if (moduleAvailable(m.id, s)) m,
 ];
 
-/// The arrangement file: $XDG_CONFIG_HOME/silica/controlcenter.json.
-File moduleConfigFile({Map<String, String>? env}) {
-  final e = env ?? Platform.environment;
-  final config = e['XDG_CONFIG_HOME'] ?? '${e['HOME'] ?? ''}/.config';
-  return File('$config/silica/controlcenter.json');
-}
+/// The settings key of the arrangement: a list of `id:size`. Empty is the default
+/// arrangement; `none` stands for an arrangement without modules.
+const String modulesKey = 'controlcenter.modules';
 
 /// The user's arrangement, or the default one. Unknown ids and sizes a module can't take
-/// are dropped; a missing or broken file gives the default.
-List<CcModule> loadModules({Map<String, String>? env}) {
-  try {
-    final file = moduleConfigFile(env: env);
-    if (!file.existsSync()) return defaultModules;
-    final json = jsonDecode(file.readAsStringSync());
-    final list = json is Map ? json['modules'] : null;
-    if (list is! List) return defaultModules;
-    final modules = <CcModule>[];
-    for (final item in list) {
-      if (item is! Map) continue;
-      final id = item['id'];
-      final sizes = moduleSizes[id];
-      if (id is! String || sizes == null) continue;
-      final size = ModuleSize.values
-          .where((s) => s.name == item['size'])
-          .firstOrNull;
-      modules.add(
-        CcModule(id, size != null && sizes.contains(size) ? size : sizes.first),
-      );
-    }
-    return modules;
-  } on Object {
-    return defaultModules;
+/// are dropped.
+List<CcModule> loadModules([SilicaSettings? settings]) {
+  final list = (settings ?? SilicaSettings.instance).getTexts(modulesKey);
+  if (list.isEmpty) return defaultModules;
+  final modules = <CcModule>[];
+  for (final item in list) {
+    final colon = item.indexOf(':');
+    final id = colon < 0 ? item : item.substring(0, colon);
+    final sizes = moduleSizes[id];
+    if (sizes == null) continue;
+    final size = ModuleSize.values
+        .where((s) => colon >= 0 && s.name == item.substring(colon + 1))
+        .firstOrNull;
+    modules.add(
+      CcModule(id, size != null && sizes.contains(size) ? size : sizes.first),
+    );
   }
+  return modules;
 }
 
-/// Saves the arrangement (best effort: a read-only home keeps it for this session only).
-void saveModules(List<CcModule> modules, {Map<String, String>? env}) {
-  try {
-    final file = moduleConfigFile(env: env);
-    file.parent.createSync(recursive: true);
-    file.writeAsStringSync(
-      const JsonEncoder.withIndent('  ').convert({
-        'modules': [for (final m in modules) m.toJson()],
-      }),
-    );
-  } on Object {
-    // Not saved: the arrangement still applies until the session ends.
-  }
+/// Saves the arrangement.
+void saveModules(List<CcModule> modules, [SilicaSettings? settings]) {
+  unawaited(
+    (settings ?? SilicaSettings.instance).set(modulesKey, [
+      for (final m in modules) '${m.id}:${m.size.name}',
+      if (modules.isEmpty) 'none',
+    ]),
+  );
 }
