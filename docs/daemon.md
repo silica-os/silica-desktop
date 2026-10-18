@@ -158,13 +158,13 @@ handled yet.
   `folderColour` (an accent name, or `automatic`), `sidebarIconSize` (`small|medium|large`),
   `scrollBars` (`automatic|whenScrolling|always`), `scrollClick` (`page|spot`), `iconStyle`
   (`default|dark|clear|tinted`) as strings, `glass` (d, 0–1), `windowTint` (b), `keyboardNavigation` (b: Tab reaches every control) and
-  `doubleClickMs` (150–1000, default 300: the longest time between the two clicks of a double click). An invalid value
+  `doubleClickMs` (150–1000, default 300: the longest time between the two clicks of a double click), `reduceTransparency` and `reduceMotion` (b: Accessibility › Display; Ossido reads the same two keys from `theme.json`). An invalid value
   is `InvalidArgs` and changes nothing. Not saved by the daemon: Settings keeps them in
   `$XDG_CONFIG_HOME/silica/theme.json` (its own persistence, read at start; Ossido watches it for
   `glass` and `windowTint`).
 - State keys `look.accent`, `look.highlight`, `look.sidebarIconSize`, `look.scrollBars`,
   `look.scrollClick`, `look.iconStyle`, `look.folderColour`, `look.glass`, `look.windowTint`,
-  `look.keyboardNavigation`, `look.doubleClickMs` (u).
+  `look.keyboardNavigation`, `look.doubleClickMs` (u), `look.reduceTransparency`, `look.reduceMotion`.
   silica_ui's `SilicaSystemLook` reads them (typed; no app parses JSON).
 
 ### Displays and night light

@@ -206,6 +206,8 @@ pub struct State {
     /// Multiplier of the animation durations; 0 turns them off (`--animation-scale`,
     /// `ui.animation_scale`).
     pub animation_speed: f64,
+    /// The speed to go back to when Reduce Motion is turned off.
+    pub saved_animation_speed: f64,
     /// Where the first window opens, from the top left of the usable area (`--window-origin`).
     pub window_origin: i32,
     /// Distance between a window and the next one in the cascade.
@@ -284,6 +286,10 @@ impl State {
     /// The glass quality in use.
     pub fn glass_quality(&self) -> ossido_render::glass::GlassQuality {
         use ossido_render::glass::GlassQuality;
+        // Reduce Transparency (Settings › Accessibility › Display): no blur, the opaque glass.
+        if self.theme_config.reduce_transparency {
+            return GlassQuality::Opaque;
+        }
         match self.glass_setting {
             GlassSetting::Fixed(quality) => quality,
             GlassSetting::Auto if self.software_renderer => GlassQuality::Frosted,
@@ -451,6 +457,7 @@ impl State {
             resize_settling: None,
             press_serial: None,
             animation_speed: 1.0,
+            saved_animation_speed: 1.0,
             window_origin: crate::handlers::CASCADE_ORIGIN,
             cascade_step: crate::handlers::CASCADE_STEP,
             closing: Vec::new(),

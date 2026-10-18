@@ -50,6 +50,10 @@ pub struct Look {
     pub keyboard_navigation: bool,
     /// The longest time between the two clicks of a double click, in milliseconds.
     pub double_click_ms: u32,
+    /// Glass drawn opaque (Accessibility › Display).
+    pub reduce_transparency: bool,
+    /// Animations skipped (Accessibility › Display).
+    pub reduce_motion: bool,
 }
 
 impl Default for Look {
@@ -66,6 +70,8 @@ impl Default for Look {
             window_tint: false,
             keyboard_navigation: false,
             double_click_ms: DOUBLE_CLICK_DEFAULT_MS,
+            reduce_transparency: false,
+            reduce_motion: false,
         }
     }
 }
@@ -103,6 +109,8 @@ impl Look {
                     .map(|g| next.glass = g),
                 "windowTint" => value.as_bool().map(|b| next.window_tint = b),
                 "keyboardNavigation" => value.as_bool().map(|b| next.keyboard_navigation = b),
+                "reduceTransparency" => value.as_bool().map(|b| next.reduce_transparency = b),
+                "reduceMotion" => value.as_bool().map(|b| next.reduce_motion = b),
                 "doubleClickMs" => value
                     .as_f64()
                     .filter(|n| n.fract() == 0.0 && n.is_finite())
@@ -156,6 +164,11 @@ impl Look {
             Value::Bool(self.keyboard_navigation),
         );
         put("look.doubleClickMs", Value::U32(self.double_click_ms));
+        put(
+            "look.reduceTransparency",
+            Value::Bool(self.reduce_transparency),
+        );
+        put("look.reduceMotion", Value::Bool(self.reduce_motion));
     }
 }
 
@@ -189,6 +202,9 @@ mod tests {
         assert!(look.merge(&json!({"accent": "green", "glass": 0.25, "x": 1})));
         assert!(look.merge(&json!({"keyboardNavigation": true, "doubleClickMs": 500})));
         assert!(look.keyboard_navigation && look.double_click_ms == 500);
+        assert!(look.merge(&json!({"reduceMotion": true, "reduceTransparency": true})));
+        assert!(look.reduce_motion && look.reduce_transparency);
+        assert!(!look.merge(&json!({"reduceMotion": "yes"})));
         assert!(!look.merge(&json!({"doubleClickMs": 50})));
         assert!(!look.merge(&json!({"doubleClickMs": 400.5})));
         assert_eq!(look.double_click_ms, 500);

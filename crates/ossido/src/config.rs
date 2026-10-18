@@ -271,12 +271,18 @@ pub const THEME_FILE: &str = "theme.json";
 pub struct ThemeConfig {
     /// 0 clear to 1 tinted; 0.5, the measured material, by default.
     pub glass: f32,
+    /// Accessibility › Display › Reduce Transparency: the glass is drawn opaque.
+    pub reduce_transparency: bool,
+    /// Accessibility › Display › Reduce Motion: Ossido's own animations are skipped.
+    pub reduce_motion: bool,
 }
 
 impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
             glass: ossido_render::glass_profile::GLASS_LEVEL_DEFAULT,
+            reduce_transparency: false,
+            reduce_motion: false,
         }
     }
 }
@@ -286,7 +292,15 @@ impl ThemeConfig {
         let glass = map
             .and_then(|map| number_in(map, "glass", (0.0, 1.0)))
             .map_or(Self::default().glass, |g| g as f32);
-        Self { glass }
+        Self {
+            glass,
+            reduce_transparency: map
+                .and_then(|map| bool_of(map, "reduceTransparency"))
+                .unwrap_or(false),
+            reduce_motion: map
+                .and_then(|map| bool_of(map, "reduceMotion"))
+                .unwrap_or(false),
+        }
     }
 }
 
@@ -350,7 +364,15 @@ impl State {
         };
         let config = ThemeConfig::parse(read_json(&dir, THEME_FILE).as_ref());
         if config != self.theme_config {
+            let was = self.theme_config.reduce_motion;
             self.theme_config = config;
+            // Reduce Motion: no animation of Ossido's own, and back to the chosen speed after.
+            if config.reduce_motion && !was {
+                self.saved_animation_speed = self.animation_speed;
+                self.animation_speed = 0.0;
+            } else if !config.reduce_motion && was {
+                self.animation_speed = self.saved_animation_speed;
+            }
             self.wake();
         }
     }
@@ -521,6 +543,19 @@ pub fn watch(handle: &LoopHandle<'static, Ossido>, dir: &Path) -> Result<(), Str
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn theme_accessibility_flags_are_read() {
+        let parse = |json: &str| match serde_json::from_str::<Value>(json) {
+            Ok(Value::Object(map)) => ThemeConfig::parse(Some(&map)),
+            _ => ThemeConfig::parse(None),
+        };
+        let both = parse(r#"{"reduceMotion": true, "reduceTransparency": true}"#);
+        assert!(both.reduce_motion && both.reduce_transparency);
+        let junk = parse(r#"{"reduceMotion": "yes"}"#);
+        assert!(!junk.reduce_motion && !junk.reduce_transparency);
+        assert!(!ThemeConfig::parse(None).reduce_motion);
+    }
+
     #[test]
     fn theme_glass_level_is_read_and_checked() {
         let parse = |json: &str| match serde_json::from_str::<Value>(json) {
