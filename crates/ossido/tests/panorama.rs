@@ -124,6 +124,51 @@ fn windows_spread_out_and_a_click_picks_one() {
     assert!(!close(pixel(&shot, 4, 4), [0xcd, 0xce, 0xd0, 255]));
 }
 
+/// A window that maps while Panorama is open is arranged with the others, below the bar: left
+/// at its real place it would be drawn under the spaces bar (silica-desktop#246).
+#[test]
+fn a_window_that_maps_while_panorama_is_open_is_arranged_too() {
+    let ossido = Headless::start_with("panorama-late", (1280, 800), &[]);
+    let _first = TestWindow::open_pixels(
+        &ossido.wayland,
+        "first",
+        (300, 200),
+        &solid((300, 200), RED),
+    );
+    ossido.client().call(PANORAMA_TOGGLE, Value::Null).unwrap();
+    assert_eq!(state(&ossido).windows.len(), 1);
+    // A window right under the bar, opened now.
+    let _late = TestWindow::open_pixels(
+        &ossido.wayland,
+        "late",
+        (400, 300),
+        &solid((400, 300), BLUE),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let s = loop {
+        let s = state(&ossido);
+        if s.windows.len() == 2 && s.windows.iter().all(|w| w.width > 0.0) {
+            break s;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "not arranged: {:?}",
+            s.windows
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    // Both in the usable area, below the expanded bar's top (y 80), not overlapping.
+    for w in &s.windows {
+        assert!(w.y >= 80.0, "{w:?}");
+    }
+    let (a, b) = (&s.windows[0], &s.windows[1]);
+    let apart = a.x + a.width <= b.x
+        || b.x + b.width <= a.x
+        || a.y + a.height <= b.y
+        || b.y + b.height <= a.y;
+    assert!(apart, "{a:?} {b:?}");
+}
+
 fn spaces(ossido: &Headless) -> Vec<SpaceInfo> {
     serde_json::from_value(ossido.client().call(SPACE_LIST, Value::Null).unwrap()).unwrap()
 }
