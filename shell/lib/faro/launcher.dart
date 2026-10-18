@@ -870,9 +870,7 @@ class LauncherState extends State<Launcher>
                   SizedBox(
                     width: 32,
                     height: 32,
-                    child: icon == null
-                        ? null
-                        : SilicaIcon(icon, side: 32),
+                    child: icon == null ? null : SilicaIcon(icon, side: 32),
                   ),
                   const SizedBox(width: 12),
                   Expanded(

@@ -22,6 +22,7 @@ use serde_json::{Value, json};
 use silica_protocols::menu::MAX_MODEL_SIZE;
 use silica_protocols::menu::client::silica_menu_manager_v1::SilicaMenuManagerV1;
 use silica_protocols::menu::client::silica_menu_v1::SilicaMenuV1;
+use silica_protocols::menu::client::silica_popup_menu_v1::SilicaPopupMenuV1;
 use silica_protocols::menu::model::parse_model;
 use tracing::warn;
 use wayland_client::{Dispatch, QueueHandle};
@@ -36,6 +37,8 @@ pub struct MenuLink {
     menu: Option<SilicaMenuV1>,
     /// The last model sent (normal form): the same model is not sent twice.
     sent: Option<Vec<u8>>,
+    /// The popup menus shown through the service (`popup_menu.rs`), by Dart's token.
+    pub popups: std::collections::HashMap<u64, SilicaPopupMenuV1>,
 }
 
 impl MenuLink {
@@ -44,7 +47,85 @@ impl MenuLink {
             manager,
             menu: None,
             sent: None,
+            popups: std::collections::HashMap::new(),
         }
+    }
+
+    /// Whether Ossido offers the popup menu service (silica-menu-v1 version 2).
+    pub fn popup_menus_available(&self) -> bool {
+        self.manager
+            .as_ref()
+            .is_some_and(|manager| wayland_client::Proxy::version(manager) >= 2)
+    }
+
+    /// Sends a popup menu to Ossido on `surface`; false if the service is not offered.
+    pub fn show_popup_menu<D>(
+        &mut self,
+        surface: &wayland_client::protocol::wl_surface::WlSurface,
+        menu: &crate::popup_menu::Menu,
+        qh: &QueueHandle<D>,
+    ) -> bool
+    where
+        D: Dispatch<SilicaPopupMenuV1, u64> + 'static,
+    {
+        use crate::popup_menu::Row;
+        use silica_protocols::menu::client::silica_menu_manager_v1::PopupKind;
+        use silica_protocols::menu::client::silica_popup_menu_v1::{Flags, Modifiers};
+        let Some(manager) = self
+            .manager
+            .as_ref()
+            .filter(|_| self.popup_menus_available())
+        else {
+            return false;
+        };
+        let [x, y, width, height] = menu.anchor;
+        let object = manager.get_popup_menu(
+            surface,
+            if menu.popup {
+                PopupKind::PopUp
+            } else {
+                PopupKind::Context
+            },
+            x,
+            y,
+            width.max(0),
+            height.max(0),
+            menu.selected,
+            qh,
+            menu.token,
+        );
+        for row in &menu.rows {
+            match row {
+                Row::Item {
+                    id,
+                    label,
+                    flags,
+                    icon,
+                    key,
+                    modifiers,
+                } => object.add_item(
+                    *id,
+                    label.clone(),
+                    Flags::from_bits_truncate(*flags),
+                    icon.clone(),
+                    key.clone(),
+                    Modifiers::from_bits_truncate(*modifiers),
+                ),
+                Row::Separator => object.add_separator(),
+                Row::Section(label) => object.add_section(label.clone()),
+                Row::SubmenuBegin { label, flags, icon } => object.begin_submenu(
+                    label.clone(),
+                    Flags::from_bits_truncate(*flags),
+                    icon.clone(),
+                ),
+                Row::SubmenuEnd => object.end_submenu(),
+            }
+        }
+        object.show();
+        if let Some(old) = self.popups.insert(menu.token, object) {
+            old.destroy();
+        }
+        true
     }
 
     /// A call from Dart; returns the reply.

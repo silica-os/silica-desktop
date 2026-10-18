@@ -7,8 +7,9 @@ use std::path::Path;
 
 use silica_protocols::glass::client::silica_glass_manager_v1::SilicaGlassManagerV1;
 use silica_protocols::glass::client::silica_glass_v1::{self, SilicaGlassV1};
-use silica_protocols::menu::client::silica_menu_manager_v1::SilicaMenuManagerV1;
+use silica_protocols::menu::client::silica_menu_manager_v1::{self, SilicaMenuManagerV1};
 use silica_protocols::menu::client::silica_menu_v1::{self, SilicaMenuV1};
+use silica_protocols::menu::client::silica_popup_menu_v1::{self, SilicaPopupMenuV1};
 use silica_protocols::window::client::silica_window_manager_v1::SilicaWindowManagerV1;
 use silica_protocols::window::client::silica_window_v1::{self, SilicaWindowV1};
 use wayland_client::protocol::wl_buffer::WlBuffer;
@@ -122,6 +123,8 @@ struct App {
     /// silica-menu-v1: the manager and the ids of the items chosen in the bar.
     menu_manager: Option<SilicaMenuManagerV1>,
     menu_activations: Vec<u32>,
+    /// How the popup menus ended (silica-menu-v1 version 2).
+    popup_results: Vec<PopupResult>,
     /// xdg-foreign v2: the globals and the handle of this window, once exported.
     exporter: Option<ZxdgExporterV2>,
     importer: Option<ZxdgImporterV2>,
@@ -165,7 +168,7 @@ impl Dispatch<WlRegistry, ()> for App {
                     state.layer_shell = Some(registry.bind(name, 1, qh, ()));
                 }
                 "silica_menu_manager_v1" => {
-                    state.menu_manager = Some(registry.bind(name, 1, qh, ()));
+                    state.menu_manager = Some(registry.bind(name, 2, qh, ()));
                 }
                 "zxdg_exporter_v2" => state.exporter = Some(registry.bind(name, 1, qh, ())),
                 "zxdg_importer_v2" => state.importer = Some(registry.bind(name, 1, qh, ())),
@@ -404,6 +407,30 @@ delegate_noop!(App: ignore SilicaWindowManagerV1);
 delegate_noop!(App: ignore SilicaWindowV1);
 delegate_noop!(App: XdgPositioner);
 delegate_noop!(App: ignore SilicaMenuManagerV1);
+
+/// How a popup menu ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PopupResult {
+    Selected(u32),
+    Dismissed,
+}
+
+impl Dispatch<SilicaPopupMenuV1, ()> for App {
+    fn event(
+        state: &mut Self,
+        _: &SilicaPopupMenuV1,
+        event: silica_popup_menu_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        state.popup_results.push(match event {
+            silica_popup_menu_v1::Event::Selected { id } => PopupResult::Selected(id),
+            silica_popup_menu_v1::Event::Dismissed => PopupResult::Dismissed,
+            _ => return,
+        });
+    }
+}
 
 impl Dispatch<SilicaMenuV1, ()> for App {
     fn event(
@@ -1513,6 +1540,52 @@ impl TestWindow {
     pub fn menu_activations(&mut self) -> Vec<u32> {
         self.queue.roundtrip(&mut self.app).unwrap();
         std::mem::take(&mut self.app.menu_activations)
+    }
+
+    /// Shows a context menu (kind 0) or a pop-up button's menu (1) on this window's surface:
+    /// `rows` are built on the new menu object before `show`.
+    #[allow(dead_code)]
+    pub fn show_popup_menu(
+        &mut self,
+        kind: u32,
+        anchor: (i32, i32, i32, i32),
+        selected: u32,
+        rows: impl FnOnce(&SilicaPopupMenuV1),
+    ) -> SilicaPopupMenuV1 {
+        let qh = self.queue.handle();
+        let manager = self
+            .app
+            .menu_manager
+            .clone()
+            .expect("silica_menu_manager_v1 missing");
+        let kind = if kind == 0 {
+            silica_menu_manager_v1::PopupKind::Context
+        } else {
+            silica_menu_manager_v1::PopupKind::PopUp
+        };
+        let menu = manager.get_popup_menu(
+            &self.surface,
+            kind,
+            anchor.0,
+            anchor.1,
+            anchor.2,
+            anchor.3,
+            selected,
+            &qh,
+            (),
+        );
+        rows(&menu);
+        menu.show();
+        // A bad menu ends the connection: `disconnected` tells.
+        let _ = self.queue.roundtrip(&mut self.app);
+        menu
+    }
+
+    /// How the popup menus ended since the last call.
+    #[allow(dead_code)]
+    pub fn popup_results(&mut self) -> Vec<PopupResult> {
+        let _ = self.queue.roundtrip(&mut self.app);
+        std::mem::take(&mut self.app.popup_results)
     }
 
     /// Whether Ossido closed the connection (a protocol error).

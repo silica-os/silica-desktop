@@ -339,6 +339,10 @@ File › New Window, one window per document. The app opts in with the embedder'
 
 ## Menus and popovers as surfaces of their own
 
+> Since silica-desktop#241 menus and pop-up buttons are no longer popups of the app: they go
+> through the menu service (`menus.md`) and the shell draws them. What follows holds for
+> popovers and for third-party toolkits' popups.
+
 An app's menus, context menus, pop-up buttons and popovers extend past the window's edge
 (silica-desktop#4). In an app started with `--multi-window`, silica_ui opens each as an
 `xdg_popup` of the window (`openPopup` on `silica/window`) drawn by its own engine view:

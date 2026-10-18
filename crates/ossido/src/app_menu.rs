@@ -115,7 +115,7 @@ pub struct AppMenus {
 
 impl AppMenus {
     pub fn new(dh: &DisplayHandle) -> Self {
-        dh.create_global::<State, SilicaMenuManagerV1, _>(1, ());
+        dh.create_global::<State, SilicaMenuManagerV1, _>(2, ());
         Self::default()
     }
 
@@ -373,6 +373,9 @@ impl Dispatch<SilicaMenuManagerV1, ()> for State {
                 state.app_menus.menus.push(menu);
             }
             silica_menu_manager_v1::Request::Destroy => {}
+            request @ silica_menu_manager_v1::Request::GetPopupMenu { .. } => {
+                crate::popup_menu::get_popup_menu(manager, client, data_init, request);
+            }
             _ => {}
         }
     }

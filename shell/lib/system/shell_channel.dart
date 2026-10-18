@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'app_menu_model.dart';
+import 'popup_menu_model.dart';
 
 /// An open window.
 @immutable
@@ -73,6 +74,12 @@ class ShellChannel {
               },
             );
           }
+        case 'popupMenu':
+          final request = PopupMenuRequest.fromJson(call.arguments);
+          if (request != null) _popupMenus.add(request);
+        case 'popupMenuClosed':
+          final serial = call.arguments;
+          if (serial is int) _popupMenusClosed.add(serial);
         case 'appMenu':
           appMenu.value = AppMenuState.fromJson(call.arguments);
         case 'windowMenu':
@@ -125,6 +132,25 @@ class ShellChannel {
     ({String id, ui.Offset tip, ui.Brightness? brightness})
   >
   _windowMenus = StreamController.broadcast();
+
+  final StreamController<PopupMenuRequest> _popupMenus =
+      StreamController.broadcast();
+
+  /// The context menus and pop-up buttons the apps ask for (#241).
+  Stream<PopupMenuRequest> get popupMenus => _popupMenus.stream;
+
+  final StreamController<int> _popupMenusClosed = StreamController.broadcast();
+
+  /// The serial of a popup menu Ossido ended (a press outside, a change of context).
+  Stream<int> get popupMenusClosed => _popupMenusClosed.stream;
+
+  /// The user chose item `id` of the popup menu: the app receives it.
+  Future<bool> popupMenuChoose(int serial, int id) =>
+      _call('popupMenuChoose', {'serial': serial, 'id': id});
+
+  /// The user closed the popup menu (Esc): the app is told it was dismissed.
+  Future<bool> popupMenuClose(int serial) =>
+      _call('popupMenuClose', {'serial': serial});
 
   /// The appearance Ossido reported for the window of the next popover.
   ({String id, ui.Brightness? brightness})? _menuAppearance;

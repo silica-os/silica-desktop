@@ -224,6 +224,22 @@ against other processes of the same user: that will come with the app sandbox.
   otherRule, press, scroll}`, where `press` and `scroll` are the version 6 fallback;
   `clearTransient`) and `silica/shell` (`transientDismissed`).
 
+## Popup menus: context menus and pop-up buttons (silica-desktop#241)
+
+`silica-menu-v1` version 2: `silica_menu_manager_v1.get_popup_menu(surface, kind, x, y, width,
+height, selected)` creates a `silica_popup_menu_v1`; the app builds the rows with `add_item`,
+`add_separator`, `add_section`, `begin_submenu` / `end_submenu` and makes the menu visible with
+`show`. Ossido answers once with `selected(id)` or `dismissed`. Model, placement, pop-up button
+alignment and the dismissal rules are in `docs/spec/menus.md`.
+
+`silica-shell-v1` version 9: the event `popup_menu` (serial, owner app, kind, anchor on the output,
+selected, appearance), the `popup_menu_row` events, `popup_menu_end`, and `popup_menu_closed`
+when Ossido ended the menu; the requests `popup_menu_transient` (where the shell drew the menu),
+`popup_menu_choose` and `popup_menu_close`. From `show` the menu is also a transient owned by the
+app (modal for the app, `pass` for the rest), so every dismissal goes through `transient.rs`.
+The embedder exposes it to Dart as `popupMenu` / `popupMenuClosed` on `silica/shell` (shell side)
+and `silica/popupmenu` (app side, `popup_menu.rs`).
+
 ## silica-menu-v1: the apps' menus in the menu bar
 
 An app publishes its menus (app menu, File, Edit, View, Window, Help and its own) and the menu

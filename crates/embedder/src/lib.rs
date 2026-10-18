@@ -24,6 +24,7 @@ mod keymap;
 mod locale;
 mod menu;
 mod mouse_cursor;
+mod popup_menu;
 mod prefetch;
 mod pty;
 mod shell;

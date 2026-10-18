@@ -192,6 +192,25 @@ class LayerControl {
     }
   }
 
+  /// Where the shell drew popup menu `serial` of an app (#241): Ossido already holds the
+  /// menu as a transient owned by the app and only needs the rectangles.
+  Future<bool> popupMenuRegion(int serial, List<Rect> rects) async {
+    try {
+      return await channel.invokeMethod<bool>(
+            'setTransient',
+            _args({
+              'popupMenu': serial,
+              'rects': [
+                for (final r in rects) [r.left, r.top, r.width, r.height],
+              ],
+            }),
+          ) ??
+          false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
   /// The menu or panel was closed by the shell itself (no `transientDismissed` follows).
   Future<void> clearTransient() => _call('clearTransient', {});
 

@@ -16,6 +16,10 @@
 //! - `activateMenuItem {serial, id}` from Dart: an item of the frontmost app's menus, which
 //!   arrive as `appMenu {app_id, serial, model}` (`menu.rs`, version 8); `appMenu` from
 //!   Dart → the last ones;
+//! - `popupMenu {serial, app_id, kind, anchor: [x, y, w, h], selected, appearance, rows}` to
+//!   Dart when an app shows a context menu or pop-up button's menu (version 9, #241); rows are
+//!   `{kind, id, label, flags, icon, key, modifiers}`; `popupMenuClosed serial` when Ossido
+//!   ended it; `popupMenuChoose {serial, id}` and `popupMenuClose {serial}` from Dart;
 //! - `thumbnail {id}` from Dart asks for the thumbnail of a minimized window: it arrives as
 //!   `thumbnail {id, width, height, path}`, a premultiplied RGBA file that Dart reads and
 //!   deletes (width 0 if there is none).
@@ -57,7 +61,19 @@ pub struct ShellLink {
     serial: std::cell::Cell<u64>,
     /// The frontmost app's menus, as last sent to Dart (`appMenu`).
     app_menu: Value,
+    /// The popup menu whose rows are arriving.
+    popup: Option<PopupBuild>,
 }
+
+/// A popup menu (`silica_shell_manager_v1.popup_menu`) while its rows arrive.
+struct PopupBuild {
+    serial: u32,
+    head: Value,
+    rows: Vec<Value>,
+}
+
+/// The most rows kept for one menu (the protocol's limit plus the submenu ends).
+const MAX_POPUP_ROWS: usize = 2048;
 
 impl ShellLink {
     /// The shell globals, if Ossido shows them to this process.
@@ -74,7 +90,68 @@ impl ShellLink {
             thumbnails: std::cell::RefCell::new(Vec::new()),
             serial: std::cell::Cell::new(0),
             app_menu: Value::Null,
+            popup: None,
         }
+    }
+
+    /// `popup_menu`: a new menu starts (silica-desktop#241).
+    pub fn begin_popup_menu(
+        &mut self,
+        serial: u32,
+        app_id: String,
+        kind: u32,
+        anchor: [i32; 4],
+        selected: u32,
+        appearance: u32,
+    ) {
+        self.popup = Some(PopupBuild {
+            serial,
+            head: json!({
+                "serial": serial,
+                "app_id": app_id,
+                "kind": kind,
+                "anchor": anchor,
+                "selected": selected,
+                "appearance": crate::window_appearance::name(appearance),
+            }),
+            rows: Vec::new(),
+        });
+    }
+
+    /// `popup_menu_row`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn popup_menu_row(
+        &mut self,
+        serial: u32,
+        kind: u32,
+        id: u32,
+        label: String,
+        flags: u32,
+        icon: String,
+        key: String,
+        modifiers: u32,
+    ) {
+        if let Some(build) = self.popup.as_mut().filter(|b| b.serial == serial)
+            && build.rows.len() < MAX_POPUP_ROWS
+        {
+            build.rows.push(json!({
+                "kind": kind, "id": id, "label": label, "flags": flags,
+                "icon": icon, "key": key, "modifiers": modifiers,
+            }));
+        }
+    }
+
+    /// `popup_menu_end`: the `popupMenu` message for Dart.
+    pub fn end_popup_menu(&mut self, serial: u32) -> Option<Vec<u8>> {
+        if self.popup.as_ref().is_none_or(|b| b.serial != serial) {
+            return None;
+        }
+        let build = self.popup.take()?;
+        let mut args = build.head;
+        if let Value::Object(map) = &mut args {
+            map.insert("rows".to_owned(), Value::Array(build.rows));
+        }
+        serde_json::to_vec(&json!({ "method": "popupMenu", "args": args })).ok()
     }
 
     /// The shell manager, if Ossido shows it to this process.
@@ -319,6 +396,35 @@ impl ShellLink {
                 };
                 success(json!(sent))
             }
+            Some("popupMenuChoose") => {
+                let number = |name: &str| {
+                    args.get(name)
+                        .and_then(Value::as_u64)
+                        .and_then(|n| u32::try_from(n).ok())
+                };
+                let sent = match (self.manager.as_ref(), number("serial"), number("id")) {
+                    (Some(manager), Some(serial), Some(id)) if manager.version() >= 9 => {
+                        manager.popup_menu_choose(serial, id);
+                        true
+                    }
+                    _ => false,
+                };
+                success(json!(sent))
+            }
+            Some("popupMenuClose") => {
+                let serial = args
+                    .get("serial")
+                    .and_then(Value::as_u64)
+                    .and_then(|n| u32::try_from(n).ok());
+                let sent = match (self.manager.as_ref(), serial) {
+                    (Some(manager), Some(serial)) if manager.version() >= 9 => {
+                        manager.popup_menu_close(serial);
+                        true
+                    }
+                    _ => false,
+                };
+                success(json!(sent))
+            }
             Some("launch") => {
                 let command = text("command");
                 let sent = !command.is_empty()
@@ -330,5 +436,33 @@ impl ShellLink {
             }
             _ => Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+
+    use super::*;
+
+    #[test]
+    fn a_popup_menu_reaches_dart_when_its_rows_are_complete() {
+        let mut link = ShellLink::new(None, None);
+        link.begin_popup_menu(4, "org.silica.A".into(), 1, [10, 20, 80, 22], 2, 2);
+        // Rows of another menu are dropped.
+        link.popup_menu_row(9, 0, 7, "Other".into(), 0, String::new(), String::new(), 0);
+        link.popup_menu_row(4, 0, 2, "Copy".into(), 2, "doc".into(), "C".into(), 1);
+        link.popup_menu_row(4, 1, 0, String::new(), 0, String::new(), String::new(), 0);
+        assert!(link.end_popup_menu(9).is_none());
+        let message = link.end_popup_menu(4).unwrap();
+        let message: Value = serde_json::from_slice(&message).unwrap();
+        assert_eq!(message["method"], "popupMenu");
+        let args = &message["args"];
+        assert_eq!(args["anchor"], json!([10, 20, 80, 22]));
+        assert_eq!(args["appearance"], "dark");
+        assert_eq!(args["rows"].as_array().unwrap().len(), 2);
+        assert_eq!(args["rows"][0]["label"], "Copy");
+        // Taken: a second end finds nothing.
+        assert!(link.end_popup_menu(4).is_none());
     }
 }

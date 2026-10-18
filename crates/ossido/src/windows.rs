@@ -287,6 +287,7 @@ impl State {
         self.start_genie(window, false);
         self.space.unmap_elem(window);
         self.minimized.push((window.clone(), location));
+        self.prune_popup_menus();
         self.announce_minimized(window, true);
         let next = self.space.elements().last().cloned();
         self.focus_window(next);
@@ -325,6 +326,7 @@ impl State {
             let location = self.space.element_location(&window).unwrap_or_default();
             self.start_closing(&window);
             self.space.unmap_elem(&window);
+            self.prune_popup_menus();
             (window, location)
         } else if let Some(index) = self
             .minimized

@@ -32,6 +32,7 @@ mod layers;
 mod lock;
 pub(crate) mod panorama;
 mod perf;
+mod popup_menu;
 mod reap;
 mod render;
 mod resize;

@@ -380,6 +380,7 @@ impl State {
                 "queued": self.system.keyboard_step(id == SYSTEM_KEYBOARD_BRIGHTNESS_UP)
             })),
             SWITCHER_NEXT | SWITCHER_PREVIOUS => {
+                self.dismiss_transients();
                 self.switcher_active = true;
                 Ok(json!({ "forwarded": self.forward_to_shell(id) }))
             }
@@ -388,6 +389,8 @@ impl State {
                 Ok(json!({ "forwarded": self.forward_to_shell(id) }))
             }
             FARO_TOGGLE | NOTIFICATIONS_TOGGLE | CONTROLCENTER_TOGGLE | LAUNCHER_TOGGLE => {
+                // Faro, the Launcher and the panels open over every menu (#237).
+                self.dismiss_transients();
                 let sent = self.forward_to_shell(id);
                 Ok(json!({ "forwarded": sent }))
             }

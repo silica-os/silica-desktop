@@ -9,6 +9,7 @@ use silica_protocols::glass::client::silica_glass_manager_v1::SilicaGlassManager
 use silica_protocols::glass::client::silica_glass_v1::SilicaGlassV1;
 use silica_protocols::menu::client::silica_menu_manager_v1::SilicaMenuManagerV1;
 use silica_protocols::menu::client::silica_menu_v1::{self, SilicaMenuV1};
+use silica_protocols::menu::client::silica_popup_menu_v1::{self, SilicaPopupMenuV1};
 use silica_protocols::shell::client::silica_shell_manager_v1::{
     Outside, Rule, SilicaShellManagerV1,
 };
@@ -945,12 +946,12 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         glass_manager,
         menu: crate::menu::MenuLink::new(
             globals
-                .bind::<SilicaMenuManagerV1, App, ()>(&qh, 1..=1, ())
+                .bind::<SilicaMenuManagerV1, App, ()>(&qh, 1..=2, ())
                 .ok(),
         ),
         shell: ShellLink::new(
             globals
-                .bind::<SilicaShellManagerV1, App, ()>(&qh, 1..=8, ())
+                .bind::<SilicaShellManagerV1, App, ()>(&qh, 1..=9, ())
                 .ok(),
             globals
                 .bind::<ExtForeignToplevelListV1, App, ()>(&qh, 1..=1, ())
@@ -1077,6 +1078,7 @@ impl App {
             text_input::CHANNEL => self.text_input.handle_call(&message.data),
             shell::CHANNEL => self.shell.handle_call(&message.data, &self.qh),
             crate::menu::CHANNEL => self.menu.handle_call(&message.data, &self.qh),
+            crate::popup_menu::CHANNEL => self.handle_popup_menu_call(&message.data),
             LAYER_CHANNEL => self.handle_layer_call(&message.data),
             LOCK_CHANNEL => self.handle_lock_call(&message.data),
             WINDOW_CHANNEL => self.handle_window_call(&message.data),
@@ -2842,6 +2844,30 @@ impl App {
                     .get("owner")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or_default();
+                // A popup menu of an app (#241): Ossido owns its transient, this says where
+                // the shell drew it.
+                if let Some(serial) = args
+                    .get("popupMenu")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|n| u32::try_from(n).ok())
+                {
+                    let sent = self
+                        .shell
+                        .manager()
+                        .filter(|m| wayland_client::Proxy::version(*m) >= 9)
+                        .is_some_and(|manager| {
+                            manager.popup_menu_transient(
+                                serial,
+                                surface.wl_surface(),
+                                region.as_ref().map(Region::wl_region),
+                            );
+                            true
+                        });
+                    if sent {
+                        surface.commit();
+                    }
+                    return text_input::success(serde_json::json!(sent));
+                }
                 match self
                     .shell
                     .manager()
@@ -4080,6 +4106,80 @@ impl wayland_client::Dispatch<ZxdgImportedV2, ()> for App {
     }
 }
 
+/// A popup menu of the service ended (`popup_menu.rs`): the id chosen, or none.
+impl wayland_client::Dispatch<SilicaPopupMenuV1, u64> for App {
+    fn event(
+        app: &mut Self,
+        _: &SilicaPopupMenuV1,
+        event: silica_popup_menu_v1::Event,
+        token: &u64,
+        _: &wayland_client::Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let id = match event {
+            silica_popup_menu_v1::Event::Selected { id } => Some(id),
+            silica_popup_menu_v1::Event::Dismissed => None,
+            _ => return,
+        };
+        if let Some(object) = app.menu.popups.remove(token) {
+            object.destroy();
+        }
+        if let Some(engine) = &app.engine
+            && let Err(err) = engine.send_message(
+                crate::popup_menu::CHANNEL,
+                &crate::popup_menu::result_message(*token, id),
+            )
+        {
+            warn!("silica/popupmenu: {err}");
+        }
+    }
+}
+
+impl App {
+    /// `silica/popupmenu` (`popup_menu.rs`): shows the app's context menu or pop-up button's
+    /// menu through Ossido on the surface of the view.
+    fn handle_popup_menu_call(&mut self, data: &[u8]) -> Vec<u8> {
+        let Ok(call) = serde_json::from_slice::<serde_json::Value>(data) else {
+            return Vec::new();
+        };
+        let args = call.get("args").cloned().unwrap_or(serde_json::Value::Null);
+        let done = match call.get("method").and_then(serde_json::Value::as_str) {
+            Some("available") => self.menu.popup_menus_available(),
+            Some("show") => match crate::popup_menu::parse(&args) {
+                Ok(menu) => {
+                    let surface = self
+                        .views
+                        .get(&views::view_arg(&call))
+                        .map(|view| view.surface.wl_surface().clone());
+                    match surface {
+                        Some(surface) => {
+                            let qh = self.qh.clone();
+                            self.menu.show_popup_menu(&surface, &menu, &qh)
+                        }
+                        None => false,
+                    }
+                }
+                Err(err) => {
+                    warn!("silica/popupmenu: menu refused: {err}");
+                    false
+                }
+            },
+            Some("cancel") => {
+                if let Some(object) = args
+                    .get("token")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|token| self.menu.popups.remove(&token))
+                {
+                    object.destroy();
+                }
+                true
+            }
+            _ => return Vec::new(),
+        };
+        text_input::success(serde_json::json!(done))
+    }
+}
+
 /// An item of the app's menus chosen in the bar (`menu.rs`).
 impl wayland_client::Dispatch<SilicaMenuV1, ()> for App {
     fn event(
@@ -4158,6 +4258,51 @@ impl wayland_client::Dispatch<SilicaShellManagerV1, ()> for App {
                 app.shell.remember_app_menu(&message);
                 message
             }
+            // A context menu or pop-up button's menu of an app, drawn by the shell (#241).
+            Event::PopupMenu {
+                serial,
+                app_id,
+                kind,
+                x,
+                y,
+                width,
+                height,
+                selected,
+                appearance,
+            } => {
+                app.shell.begin_popup_menu(
+                    serial,
+                    app_id,
+                    kind,
+                    [x, y, width, height],
+                    selected,
+                    appearance,
+                );
+                return;
+            }
+            Event::PopupMenuRow {
+                serial,
+                kind,
+                id,
+                label,
+                flags,
+                icon,
+                key,
+                modifiers,
+            } => {
+                app.shell
+                    .popup_menu_row(serial, kind, id, label, flags, icon, key, modifiers);
+                return;
+            }
+            Event::PopupMenuEnd { serial } => match app.shell.end_popup_menu(serial) {
+                Some(message) => message,
+                None => return,
+            },
+            Event::PopupMenuClosed { serial } => serde_json::to_vec(&serde_json::json!({
+                "method": "popupMenuClosed",
+                "args": serial,
+            }))
+            .unwrap_or_default(),
             // Long press on the green button: the arrangement popover.
             Event::WindowMenu { identifier, x, y } => serde_json::to_vec(&serde_json::json!({
                 "method": "windowMenu",

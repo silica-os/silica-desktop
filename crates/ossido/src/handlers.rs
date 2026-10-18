@@ -294,6 +294,8 @@ impl XdgShellHandler for State {
             }
         }
         self.unpublish_toplevel(&surface);
+        // The parent of a menu is gone (#237).
+        self.dismiss_popup_menus_on(surface.wl_surface());
     }
 
     fn title_changed(&mut self, surface: ToplevelSurface) {

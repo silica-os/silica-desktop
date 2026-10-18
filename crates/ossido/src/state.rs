@@ -109,6 +109,8 @@ pub struct State {
     pub announced_focus: Option<String>,
     /// The apps' menus for the global menu bar (`silica-menu-v1`, #25).
     pub app_menus: crate::app_menu::AppMenus,
+    /// The context menus and pop-up buttons the shell draws (`popup_menu.rs`, #241).
+    pub popup_menus: crate::popup_menu::PopupMenus,
     pub seat: Seat<State>,
 
     /// Number of windows opened so far, to cascade them.
@@ -442,6 +444,7 @@ impl State {
             shell_states: std::collections::BTreeMap::new(),
             announced_focus: None,
             app_menus,
+            popup_menus: crate::popup_menu::PopupMenus::default(),
             seat,
             mapped: 0,
             next_window_id: 0,
