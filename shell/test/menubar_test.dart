@@ -130,6 +130,118 @@ void main() {
     expect(wifiArcs(0.1), 1);
   });
 
+  test('menubar.json autohide and background', () {
+    expect(MenubarConfig.fromJson({}).autohide, MenubarAutohide.fullscreen);
+    expect(MenubarConfig.fromJson({}).background, isFalse);
+    final config = MenubarConfig.fromJson({
+      'autohide': 'always',
+      'background': true,
+    });
+    expect(config.autohide, MenubarAutohide.always);
+    expect(config.background, isTrue);
+    expect(
+      MenubarConfig.fromJson({'autohide': 'sometimes'}).autohide,
+      MenubarAutohide.fullscreen,
+    );
+  });
+
+  group('auto-hide', () {
+    // The timers (190 ms) fire and the slide runs: frames, as a ticker starts on the next one.
+    Future<void> settle(WidgetTester tester) async {
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(milliseconds: 250));
+      }
+    }
+
+    Future<ValueNotifier<MenubarConfig>> pumpBar(
+      WidgetTester tester,
+      MenubarAutohide mode,
+    ) async {
+      final config = ValueNotifier(MenubarConfig(autohide: mode));
+      addTearDown(config.dispose);
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: MenuBar(
+            config: config,
+            system: FakeSystem(const SystemSnapshot()),
+            now: DateTime(2026, 10, 13, 9),
+          ),
+        ),
+      );
+      await settle(tester);
+      return config;
+    }
+
+    double top(WidgetTester tester) =>
+        tester.getTopLeft(find.byKey(const ValueKey('menubar slide'))).dy;
+
+    testWidgets('never: the bar stays in place', (tester) async {
+      ShellChannel.instance.states.value = const {'fullscreen.front': '1'};
+      addTearDown(() => ShellChannel.instance.states.value = const {});
+      await pumpBar(tester, MenubarAutohide.never);
+      expect(top(tester), 0);
+    });
+
+    testWidgets('in full screen only: away while the front window is', (
+      tester,
+    ) async {
+      ShellChannel.instance.states.value = const {};
+      addTearDown(() => ShellChannel.instance.states.value = const {});
+      await pumpBar(tester, MenubarAutohide.fullscreen);
+      expect(top(tester), 0);
+      ShellChannel.instance.states.value = const {'fullscreen.front': '1'};
+      await settle(tester);
+      expect(top(tester), -barHeight);
+      ShellChannel.instance.states.value = const {'fullscreen.front': '0'};
+      await settle(tester);
+      expect(top(tester), 0);
+    });
+
+    testWidgets('always: the top edge brings it back, leaving sends it away', (
+      tester,
+    ) async {
+      await pumpBar(tester, MenubarAutohide.always);
+      expect(top(tester), -barHeight);
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      addTearDown(mouse.removePointer);
+      await mouse.addPointer(location: const Offset(400, 300));
+      await mouse.moveTo(const Offset(400, 0));
+      await settle(tester);
+      expect(top(tester), 0);
+      await mouse.moveTo(const Offset(400, 300));
+      await settle(tester);
+      expect(top(tester), -barHeight);
+    });
+  });
+
+  testWidgets('the bar background is drawn only when Settings turns it on', (
+    tester,
+  ) async {
+    final config = ValueNotifier(
+      const MenubarConfig(autohide: MenubarAutohide.never),
+    );
+    addTearDown(config.dispose);
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: MenuBar(
+          config: config,
+          system: FakeSystem(const SystemSnapshot()),
+          now: DateTime(2026, 10, 13, 9),
+        ),
+      ),
+    );
+    Finder background() => find.byKey(const ValueKey('menubar background'));
+    expect(background(), findsNothing);
+    config.value = const MenubarConfig(
+      autohide: MenubarAutohide.never,
+      background: true,
+    );
+    await tester.pump();
+    expect(background(), findsOneWidget);
+  });
+
   testWidgets('the Focus moon only while a Focus is on (SH-MB-26)', (
     tester,
   ) async {

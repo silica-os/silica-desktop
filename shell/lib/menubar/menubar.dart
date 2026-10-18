@@ -38,6 +38,12 @@ import 'window_menu.dart';
 
 const double barHeight = 32;
 
+/// Auto-hide timings (the Dock's; the bar's were not measured): rest on the edge before the
+/// bar comes back, and the slides.
+const Duration barAutohideDelay = Duration(milliseconds: 190);
+const Duration barRevealDuration = Duration(milliseconds: 190);
+const Duration barHideDuration = Duration(milliseconds: 175);
+
 /// An item: 28 tall, 2 pt from the bar's top and bottom; its text is 8 pt from its edges.
 const double itemHeight = 28;
 const double itemTop = (barHeight - itemHeight) / 2;
@@ -71,6 +77,12 @@ Color barTextColor(BuildContext context) =>
 Color barSelectionColor(BuildContext context) => AmalfiTheme.of(context).isDark
     ? const Color(0x33FFFFFF)
     : const Color(0x66FFFFFF);
+
+/// The bar's background when Settings turns it on (menubar.json `background`): the kit has
+/// no token for it (the reference bar is bare by default), so a translucent surface tint.
+Color barBackgroundColor(BuildContext context) => AmalfiTheme.of(context).isDark
+    ? const Color(0x8C1C1C1E)
+    : const Color(0x8CF2F2F7);
 
 /// The bar's text, like the kit: titles Body, the app name Headline, the clock Body Emphasis.
 TextStyle barTitleStyle(Color color) => AmalfiType.body(color: color);
@@ -197,11 +209,29 @@ class MenuBar extends StatefulWidget {
   State<MenuBar> createState() => _MenuBarState();
 }
 
-class _MenuBarState extends State<MenuBar> {
+class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
   /// This component's layer surface (several share one engine, #201).
   late final LayerControl _layer;
 
   Timer? _timer;
+
+  /// Auto-hide (menubar.json `autohide`): 1 with the bar in place, 0 slid away above the
+  /// screen. The timings are the Dock's (provisional: the bar's were not measured).
+  late final AnimationController _shown = AnimationController(
+    vsync: this,
+    value: 1,
+  );
+  Timer? _autohideTimer;
+
+  /// The bar has slid away: only a one-pixel strip at the top takes the pointer.
+  bool _hidden = false;
+
+  /// The pointer is on the bar (or on the strip that brings it back).
+  bool _pointerOnBar = false;
+
+  /// The room the bar claims on the screen now (the exclusive zone), and its width.
+  double _zone = barHeight;
+  double _width = 4096;
 
   /// The open menu (`logo`, `app` or the item name) and the item rectangles.
   String? _open;
@@ -487,7 +517,7 @@ class _MenuBarState extends State<MenuBar> {
     });
     _layer.clearTransient();
     _layer.keyboard('none');
-    _layer.inputRegion(null);
+    _layer.inputRegion(_restRegion());
     _layer.size(0, barHeight);
   }
 
@@ -561,6 +591,9 @@ class _MenuBarState extends State<MenuBar> {
       (menu) => _openWindowMenu(menu.tip, menu.brightness),
     );
     _dismissed = _layer.transientDismissed.listen((_) => _transientDismissed());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _syncAutohide();
+    });
   }
 
   StreamSubscription<void>? _dismissed;
@@ -651,7 +684,7 @@ class _MenuBarState extends State<MenuBar> {
     }
     _layer.clearTransient();
     _layer.keyboard('none');
-    _layer.inputRegion(null);
+    _layer.inputRegion(_restRegion());
     _layer.size(0, barHeight);
   }
 
@@ -699,7 +732,7 @@ class _MenuBarState extends State<MenuBar> {
     if (!mounted) return;
     setState(() => _power = action);
     _layer.size(0, screen?.height ?? 800);
-    _layer.inputRegion(null);
+    _layer.inputRegion(_restRegion());
     _layer.keyboard('exclusive');
   }
 
@@ -712,7 +745,7 @@ class _MenuBarState extends State<MenuBar> {
     if (_power == null) return;
     setState(() => _power = null);
     _layer.keyboard('none');
-    _layer.inputRegion(null);
+    _layer.inputRegion(_restRegion());
     _layer.size(0, barHeight);
   }
 
@@ -721,7 +754,7 @@ class _MenuBarState extends State<MenuBar> {
     setState(() => _windowMenuTip = null);
     _layer.clearTransient();
     _layer.keyboard('none');
-    _layer.inputRegion(null);
+    _layer.inputRegion(_restRegion());
     _layer.size(0, barHeight);
   }
 
@@ -754,6 +787,8 @@ class _MenuBarState extends State<MenuBar> {
     _ownConfig?.dispose();
     _timer?.cancel();
     _switchTimer?.cancel();
+    _autohideTimer?.cancel();
+    _shown.dispose();
     ShellChannel.instance.toplevels.removeListener(_changed);
     ShellChannel.instance.focused.removeListener(_changed);
     ShellChannel.instance.appMenu.removeListener(_changed);
@@ -768,7 +803,72 @@ class _MenuBarState extends State<MenuBar> {
   }
 
   void _changed() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    _syncAutohide();
+  }
+
+  /// A menu, a panel or a card of the bar is open: the bar stays.
+  bool get _busy {
+    final states = ShellChannel.instance.states.value;
+    return _open != null ||
+        _windowMenuTip != null ||
+        _power != null ||
+        _desktopMenuAt != null ||
+        (states['statusmenu'] ?? '').isNotEmpty ||
+        states['controlcenter.open'] == '1' ||
+        states['notifications.open'] == '1';
+  }
+
+  /// Whether the bar hides itself in the situation of now (before the pointer is asked).
+  bool get _autohides => switch (_config.value.autohide) {
+    MenubarAutohide.never => false,
+    MenubarAutohide.always => true,
+    MenubarAutohide.fullscreen =>
+      ShellChannel.instance.states.value['fullscreen.front'] == '1',
+  };
+
+  /// The input region at rest: all of the surface, or the strip while the bar is away.
+  List<Rect>? _restRegion() =>
+      _hidden ? [Rect.fromLTWH(0, 0, _width, 1)] : null;
+
+  /// Brings the bar and the room it takes in line with the setting and the pointer.
+  void _syncAutohide() {
+    final autohides = _autohides;
+    // The room: none while the bar can be away, so the windows use the whole screen.
+    final zone = autohides ? 0.0 : barHeight;
+    if (zone != _zone) {
+      _zone = zone;
+      _layer.exclusiveZone(zone);
+    }
+    final hide = autohides && !_busy && !_pointerOnBar;
+    if (hide == _hidden) return;
+    _hidden = hide;
+    if (hide) {
+      _shown.animateBack(0, duration: barHideDuration, curve: Curves.easeIn);
+      _layer.inputRegion(_restRegion());
+    } else {
+      _layer.inputRegion(_restRegion());
+      _shown.animateTo(1, duration: barRevealDuration, curve: Curves.easeOut);
+    }
+  }
+
+  /// The pointer moved over the surface: onto the bar (or its strip) or away from it.
+  void _edgeMoved(Offset p) {
+    if (!_autohides && !_hidden) return;
+    final on = p.dy <= (_hidden ? 1 : barHeight);
+    if (on == _pointerOnBar) return;
+    _pointerOnBar = on;
+    _autohideTimer?.cancel();
+    // Coming up takes a moment of resting on the edge, going away a moment after leaving.
+    _autohideTimer = Timer(barAutohideDelay, _syncAutohide);
+  }
+
+  void _pointerLeft() {
+    if (!_pointerOnBar) return;
+    _pointerOnBar = false;
+    _autohideTimer?.cancel();
+    _autohideTimer = Timer(barAutohideDelay, _syncAutohide);
   }
 
   /// The app menu's title: the name the app gives its menu, else its entry's name.
@@ -886,96 +986,121 @@ class _MenuBarState extends State<MenuBar> {
     );
     return LayoutBuilder(
       builder: (context, constraints) {
-        return Listener(
-          key: _rootKey,
-          behavior: HitTestBehavior.translucent,
-          onPointerDown: _pointerDown,
-          onPointerMove: (e) => _pointerMoved(e.localPosition),
-          onPointerHover: (e) => _pointerMoved(e.localPosition),
-          child: SizedBox.expand(
-            child: Stack(
-              children: [
-                Positioned(
-                  left: 0,
-                  top: 0,
-                  right: 0,
-                  height: barHeight,
-                  child: bar,
-                ),
-                if (_windowMenuTip case final tip?)
-                  Positioned.fill(
-                    child: _withBrightness(
-                      _windowMenuBrightness,
-                      WindowMenuPopover(
-                        key: _windowKey,
-                        tip: tip,
-                        execute: (id) => ShellChannel.instance.execute(id),
-                        texts: l10nOf(context),
-                        onDismissed: _closeWindowMenu,
-                        onRectChanged: (r) => _menuRegion([r]),
+        _width = constraints.maxWidth.isFinite ? constraints.maxWidth : _width;
+        return MouseRegion(
+          onExit: (_) => _pointerLeft(),
+          child: Listener(
+            key: _rootKey,
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: _pointerDown,
+            onPointerMove: (e) => _pointerMoved(e.localPosition),
+            onPointerHover: (e) {
+              _edgeMoved(e.localPosition);
+              _pointerMoved(e.localPosition);
+            },
+            child: SizedBox.expand(
+              child: Stack(
+                children: [
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    height: barHeight,
+                    child: AnimatedBuilder(
+                      animation: _shown,
+                      builder: (context, child) => Transform.translate(
+                        offset: Offset(0, -(1 - _shown.value) * barHeight),
+                        child: KeyedSubtree(
+                          key: const ValueKey('menubar slide'),
+                          child: child!,
+                        ),
                       ),
+                      child: _config.value.background
+                          ? DecoratedBox(
+                              key: const ValueKey('menubar background'),
+                              decoration: BoxDecoration(
+                                color: barBackgroundColor(context),
+                              ),
+                              child: bar,
+                            )
+                          : bar,
                     ),
                   ),
-                if (_power case final action?)
-                  Positioned.fill(
-                    child: LayoutBuilder(
-                      builder: (context, box) => Stack(
-                        children: [
-                          // Clicks outside the card do nothing (it is modal); the
-                          // menu bar stays visible above it.
-                          const Positioned.fill(
-                            child: AbsorbPointer(child: SizedBox.expand()),
-                          ),
-                          Positioned(
-                            left: (box.maxWidth - powerCardSize.width) / 2,
-                            // Upper third: the measured card's top at ~20 % of the height.
-                            top: box.maxHeight * 0.205,
-                            child: PowerConfirmation(
-                              action: action,
-                              user: _user,
-                              onCancel: _closePower,
-                              onConfirm: () {
-                                _closePower();
-                                unawaited(_runPower(action));
-                              },
+                  if (_windowMenuTip case final tip?)
+                    Positioned.fill(
+                      child: _withBrightness(
+                        _windowMenuBrightness,
+                        WindowMenuPopover(
+                          key: _windowKey,
+                          tip: tip,
+                          execute: (id) => ShellChannel.instance.execute(id),
+                          texts: l10nOf(context),
+                          onDismissed: _closeWindowMenu,
+                          onRectChanged: (r) => _menuRegion([r]),
+                        ),
+                      ),
+                    ),
+                  if (_power case final action?)
+                    Positioned.fill(
+                      child: LayoutBuilder(
+                        builder: (context, box) => Stack(
+                          children: [
+                            // Clicks outside the card do nothing (it is modal); the
+                            // menu bar stays visible above it.
+                            const Positioned.fill(
+                              child: AbsorbPointer(child: SizedBox.expand()),
                             ),
-                          ),
-                        ],
+                            Positioned(
+                              left: (box.maxWidth - powerCardSize.width) / 2,
+                              // Upper third: the measured card's top at ~20 % of the height.
+                              top: box.maxHeight * 0.205,
+                              child: PowerConfirmation(
+                                action: action,
+                                user: _user,
+                                onCancel: _closePower,
+                                onConfirm: () {
+                                  _closePower();
+                                  unawaited(_runPower(action));
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                if (_desktopMenuAt case final at?)
-                  Positioned.fill(
-                    child: BarMenuHost(
-                      key: _desktopKey,
-                      entries: amalfiEntries(
-                        _desktopMenuEntries ?? _desktopEntries(),
+                  if (_desktopMenuAt case final at?)
+                    Positioned.fill(
+                      child: BarMenuHost(
+                        key: _desktopKey,
+                        entries: amalfiEntries(
+                          _desktopMenuEntries ?? _desktopEntries(),
+                        ),
+                        anchor: Offset(at.dx, at.dy - desktopMenuAbove),
+                        flip: true,
+                        onDismissed: _closeDesktopMenu,
+                        onRectsChanged: _menuRegion,
                       ),
-                      anchor: Offset(at.dx, at.dy - desktopMenuAbove),
-                      flip: true,
-                      onDismissed: _closeDesktopMenu,
-                      onRectsChanged: _menuRegion,
                     ),
-                  ),
-                if (_open case final name?)
-                  Positioned.fill(
-                    child: BarMenuHost(
-                      key: _menuKey,
-                      entryKey: name,
-                      entries: amalfiEntries(_openEntries ?? _entries(name)),
-                      anchor: Offset(
-                        (_rectOf(name)?.left ?? 0) - menuLeftOfItem,
-                        barHeight + menuBelowBar,
+                  if (_open case final name?)
+                    Positioned.fill(
+                      child: BarMenuHost(
+                        key: _menuKey,
+                        entryKey: name,
+                        entries: amalfiEntries(_openEntries ?? _entries(name)),
+                        anchor: Offset(
+                          (_rectOf(name)?.left ?? 0) - menuLeftOfItem,
+                          barHeight + menuBelowBar,
+                        ),
+                        highlightFirst: _highlightFirst,
+                        onDismissed: _closeMenu,
+                        onNext: () => _neighbour(1),
+                        onPrevious: () => _neighbour(-1),
+                        // With a submenu open the input region includes it.
+                        onRectsChanged: _menuRegion,
                       ),
-                      highlightFirst: _highlightFirst,
-                      onDismissed: _closeMenu,
-                      onNext: () => _neighbour(1),
-                      onPrevious: () => _neighbour(-1),
-                      // With a submenu open the input region includes it.
-                      onRectsChanged: _menuRegion,
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         );

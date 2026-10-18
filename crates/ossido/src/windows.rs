@@ -356,6 +356,21 @@ impl State {
         self.focus_window(None);
     }
 
+    /// Tells the shell whether the focused window is full screen (`fullscreen.front`, `1` or
+    /// `0`): the menu bar hides itself then when Settings says so. Sent when it changes.
+    pub fn sync_fullscreen_front(&mut self) {
+        let on = self.focused_window().is_some_and(|w| is_fullscreen(&w));
+        let value = if on { "1" } else { "0" };
+        if self
+            .shell_states
+            .get("fullscreen.front")
+            .map(String::as_str)
+            != Some(value)
+        {
+            self.broadcast_to_shell("fullscreen.front".to_owned(), value.to_owned());
+        }
+    }
+
     /// The windowless frontmost app (#142), announced to the shell as `app.frontmost`.
     pub fn set_windowless_front(&mut self, app: Option<String>) {
         if self.windowless_front == app {
