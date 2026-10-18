@@ -168,6 +168,20 @@ drawn until the next input); nested and headless only keep the state (`idle.stat
 no `ext-idle-notify-v1` for clients yet (Smithay's implementation needs the event loop's data
 to be the compositor state).
 
+### hotcorners.json
+
+```json
+{"topLeft": "panorama", "bottomRight": "desktop"}
+```
+
+Keys `topLeft`, `topRight`, `bottomLeft`, `bottomRight`; the value is the action Ossido runs once
+when the pointer arrives in that corner (it is armed again after the pointer leaves): `panorama`
+(`panorama.toggle`), `appWindows` (`panorama.app`), `desktop` (`desktop.show`), `notifications`
+(`notifications.toggle`), `launcher` (`launcher.toggle`), `controlCenter`
+(`controlcenter.toggle`), `search` (`faro.toggle`). `none`, a missing key or any other value does
+nothing. Dragging or resizing a window into a corner does not trigger it. Watched like the other
+settings files.
+
 ### theme.json
 
 Settings' Appearance choices. Ossido reads one key; the rest is the look the apps follow
@@ -175,6 +189,8 @@ Settings' Appearance choices. Ossido reads one key; the rest is the look the app
 
 | Key | Type | Meaning |
 | --- | --- | --- |
+| `reduceTransparency` | boolean | Accessibility › Display: the glass is drawn opaque (the `opaque` quality, no blur); off by default |
+| `reduceMotion` | boolean | Accessibility › Display: Ossido's own animations are skipped (the window genie, closing, space switch, Panorama); off by default |
 | `glass` | number 0–1 | how tinted the glass is: 0 clearest, 1 most tinted; 0.5 (default) is the measured material. Only the tint's strength changes (`GlassProfile::with_glass_level`); clear glass has no tint and stays. A value out of range is the default. |
 
 ### input.json

@@ -261,6 +261,69 @@ impl InputConfig {
     }
 }
 
+// --- hotcorners.json -----------------------------------------------------------------------
+
+pub const HOT_CORNERS_FILE: &str = "hotcorners.json";
+
+/// A corner of the output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Corner {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+/// `hotcorners.json` (Settings › Desktop & Dock › Hot Corners): the catalog command each corner
+/// runs when the pointer reaches it. A corner left out does nothing.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct HotCornersConfig {
+    pub top_left: Option<&'static str>,
+    pub top_right: Option<&'static str>,
+    pub bottom_left: Option<&'static str>,
+    pub bottom_right: Option<&'static str>,
+}
+
+/// The command of a hot corner action name; `None` for `none` and unknown names.
+pub fn hot_corner_command(action: &str) -> Option<&'static str> {
+    use silica_control::commands as c;
+    Some(match action {
+        "panorama" => c::PANORAMA_TOGGLE,
+        "appWindows" => c::PANORAMA_APP,
+        "desktop" => c::DESKTOP_SHOW,
+        "notifications" => c::NOTIFICATIONS_TOGGLE,
+        "launcher" => c::LAUNCHER_TOGGLE,
+        "controlCenter" => c::CONTROLCENTER_TOGGLE,
+        "search" => c::FARO_TOGGLE,
+        _ => return None,
+    })
+}
+
+impl HotCornersConfig {
+    pub fn parse(map: Option<&serde_json::Map<String, Value>>) -> Self {
+        let action = |key: &str| {
+            map.and_then(|map| map.get(key))
+                .and_then(Value::as_str)
+                .and_then(hot_corner_command)
+        };
+        Self {
+            top_left: action("topLeft"),
+            top_right: action("topRight"),
+            bottom_left: action("bottomLeft"),
+            bottom_right: action("bottomRight"),
+        }
+    }
+
+    pub fn command(&self, corner: Corner) -> Option<&'static str> {
+        match corner {
+            Corner::TopLeft => self.top_left,
+            Corner::TopRight => self.top_right,
+            Corner::BottomLeft => self.bottom_left,
+            Corner::BottomRight => self.bottom_right,
+        }
+    }
+}
+
 // --- theme.json ----------------------------------------------------------------------------
 
 pub const THEME_FILE: &str = "theme.json";
@@ -271,12 +334,18 @@ pub const THEME_FILE: &str = "theme.json";
 pub struct ThemeConfig {
     /// 0 clear to 1 tinted; 0.5, the measured material, by default.
     pub glass: f32,
+    /// Accessibility › Display › Reduce Transparency: the glass is drawn opaque.
+    pub reduce_transparency: bool,
+    /// Accessibility › Display › Reduce Motion: Ossido's own animations are skipped.
+    pub reduce_motion: bool,
 }
 
 impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
             glass: ossido_render::glass_profile::GLASS_LEVEL_DEFAULT,
+            reduce_transparency: false,
+            reduce_motion: false,
         }
     }
 }
@@ -286,7 +355,15 @@ impl ThemeConfig {
         let glass = map
             .and_then(|map| number_in(map, "glass", (0.0, 1.0)))
             .map_or(Self::default().glass, |g| g as f32);
-        Self { glass }
+        Self {
+            glass,
+            reduce_transparency: map
+                .and_then(|map| bool_of(map, "reduceTransparency"))
+                .unwrap_or(false),
+            reduce_motion: map
+                .and_then(|map| bool_of(map, "reduceMotion"))
+                .unwrap_or(false),
+        }
     }
 }
 
@@ -325,6 +402,7 @@ impl State {
             INPUT_FILE => self.apply_input_config(),
             POWER_FILE => self.apply_power_config(),
             THEME_FILE => self.apply_theme_config(),
+            HOT_CORNERS_FILE => self.apply_hot_corners_config(),
             crate::displays::DISPLAYS_FILE => self.apply_displays_config(),
             _ => {}
         }
@@ -343,6 +421,58 @@ impl State {
         }
     }
 
+    /// `hotcorners.json`: the actions of the four corners.
+    pub fn apply_hot_corners_config(&mut self) {
+        let Some(dir) = self.config_dir.clone() else {
+            return;
+        };
+        self.hot_corners = HotCornersConfig::parse(read_json(&dir, HOT_CORNERS_FILE).as_ref());
+    }
+
+    /// The pointer moved to `location`: when it arrives in a corner with an action, runs it
+    /// (once; the corner is armed again after the pointer leaves it).
+    pub fn hot_corner_check(
+        &mut self,
+        location: smithay::utils::Point<f64, smithay::utils::Logical>,
+    ) {
+        let Some(geometry) = self.space.output_geometry(&self.output) else {
+            return;
+        };
+        let (left, top) = (f64::from(geometry.loc.x), f64::from(geometry.loc.y));
+        let (right, bottom) = (
+            left + f64::from(geometry.size.w),
+            top + f64::from(geometry.size.h),
+        );
+        // The pointer stops at the edge: the last point inside is a pixel from it.
+        const REACH: f64 = 1.5;
+        let near_left = location.x <= left + REACH;
+        let near_right = location.x >= right - REACH;
+        let near_top = location.y <= top + REACH;
+        let near_bottom = location.y >= bottom - REACH;
+        let corner = match (near_left, near_right, near_top, near_bottom) {
+            (true, _, true, _) => Some(Corner::TopLeft),
+            (_, true, true, _) => Some(Corner::TopRight),
+            (true, _, _, true) => Some(Corner::BottomLeft),
+            (_, true, _, true) => Some(Corner::BottomRight),
+            _ => None,
+        };
+        // Dragging or resizing a window into a corner is not a hot corner.
+        if self.moving.is_some() || self.resizing.is_some() {
+            self.hot_corner_inside = corner;
+            return;
+        }
+        if corner == self.hot_corner_inside {
+            return;
+        }
+        self.hot_corner_inside = corner;
+        if let Some(command) = corner.and_then(|c| self.hot_corners.command(c)) {
+            info!("hot corner: {command}");
+            if let Err(err) = self.execute_command(command, Value::Object(serde_json::Map::new())) {
+                warn!("hot corner {command}: {err}");
+            }
+        }
+    }
+
     /// `theme.json`: the glass level, drawn from the next frame.
     pub fn apply_theme_config(&mut self) {
         let Some(dir) = self.config_dir.clone() else {
@@ -350,7 +480,15 @@ impl State {
         };
         let config = ThemeConfig::parse(read_json(&dir, THEME_FILE).as_ref());
         if config != self.theme_config {
+            let was = self.theme_config.reduce_motion;
             self.theme_config = config;
+            // Reduce Motion: no animation of Ossido's own, and back to the chosen speed after.
+            if config.reduce_motion && !was {
+                self.saved_animation_speed = self.animation_speed;
+                self.animation_speed = 0.0;
+            } else if !config.reduce_motion && was {
+                self.animation_speed = self.saved_animation_speed;
+            }
             self.wake();
         }
     }
@@ -361,6 +499,7 @@ impl State {
         self.apply_input_config();
         self.apply_power_config();
         self.apply_theme_config();
+        self.apply_hot_corners_config();
         self.apply_displays_config();
     }
 
@@ -521,6 +660,36 @@ pub fn watch(handle: &LoopHandle<'static, Ossido>, dir: &Path) -> Result<(), Str
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hot_corners_map_to_commands_and_ignore_the_rest() {
+        let parse = |json: &str| match serde_json::from_str::<Value>(json) {
+            Ok(Value::Object(map)) => HotCornersConfig::parse(Some(&map)),
+            _ => HotCornersConfig::parse(None),
+        };
+        let config = parse(
+            r#"{"topLeft": "panorama", "bottomRight": "desktop", "topRight": "none",
+                "bottomLeft": "rm -rf"}"#,
+        );
+        assert_eq!(config.command(Corner::TopLeft), Some("panorama.toggle"));
+        assert_eq!(config.command(Corner::BottomRight), Some("desktop.show"));
+        assert_eq!(config.command(Corner::TopRight), None);
+        assert_eq!(config.command(Corner::BottomLeft), None);
+        assert_eq!(HotCornersConfig::parse(None), HotCornersConfig::default());
+    }
+
+    #[test]
+    fn theme_accessibility_flags_are_read() {
+        let parse = |json: &str| match serde_json::from_str::<Value>(json) {
+            Ok(Value::Object(map)) => ThemeConfig::parse(Some(&map)),
+            _ => ThemeConfig::parse(None),
+        };
+        let both = parse(r#"{"reduceMotion": true, "reduceTransparency": true}"#);
+        assert!(both.reduce_motion && both.reduce_transparency);
+        let junk = parse(r#"{"reduceMotion": "yes"}"#);
+        assert!(!junk.reduce_motion && !junk.reduce_transparency);
+        assert!(!ThemeConfig::parse(None).reduce_motion);
+    }
+
     #[test]
     fn theme_glass_level_is_read_and_checked() {
         let parse = |json: &str| match serde_json::from_str::<Value>(json) {

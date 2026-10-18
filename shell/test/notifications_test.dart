@@ -74,11 +74,14 @@ ShellNotification note(
   timestamp: DateTime(2026, 10, 13, 9, minute),
 );
 
+int alertsPlayed = 0;
+
 Future<void> pumpLayer(
   WidgetTester tester,
   FakeSource source, {
   NotificationSettings settings = const NotificationSettings(),
 }) async {
+  alertsPlayed = 0;
   tester.view.physicalSize = const Size(1280, 686);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -89,6 +92,7 @@ Future<void> pumpLayer(
         source: source,
         settings: () => settings,
         openApp: (n) => source.calls.add('open ${n.appName}'),
+        playAlert: () async => alertsPlayed++,
       ),
     ),
   );
@@ -575,6 +579,27 @@ void main() {
       expect(source.items, contains(4));
     },
   );
+  testWidgets('a banner plays the alert sound unless the app is muted or off', (
+    tester,
+  ) async {
+    final source = FakeSource();
+    await pumpLayer(
+      tester,
+      source,
+      settings: NotificationSettings.parse(
+        '{"apps": {"Muted": {"sound": false}, "Quiet": {"style": "none"}}}',
+      ),
+    );
+    source.post(note(1, app: 'Mail'));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(alertsPlayed, 1);
+    source.post(note(2, app: 'Muted'));
+    await tester.pump(const Duration(milliseconds: 500));
+    source.post(note(3, app: 'Quiet'));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(alertsPlayed, 1);
+  });
+
   test('previews off hide the text, per app and for all', () {
     final all = NotificationSettings.parse('{"previews": "never"}');
     expect(all.present(note(1)).body, isEmpty);
