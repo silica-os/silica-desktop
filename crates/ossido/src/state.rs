@@ -118,6 +118,10 @@ pub struct State {
     pub shortcuts: Vec<(Shortcut, &'static str)>,
     /// Settings is recording a shortcut (`shortcuts.json` `capture`): see `handle_key`.
     pub shortcuts_capture: bool,
+    /// `dock.json`, and the last press on a title bar (window, time in ms, place) for the
+    /// double click.
+    pub dock_config: crate::config::DockConfig,
+    pub bar_press: Option<(smithay::desktop::Window, u32, Point<f64, Logical>)>,
     /// Keycodes for the synthetic keys (`input.key`, `input.type`).
     pub keys: crate::keys::KeyLookup,
     /// What `keys` was built for (the keyboard settings and the active input source): it is
@@ -424,6 +428,8 @@ impl State {
             next_window_id: 0,
             shortcuts: crate::commands::shortcuts(),
             shortcuts_capture: false,
+            dock_config: crate::config::DockConfig::default(),
+            bar_press: None,
             keys: crate::keys::KeyLookup::new()?,
             keys_for: None,
             config_dir: None,

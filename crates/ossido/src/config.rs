@@ -218,7 +218,12 @@ impl Default for PointerSettings {
 pub struct InputConfig {
     pub mouse: PointerSettings,
     pub touchpad: PointerSettings,
+    /// The longest time between two clicks of a double click, in ms (`doubleClickMs`).
+    pub double_click_ms: Option<u32>,
 }
+
+/// The double click time when `input.json` has none.
+pub const DEFAULT_DOUBLE_CLICK_MS: u32 = 400;
 
 impl InputConfig {
     pub fn parse(map: Option<&serde_json::Map<String, Value>>) -> Self {
@@ -226,6 +231,7 @@ impl InputConfig {
         let Some(map) = map else {
             return config;
         };
+        config.double_click_ms = int_in(map, "doubleClickMs", (100, 2000)).map(|ms| ms as u32);
         let common = |group: &serde_json::Map<String, Value>| PointerSettings {
             speed: number_in(group, "speed", (-1.0, 1.0)),
             natural_scroll: bool_of(group, "naturalScroll"),
@@ -324,6 +330,41 @@ impl HotCornersConfig {
     }
 }
 
+// --- dock.json -----------------------------------------------------------------------------
+
+pub const DOCK_FILE: &str = "dock.json";
+
+/// What a double click on a window's title bar does (`titleBarDoubleClick`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TitleBarDoubleClick {
+    #[default]
+    Zoom,
+    Minimize,
+    Nothing,
+}
+
+/// `dock.json`: the part Ossido applies (the Dock itself is the shell's).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DockConfig {
+    pub title_bar_double_click: TitleBarDoubleClick,
+}
+
+impl DockConfig {
+    pub fn parse(map: Option<&serde_json::Map<String, Value>>) -> Self {
+        let title_bar_double_click = match map
+            .and_then(|map| map.get("titleBarDoubleClick"))
+            .and_then(Value::as_str)
+        {
+            Some("minimize") => TitleBarDoubleClick::Minimize,
+            Some("none") => TitleBarDoubleClick::Nothing,
+            _ => TitleBarDoubleClick::Zoom,
+        };
+        Self {
+            title_bar_double_click,
+        }
+    }
+}
+
 // --- shortcuts.json ------------------------------------------------------------------------
 
 pub const SHORTCUTS_FILE: &str = "shortcuts.json";
@@ -355,10 +396,10 @@ impl ShortcutOverrides {
         for spec in silica_control::commands::CATALOG {
             match map.get(spec.id) {
                 Some(Value::Null) => found.push((spec.id, None)),
-                Some(Value::String(text)) => {
-                    if silica_control::commands::Shortcut::parse(text).is_ok() {
-                        found.push((spec.id, Some(text.clone())));
-                    }
+                Some(Value::String(text))
+                    if silica_control::commands::Shortcut::parse(text).is_ok() =>
+                {
+                    found.push((spec.id, Some(text.clone())));
                 }
                 _ => {}
             }
@@ -447,6 +488,7 @@ impl State {
             THEME_FILE => self.apply_theme_config(),
             HOT_CORNERS_FILE => self.apply_hot_corners_config(),
             SHORTCUTS_FILE => self.apply_shortcuts_config(),
+            DOCK_FILE => self.apply_dock_config(),
             crate::displays::DISPLAYS_FILE => self.apply_displays_config(),
             _ => {}
         }
@@ -463,6 +505,14 @@ impl State {
             #[cfg(feature = "drm")]
             self.configure_input_devices();
         }
+    }
+
+    /// `dock.json`: the title bar's double click.
+    pub fn apply_dock_config(&mut self) {
+        let Some(dir) = self.config_dir.clone() else {
+            return;
+        };
+        self.dock_config = DockConfig::parse(read_json(&dir, DOCK_FILE).as_ref());
     }
 
     /// `shortcuts.json`: the catalog's shortcuts with the user's changes, at once.
@@ -559,6 +609,7 @@ impl State {
         self.apply_theme_config();
         self.apply_hot_corners_config();
         self.apply_shortcuts_config();
+        self.apply_dock_config();
         self.apply_displays_config();
     }
 
@@ -848,7 +899,9 @@ mod tests {
     fn shortcuts_file_changes_adds_and_removes() {
         use silica_control::commands as c;
         let id_of = |list: &[(silica_control::commands::Shortcut, &'static str)], id| {
-            list.iter().find(|(_, known)| *known == id).map(|(s, _)| s.clone())
+            list.iter()
+                .find(|(_, known)| *known == id)
+                .map(|(s, _)| s.clone())
         };
         let defaults = crate::commands::shortcuts_with(&ShortcutOverrides::default());
         assert!(id_of(&defaults, c::WINDOW_MINIMIZE).is_some());
@@ -865,6 +918,33 @@ mod tests {
         // Off.
         assert!(id_of(&list, c::FARO_TOGGLE).is_none());
         // A bad value keeps the default.
-        assert!(id_of(&list, c::APP_HIDE).is_some_and(|s| s.matches(true, false, false, false, "h")));
+        assert!(
+            id_of(&list, c::APP_HIDE).is_some_and(|s| s.matches(true, false, false, false, "h"))
+        );
+    }
+
+    #[test]
+    fn dock_file_title_bar_double_click_and_double_click_time() {
+        assert_eq!(
+            DockConfig::parse(None).title_bar_double_click,
+            TitleBarDoubleClick::Zoom
+        );
+        let parse = |text| DockConfig::parse(Some(&map(text))).title_bar_double_click;
+        assert_eq!(
+            parse(r#"{"titleBarDoubleClick": "minimize"}"#),
+            TitleBarDoubleClick::Minimize
+        );
+        assert_eq!(
+            parse(r#"{"titleBarDoubleClick": "none"}"#),
+            TitleBarDoubleClick::Nothing
+        );
+        assert_eq!(
+            parse(r#"{"titleBarDoubleClick": 3}"#),
+            TitleBarDoubleClick::Zoom
+        );
+        let time = |text| InputConfig::parse(Some(&map(text))).double_click_ms;
+        assert_eq!(time(r#"{"doubleClickMs": 650}"#), Some(650));
+        assert_eq!(time(r#"{"doubleClickMs": 5}"#), None);
+        assert_eq!(time("{}"), None);
     }
 }

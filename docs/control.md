@@ -182,6 +182,14 @@ when the pointer arrives in that corner (it is armed again after the pointer lea
 nothing. Dragging or resizing a window into a corner does not trigger it. Watched like the other
 settings files.
 
+### dock.json
+
+Ossido reads one key of the Dock's file (the rest is the shell's):
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `titleBarDoubleClick` | `zoom` (default), `minimize`, `none` | what a double click on the title bar Ossido draws does; the apps that draw their own bar read the same key (silica_ui) |
+
 ### shortcuts.json
 
 ```json
@@ -228,7 +236,7 @@ Settings' Appearance choices. Ossido reads one key; the rest is the look the app
 | `touchpad.secondaryClick` | `twoFinger`, `bottomRight`, `bottomLeft` | click with two fingers (clickfinger) or in a bottom corner (button areas; `bottomLeft` is left-handed) |
 | `touchpad.tapToClick` | boolean | a tap is a click |
 | `touchpad.disableWhileTyping` | boolean | the touchpad ignores the palm while typing |
-| `doubleClickMs` | integer | for the toolkits (silica-ui reads it); Ossido ignores it |
+| `doubleClickMs` | integer, 100–2000 | the double click time: the toolkits read it, and Ossido uses it for the double click on its own title bars (default 400) |
 
 A device is a touchpad when libinput can tap with it, otherwise a mouse. Every key left out
 gives the device libinput's default. The settings apply to every pointer device at once and

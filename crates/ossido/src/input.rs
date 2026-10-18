@@ -231,7 +231,12 @@ impl State {
                     Some(Hit::Titlebar(window, part, local)) => {
                         self.focus_window(Some(window.clone()));
                         if part == Part::Bar {
-                            self.moving = Some((window, local));
+                            if button == BTN_LEFT && self.bar_double_click(&window, time, location)
+                            {
+                                self.bar_double_clicked(&window);
+                            } else {
+                                self.moving = Some((window, local));
+                            }
                         } else {
                             self.titlebar_press = Some((window.clone(), part));
                             self.titlebar_press_inside = true;
@@ -275,6 +280,63 @@ impl State {
             },
         );
         pointer.frame(self);
+    }
+
+    /// A press on a window's title bar: whether it is the second of a double click (the same
+    /// window, within the double click time and a few points). Remembers the press otherwise.
+    fn bar_double_click(
+        &mut self,
+        window: &smithay::desktop::Window,
+        time: u32,
+        location: Point<f64, Logical>,
+    ) -> bool {
+        let within = self
+            .input_config
+            .double_click_ms
+            .unwrap_or(crate::config::DEFAULT_DOUBLE_CLICK_MS);
+        let double = self.bar_press.as_ref().is_some_and(|(last, at, place)| {
+            last == window
+                && time.wrapping_sub(*at) <= within
+                && (place.x - location.x).abs() <= 6.0
+                && (place.y - location.y).abs() <= 6.0
+        });
+        self.bar_press = if double {
+            None
+        } else {
+            Some((window.clone(), time, location))
+        };
+        double
+    }
+
+    /// The double click on the title bar does what Settings › Desktop & Dock says.
+    fn bar_double_clicked(&mut self, window: &smithay::desktop::Window) {
+        use crate::config::TitleBarDoubleClick as Action;
+        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+        let result = match self.dock_config.title_bar_double_click {
+            Action::Nothing => Ok(()),
+            Action::Minimize => {
+                if crate::render::buttons_disabled(window).minimize() {
+                    Ok(())
+                } else {
+                    self.minimize_window(window)
+                }
+            }
+            Action::Zoom => {
+                if crate::render::buttons_disabled(window).zoom() {
+                    Ok(())
+                } else {
+                    let zoomed = window.toplevel().is_some_and(|t| {
+                        t.current_state()
+                            .states
+                            .contains(xdg_toplevel::State::Maximized)
+                    });
+                    self.zoom_window(window, !zoomed)
+                }
+            }
+        };
+        if let Err(err) = result {
+            warn!("title bar double click: {err}");
+        }
     }
 
     /// The wheel or the touchpad, real or synthetic (`input.scroll`), where the pointer is.
