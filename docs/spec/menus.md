@@ -80,17 +80,42 @@ menu code and keeps it on the output:
 
 ### Pop-up button
 
-The menu opens over the control with the selected row aligned on the control: the row's text
-baseline on the control's label baseline and the row's left edge 5 pt left of the control's
-(the menu's body is wider than the control by its padding). The rows above the selected one are
-over the control, so the control stays visible through the selected row only. When the menu does
-not fit (the control is near a screen edge) it is moved to fit, not re-aligned, and the selected
-row is highlighted anyway. With no selected item the first row is aligned. A pull-down (no
-selected value) is a `context` menu whose anchor has a height: the shell opens it 4 pt below
-the control's bottom edge, its left edge on the control's (a 0-height anchor is the pointer).
+Measured (silica-reference#107). The menu opens over the control with the selected row exactly on
+it:
 
-Status: the alignment is *provisional*; the reference's pop-up button has not been measured
-(request in silica-reference).
+- **Vertical:** the selected row's top is the control's top; a regular control is 24 pt tall like
+  the row, so the row's text centre and baseline coincide with the label's (0 pt). The same holds
+  for the first, a middle and the last item; the menu has 5 pt of padding above the first row and
+  below the last. The rows above the selected one cover the control, which keeps its pressed look
+  until the menu has faded out.
+- **Horizontal:** the menu's left edge is **12 pt left** of the control's left edge. The row text
+  starts 30 pt into the menu (after the checkmark column), so it lands **5 pt right** of the
+  control's label (label 12–13 pt into the control).
+- **Width:** max(control width, widest row); the left edge stays put and the extra width grows to
+  the right. A menu as wide as the control therefore ends 12 pt short of the control's right edge.
+- **Control sizes:** the menu uses the control's text size. Small (20 pt control): 22 pt rows, row
+  top on the control's top, text 1 pt lower and 6 pt right of the label, left edge 11 pt left.
+  Mini (16 pt control): 19 pt rows, row top 3 pt below the control's top, text 4 pt lower and
+  7 pt right, left edge 12 pt left.
+- **Screen edges:** the menu keeps 6 pt from the top of the output (it may cover the menu bar),
+  6 pt above the bottom of the usable area (the Dock) and 6 pt from the right edge.
+  - Vertically the alignment is never given up: the rows that do not fit are scrolled out of
+    view and that end of the menu shows a scroll-arrow strip (about one row tall). A menu taller
+    than the output scrolls at both ends.
+  - Exception: with the first item selected and no room for the menu below, the whole menu opens
+    above the control, its bottom edge on the control's top edge, with the first row
+    highlighted. With the last item selected and no room above, it does not flip: it scrolls.
+  - Past the right edge the menu slides left to fit and the horizontal alignment is lost; the
+    vertical alignment is kept.
+- **No selected item:** the first row is aligned (not measured).
+- **Pull-down:** a `context` menu whose anchor has a height: it opens 3 pt below the control's
+  bottom edge, its left edge 5 pt left of the control's, 4 pt narrower than the control (it grows
+  with longer rows), without the title item; the row text is 8 pt right of the control's title.
+  Without room below it opens above, its bottom edge on the control's top edge.
+- **Animation:** the menu appears complete in one frame (no fade, no scale). Esc closes it with an
+  opacity-only fade of about 190 ms (ease-out; about half the contrast is gone at 80 ms, 15 % left
+  at 145 ms). After a choice the row blinks once and the fade starts about 150 ms after the click;
+  the control shows the new value when the fade ends.
 
 ## Behaviour
 
