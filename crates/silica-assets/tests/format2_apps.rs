@@ -213,6 +213,22 @@ fn all_the_apps_of_silica_icons_compile_in_both_files() {
             assert_eq!(v.layer, Layer::Composite, "{app}");
         }
     }
+    // The system document glyphs (files/system/<name>.svg) are embedded.
+    for name in [
+        "executable",
+        "archive",
+        "disk-image",
+        "link",
+        "package",
+        "data",
+    ] {
+        assert!(
+            assets
+                .lookup(KeySpace::Role, &format!("file.system.{name}"))
+                .is_some(),
+            "file.system.{name} not embedded"
+        );
+    }
     // Calendar: the text fields are slots; Clock: hands and cap.
     let calendar = assets
         .entry(assets.lookup(KeySpace::App, "calendar").unwrap())

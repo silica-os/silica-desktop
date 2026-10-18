@@ -131,8 +131,8 @@ fn reference(dir: &Path, name: &str, side: usize) -> Option<Vec<u8>> {
                 for xx in 0..k {
                     let i = ((y * k + yy) * full + x * k + xx) * 4;
                     let a = f64::from(buf[i + 3]) / 255.0;
-                    for c in 0..3 {
-                        acc[c] += f64::from(buf[i + c]) * a;
+                    for (c, sum) in acc.iter_mut().take(3).enumerate() {
+                        *sum += f64::from(buf[i + c]) * a;
                     }
                     acc[3] += a;
                 }

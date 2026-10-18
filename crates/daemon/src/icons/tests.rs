@@ -49,6 +49,11 @@ fn png(side: u32, color: [u8; 4]) -> Vec<u8> {
 /// Sources: simple layers, the real rules, a square symbol for every glyph they name, and
 /// DejaVu as Inter when the system has it.
 fn assets(root: &Path) -> Assets {
+    assets_with(root, None)
+}
+
+/// [`assets`] with the artwork of the archive type replaced by `archive` (SVG text).
+fn assets_with(root: &Path, archive: Option<&str>) -> Assets {
     let icons = root.join("icons");
     fs::create_dir_all(icons.join("apps")).unwrap();
     for (name, layers) in [
@@ -98,7 +103,7 @@ fn assets(root: &Path) -> Assets {
     // The artwork of one system type; the others (executable...) are missing on purpose.
     write(
         &icons.join("files/system/archive.svg"),
-        svg(&rect(0, 0, 1024, 1024, "#c80000")),
+        archive.map_or_else(|| svg(&rect(0, 0, 1024, 1024, "#c80000")), str::to_owned),
     );
 
     let rules: toml::Table = silica_assets::compile::DEFAULT_COMPOSE.parse().unwrap();
@@ -144,6 +149,10 @@ struct Setup {
 }
 
 fn setup(name: &str) -> Setup {
+    setup_with(name, None)
+}
+
+fn setup_with(name: &str, archive: Option<&str>) -> Setup {
     let root = tmp(name);
     let home = root.join("home");
     fs::create_dir_all(&home).unwrap();
@@ -167,7 +176,7 @@ fn setup(name: &str) -> Setup {
             _ => None,
         }
     };
-    let icons = Icons::with_assets(assets(&root), &env, root.join("cache")).unwrap();
+    let icons = Icons::with_assets(assets_with(&root, archive), &env, root.join("cache")).unwrap();
     Setup { root, icons }
 }
 
@@ -421,6 +430,39 @@ fn a_file_without_an_app_is_an_unknown_extension_with_the_label_alone() {
     if Path::new(DEJAVU).is_file() {
         let small = s.icons.icon(&s.root.join("a.pdf"), 48, 24.0).unwrap();
         assert_eq!(count_color(&small, 0..48, GREY, 8).0, 0);
+    }
+    let _ = fs::remove_dir_all(&s.root);
+}
+
+/// The real archive glyph of silica-icons (`files/system/archive.svg`, viewBox 500), when
+/// `SILICA_ICONS_DIR` has it: an archive nobody handles shows it, with the ZIP label under.
+#[test]
+fn an_archive_without_a_handler_shows_the_archive_glyph_and_the_zip_label() {
+    let Some(dir) = std::env::var_os("SILICA_ICONS_DIR") else {
+        eprintln!("SILICA_ICONS_DIR not set: the real archive glyph is skipped");
+        return;
+    };
+    let Ok(glyph) = fs::read_to_string(Path::new(&dir).join("files/system/archive.svg")) else {
+        return;
+    };
+    let s = setup_with("real-archive", Some(&glyph));
+    let zip = s.root.join("a.zip");
+    fs::write(&zip, "x").unwrap();
+    let look = s.icons.file_look(&zip, 256.0);
+    assert_eq!(look.glyph, Glyph::System("archive".to_owned()));
+    let out = s.icons.icon(&zip, 512, 256.0).unwrap();
+    // The glyph box is drawn over the sheet: not the bare sheet any more.
+    let img = image::open(&out).unwrap().to_rgba8();
+    let drawn = (150..330u32)
+        .flat_map(|y| (100..412u32).map(move |x| (x, y)))
+        .filter(|&(x, y)| !near(img.get_pixel(x, y).0, SHEET, 6))
+        .count();
+    assert!(drawn > 2000, "the archive glyph is missing: {drawn}");
+    if Path::new(DEJAVU).is_file() {
+        // The ZIP label, in the one grey, under the glyph.
+        let (n, rows) = count_color(&out, 330..480, GREY, 8);
+        assert!(n > 100, "the ZIP label is missing: {n}");
+        assert!(rows.is_some());
     }
     let _ = fs::remove_dir_all(&s.root);
 }
