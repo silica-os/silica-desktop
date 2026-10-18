@@ -737,6 +737,11 @@ class _LiveDockState extends State<LiveDock> {
         f.insert(at.clamp(0, f.length), path);
       }
     }),
+    onReorderFolders: (order) => _setFolders((f) {
+      f
+        ..clear()
+        ..addAll(order);
+    }),
     onSpringLoad: (item) {
       // Spring-loading (MU-40): the app's windows, to drop into one of them.
       if (item.windows.isNotEmpty) {
@@ -921,6 +926,9 @@ class _DockDrag {
   bool started = false;
   bool inside = true;
   bool remove = false;
+
+  /// The pointer is over the Trash: dropping removes the item from the Dock (#235).
+  bool overTrash = false;
 }
 
 /// The removed item fading out: icon, position, side and start.
@@ -1013,6 +1021,7 @@ class Dock extends StatefulWidget {
     this.onDropFiles,
     this.menuFor,
     this.onReorder,
+    this.onReorderFolders,
     this.alert,
     this.onOpenPath,
     this.stackSettingsFor,
@@ -1087,6 +1096,11 @@ class Dock extends StatefulWidget {
   /// (null if it was removed with "Remove", and then it is missing from the order).
   /// Null: the icons do not drag.
   final void Function(List<Item> order, Item? dropped)? onReorder;
+
+  /// Dragging a folder right of the separator (#235): the folders in their new order, as
+  /// paths. A folder dragged off the Dock or dropped on the Trash is missing from the list.
+  /// Null: the folders do not drag.
+  final void Function(List<String> folders)? onReorderFolders;
 
   @override
   State<Dock> createState() => _DockState();
@@ -1663,13 +1677,18 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     }
     if (drag == null || !drag.started) return _items;
     final rest = [..._items]..removeAt(drag.index);
-    if (!drag.inside || drag.remove) return rest;
-    final slot = _dropSlot(rest, size, drag.pointer.dx);
+    if (!drag.inside || drag.remove || drag.overTrash) return rest;
+    final slot = _dropSlot(
+      rest,
+      size,
+      drag.pointer.dx,
+      folder: drag.item.folder != null,
+    );
     return [...rest]..insert(slot, gapItem);
   }
 
   /// Where the icon would fall: the first item on the left whose center is past the pointer.
-  int _dropSlot(List<Item> rest, Size size, double x) {
+  int _dropSlot(List<Item> rest, Size size, double x, {bool folder = false}) {
     final l = layout(
       presenceOf: _presenceOf,
       metrics: _m,
@@ -1678,6 +1697,18 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
       height: size.height,
     );
     final end = rest.indexWhere((i) => i.kind == ItemKind.separator);
+    if (folder) {
+      // A folder stays among the folders: right of the separator, before the Trash (#235).
+      if (end < 0) return rest.length;
+      var last = end + 1;
+      while (last < rest.length && rest[last].folder != null) {
+        last++;
+      }
+      for (var i = end + 1; i < last; i++) {
+        if (x < l.center(i)) return i;
+      }
+      return last;
+    }
     final limit = end < 0 ? rest.length : end;
     // Nothing goes before the fixed items (the file manager, #141).
     final first = rest.takeWhile((i) => i.fixed).length;
@@ -1689,9 +1720,19 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
 
   void _startDrag(Offset p, Size size) {
     final index = _downIndex;
-    if (index == null || index >= _leftEnd || widget.onReorder == null) return;
+    if (index == null || index >= _items.length) return;
     final item = _items[index];
-    if (item.kind != ItemKind.app || item.fixed) return;
+    final folder = item.folder != null;
+    if (folder
+        ? widget.onReorderFolders == null
+        : index >= _leftEnd || widget.onReorder == null) {
+      return;
+    }
+    if (item.kind != ItemKind.app ||
+        item.fixed ||
+        item.minimizedWindow != null) {
+      return;
+    }
     final l = layout(
       presenceOf: _presenceOf,
       metrics: _m,
@@ -1738,6 +1779,24 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
               size.height - bottomGap - _m.backgroundHeight - dragInsideAbove;
       // "Remove" appears 125–135 pt above the grab point.
       drag.remove = p.dy < drag.downY - removeAbove;
+      // Over the Trash: "Remove from Dock" (#235).
+      drag.overTrash = false;
+      final others = [..._items]..removeAt(drag.index);
+      final trashAt = others.indexWhere((i) => i.trash);
+      if (trashAt >= 0 && !drag.remove) {
+        final l = layout(
+          presenceOf: _presenceOf,
+          metrics: _m,
+          others,
+          width: size.width,
+          height: size.height,
+        );
+        // From the Trash's left edge to the end of the plate: the Trash is the last cell and
+        // is pushed right by the gap, so the region must hold when the gap closes under it.
+        final (left, _) = l.cells[trashAt];
+        drag.overTrash =
+            inActiveZone(l, p.dx, p.dy, size.height) && p.dx >= left;
+      }
     });
   }
 
@@ -1745,24 +1804,47 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     final drag = _drag;
     if (drag == null) return;
     final rest = _staying([..._items]..removeAt(drag.index));
-    final left = rest.indexWhere((i) => i.kind == ItemKind.separator);
-    final leftItems = rest.sublist(0, left < 0 ? rest.length : left);
-    if (drag.remove) {
-      _dragRemoved = _slotKeys(_items)[drag.index];
-      // Removed: the icon and the capsule fade out in place (~250 ms), with no other effects.
-      _ghost = _Ghost(drag.item, drag.pointer - drag.grab, drag.side);
-      _ghostTicker.start();
-      widget.onReorder?.call(leftItems, null);
-    } else if (drag.inside) {
-      final slot = _dropSlot(rest, size, drag.pointer.dx);
-      final order = [...leftItems]
-        ..insert(slot.clamp(0, leftItems.length), drag.item);
-      widget.onReorder?.call(order, drag.item);
+    final removed = drag.remove || drag.overTrash;
+    if (drag.item.folder != null) {
+      // A folder: the order of the folders, never across the separator (#235).
+      final folders = [
+        for (final item in rest)
+          if (item.folder case final path?) path,
+      ];
+      if (removed) {
+        _removeDragged(drag);
+        widget.onReorderFolders?.call(folders);
+      } else if (drag.inside) {
+        final slot = _dropSlot(rest, size, drag.pointer.dx, folder: true);
+        final at = rest.take(slot).where((item) => item.folder != null).length;
+        widget.onReorderFolders?.call(
+          [...folders]..insert(at, drag.item.folder!),
+        );
+      }
+    } else {
+      final left = rest.indexWhere((i) => i.kind == ItemKind.separator);
+      final leftItems = rest.sublist(0, left < 0 ? rest.length : left);
+      if (removed) {
+        _removeDragged(drag);
+        widget.onReorder?.call(leftItems, null);
+      } else if (drag.inside) {
+        final slot = _dropSlot(rest, size, drag.pointer.dx);
+        final order = [...leftItems]
+          ..insert(slot.clamp(0, leftItems.length), drag.item);
+        widget.onReorder?.call(order, drag.item);
+      }
     }
     setState(() {
       _drag = null;
       _settleUntil = DateTime.now().add(gapSlide);
     });
+  }
+
+  /// Removed: the icon and the capsule fade out in place (~250 ms), with no other effects.
+  void _removeDragged(_DockDrag drag) {
+    _dragRemoved = _slotKeys(_items)[drag.index];
+    _ghost = _Ghost(drag.item, drag.pointer - drag.grab, drag.side);
+    _ghostTicker.start();
   }
 
   /// Hides the label of `index` for its menu, until the pointer leaves the icon.
@@ -2562,7 +2644,12 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
               ),
               child: Stack(
                 children: [
-                  Positioned(
+                  // The plate follows the icons: when they slide (drag, drop) it slides with
+                  // them, with the same duration and curve, instead of jumping to the final
+                  // width (#235).
+                  AnimatedPositioned(
+                    duration: _slideDuration(sliding),
+                    curve: _slideCurve,
                     left: bx,
                     top: by,
                     width: bw,
@@ -2626,7 +2713,8 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
                         ),
                       ),
                     ),
-                  if (_drag case final drag?) ..._dragged(drag),
+                  if (_drag case final drag?)
+                    ..._dragged(drag, l, items, size.height),
                   if (_ghost case final ghost?) _faded(ghost),
                   if (hovered != null && _menuIndex == null)
                     _label(
@@ -2697,7 +2785,7 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
 
   /// The dragged icon: full size, opaque, hooked to the grab point; above it, the "Remove"
   /// capsule when it is high enough.
-  List<Widget> _dragged(_DockDrag drag) {
+  List<Widget> _dragged(_DockDrag drag, Layout l, List<Item> items, double h) {
     final source = drag.item.icon;
     final at = drag.pointer - drag.grab;
     return [
@@ -2721,6 +2809,15 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
           at.dy - _m.labelGapFor(drag.side),
           1,
         ),
+      // Over the Trash the label is the Trash's own, above its icon (#235).
+      if (drag.overTrash)
+        if (items.indexWhere((i) => i.trash) case final trash when trash >= 0)
+          _capsule(
+            l10nOf(context).dockRemoveFromDock,
+            l.center(trash),
+            iconRect(l, trash, h).$2 - _m.labelGapFor(iconRect(l, trash, h).$3),
+            1,
+          ),
     ];
   }
 
@@ -2831,6 +2928,12 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     );
   }
 
+  /// How long the icons and the plate take to reach a new layout while they slide.
+  Duration _slideDuration(bool sliding) =>
+      sliding ? (_folderGap != null ? folderGapOpen : gapSlide) : Duration.zero;
+
+  Curve get _slideCurve => _drag == null ? folderGapCurve : Curves.easeInOut;
+
   /// The icon of an app: layered from silica-icons, or from the system theme.
   Widget _icon(
     Layout l,
@@ -2872,10 +2975,8 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     final hop = (live?.hopFraction ?? 0) * (launchHopPeak * _m.k);
     return AnimatedPositioned(
       key: ValueKey(_key(item)),
-      duration: sliding
-          ? (_folderGap != null ? folderGapOpen : gapSlide)
-          : Duration.zero,
-      curve: _drag == null ? folderGapCurve : Curves.easeInOut,
+      duration: _slideDuration(sliding),
+      curve: _slideCurve,
       left: x,
       top: y - math.max(hop, _bounceOf(item)),
       width: side,

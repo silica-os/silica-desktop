@@ -386,6 +386,12 @@ abstract class AppLocalizations {
   /// **'Remove'**
   String get dockRemove;
 
+  /// Label over the Trash while an app or folder icon of the Dock is dragged onto it
+  ///
+  /// In en, this message translates to:
+  /// **'Remove from Dock'**
+  String get dockRemoveFromDock;
+
   /// Last item of a fan stack when files are left out
   ///
   /// In en, this message translates to:

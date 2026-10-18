@@ -48,6 +48,7 @@
   "showAllWindows": "Mostra tutte le finestre",
   "quit": "Esci",
   "dockRemove": "Rimuovi",
+  "dockRemoveFromDock": "Rimuovi dal Dock",
   "stackMoreInFolder": "{count, plural, other{Altri {count} nella cartella}}",
   "openFolder": "Apri la cartella",
   "trashAlertTitle": "Vuoi eliminare definitivamente gli elementi nel Cestino?",
