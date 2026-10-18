@@ -371,6 +371,7 @@ trait System {
         settings: HashMap<&str, zbus::zvariant::Value<'_>>,
     ) -> zbus::Result<()>;
     fn set_look(&self, settings: HashMap<&str, zbus::zvariant::Value<'_>>) -> zbus::Result<()>;
+    fn set_text_replacements(&self, list: Vec<(&str, &str)>) -> zbus::Result<()>;
     #[zbus(signal)]
     fn changed(&self, state: HashMap<String, OwnedValue>) -> zbus::Result<()>;
 }
@@ -443,6 +444,7 @@ fn reads_and_changes_the_system() {
                 nightlight_file: Some(dir.join("nightlight.json")),
                 power_file: Some(dir.join("power.json")),
                 focus_file: Some(dir.join("focus.json")),
+                replacements_file: Some(dir.join("text-replacements.json")),
                 actions_socket: Some(dir.join("no-ossido.sock")),
                 place: None,
                 utc_offset: Some(0),
@@ -602,6 +604,7 @@ fn missing_sources_are_absent_not_errors() {
                 nightlight_file: Some(dir.join("nightlight.json")),
                 power_file: Some(dir.join("power.json")),
                 focus_file: Some(dir.join("focus.json")),
+                replacements_file: Some(dir.join("text-replacements.json")),
                 actions_socket: Some(dir.join("no-ossido.sock")),
                 place: None,
                 utc_offset: Some(0),
@@ -671,6 +674,46 @@ fn missing_sources_are_absent_not_errors() {
                 get::<String>(&proxy.state().await.unwrap(), "look.accent"),
                 "green"
             );
+
+            // The text replacements: none, then what Settings sets (kept in a file); a list
+            // the apps could not use changes nothing.
+            let none: Vec<(String, String)> =
+                get(&proxy.state().await.unwrap(), "text.replacements");
+            assert!(none.is_empty());
+            proxy
+                .set_text_replacements(vec![("omw", "On my way!"), ("addr", "1 Main St")])
+                .await
+                .unwrap();
+            let state = wait_for(&proxy, |s| {
+                !get::<Vec<(String, String)>>(s, "text.replacements").is_empty()
+            })
+            .await;
+            assert_eq!(
+                get::<Vec<(String, String)>>(&state, "text.replacements"),
+                vec![
+                    ("omw".to_owned(), "On my way!".to_owned()),
+                    ("addr".to_owned(), "1 Main St".to_owned())
+                ]
+            );
+            let saved = std::fs::read_to_string(dir.join("text-replacements.json")).unwrap();
+            assert!(saved.contains("On my way!"), "{saved}");
+            assert!(
+                proxy
+                    .set_text_replacements(vec![("a b", "x")])
+                    .await
+                    .is_err()
+            );
+            assert!(
+                proxy
+                    .set_text_replacements(vec![("a", "x"), ("a", "y")])
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                get::<Vec<(String, String)>>(&proxy.state().await.unwrap(), "text.replacements")
+                    .len(),
+                2
+            );
         };
         run_test(test, service.run()).await;
     });
@@ -725,6 +768,7 @@ fn displays_and_night_light_go_through_ossido() {
                 nightlight_file: Some(dir.join("nightlight.json")),
                 power_file: Some(dir.join("power.json")),
                 focus_file: Some(dir.join("focus.json")),
+                replacements_file: Some(dir.join("text-replacements.json")),
                 actions_socket: Some(socket.clone()),
                 place: None,
                 utc_offset: Some(0),
@@ -832,6 +876,7 @@ fn automatic_appearance_follows_the_sun() {
                 nightlight_file: Some(dir.join("nightlight.json")),
                 power_file: Some(dir.join("power.json")),
                 focus_file: Some(dir.join("focus.json")),
+                replacements_file: Some(dir.join("text-replacements.json")),
                 actions_socket: Some(dir.join("no-ossido.sock")),
                 place: Some(place),
                 utc_offset: Some(0),
@@ -942,6 +987,7 @@ fn energy_inhibits_idle_sleep_and_suspends_through_logind() {
                 nightlight_file: Some(dir.join("nightlight.json")),
                 power_file: Some(dir.join("power.json")),
                 focus_file: Some(dir.join("focus.json")),
+                replacements_file: Some(dir.join("text-replacements.json")),
                 actions_socket: Some(dir.join("no-ossido.sock")),
                 place: None,
                 utc_offset: Some(0),

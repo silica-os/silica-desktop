@@ -197,6 +197,7 @@ List<Item> dockItems(
   List<String> pinned,
   List<Toplevel> toplevels, {
   List<String> minimized = const [],
+  bool minimizeToApp = false,
   Map<String, ui.Image> thumbnails = const {},
   List<String>? recents,
   String trashLabel = 'Trash',
@@ -289,9 +290,13 @@ List<Item> dockItems(
         command: openPathCommand(entries, folder),
       ),
     // The minimized windows, from the first minimized, before the Trash (D-08).
+    // With "into the application icon" they stay in the icon of their app (its click brings
+    // them back).
     for (final id in minimized)
       if (toplevels.where((t) => t.id == id).firstOrNull case final window?)
-        _windowItem(window, entries, thumbnails[id]),
+        if (!minimizeToApp ||
+            !items.any((item) => item.windows.contains(window.id)))
+          _windowItem(window, entries, thumbnails[id]),
     Item.app(
       trashLabel,
       iconPath: findIcon(trashFull ? 'user-trash-full' : 'user-trash'),

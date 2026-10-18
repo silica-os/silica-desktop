@@ -809,10 +809,16 @@ impl State {
             }
             _ => None,
         };
+        let lock_surfaces = self.lock_wl_surfaces();
         let Backend::Drm(backend) = &mut self.backend else {
             return;
         };
-        let clear_color = self.clear_color;
+        // Locked: black behind the lock surface, and the plain screen if the locker is gone.
+        let clear_color = if lock_surfaces.is_some() {
+            [0.0, 0.0, 0.0, 1.0]
+        } else {
+            self.clear_color
+        };
         let context = crate::render::RenderContext {
             buttons,
             alt,
@@ -829,6 +835,7 @@ impl State {
             dark,
             drag_icon,
             window_veil,
+            lock_surfaces,
         };
         let mut elements = crate::render::output_elements(
             &mut backend.renderer,

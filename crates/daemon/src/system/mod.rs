@@ -12,6 +12,8 @@ mod details;
 pub mod display;
 pub mod focus;
 pub mod look;
+pub mod replacements;
+pub mod unlock;
 
 pub use details::{Network, Output, parse_outputs};
 pub use display::NightLight;
@@ -50,6 +52,8 @@ pub struct SystemConfig {
     pub nightlight_file: Option<PathBuf>,
     /// The Focus modes (`focus.json`).
     pub focus_file: Option<PathBuf>,
+    /// The text replacements (`text-replacements.json`); `None`: only in memory.
+    pub replacements_file: Option<PathBuf>,
     /// Settings › Energy (`power.json`): `preventSleep` holds logind's idle inhibitor.
     pub power_file: Option<PathBuf>,
     /// Ossido's actions socket; `None`: the one of `WAYLAND_DISPLAY`.
@@ -116,6 +120,7 @@ impl Default for SystemConfig {
             nightlight_file: display::config_file("nightlight.json"),
             power_file: display::config_file("power.json"),
             focus_file: display::config_file("focus.json"),
+            replacements_file: display::config_file("text-replacements.json"),
             actions_socket: None,
             place: crate::sun::local_place(),
             utc_offset: None,
@@ -214,6 +219,8 @@ pub struct SystemState {
     pub appearance_mode: String,
     /// The Appearance choices apps follow live (accent, scroll bars, icon style…).
     pub look: look::Look,
+    /// The text replacements apps apply as the user types.
+    pub replacements: replacements::Replacements,
     /// The apps recording now or recently, the ones in use first (the privacy pill).
     pub privacy: Vec<PrivacyUse>,
     /// The keyboard backlight, 0–1; `None` without a backlit keyboard.
@@ -275,6 +282,7 @@ impl SystemState {
         put("appearance.dark", Value::Bool(self.dark));
         put("appearance.mode", Value::from(self.appearance_mode.clone()));
         self.look.put(&mut put);
+        put("text.replacements", Value::new(self.replacements.clone()));
         // "app<US>kind<US>1|0" per app: a flat list the shell splits.
         let privacy: Vec<String> = self
             .privacy
@@ -364,6 +372,11 @@ impl SystemService {
                     .theme_file
                     .as_deref()
                     .map_or_else(look::Look::default, look::Look::read),
+                replacements: config
+                    .replacements_file
+                    .as_deref()
+                    .map(replacements::read)
+                    .unwrap_or_default(),
                 ..SystemState::default()
             })),
             changed: Arc::new(Event::new()),
@@ -718,6 +731,24 @@ impl System {
         Ok(())
     }
 
+    /// The text replacements apps apply while typing: a list of (shortcut, phrase). Shortcuts
+    /// have no spaces and are not repeated; at most 500 entries. Saved in
+    /// `text-replacements.json`.
+    fn set_text_replacements(&self, list: Vec<(String, String)>) -> zbus::fdo::Result<()> {
+        if !replacements::valid(&list) {
+            return Err(zbus::fdo::Error::InvalidArgs(
+                "text replacements: at most 500, shortcuts of 1-40 characters without spaces and \
+                 not repeated, phrases of 1-1000 characters"
+                    .into(),
+            ));
+        }
+        if let Some(file) = &self.shared.config.replacements_file {
+            replacements::write(file, &list).map_err(failed)?;
+        }
+        self.shared.update(|state| state.replacements = list);
+        Ok(())
+    }
+
     /// The displays, from Ossido (`output.list`): a JSON array.
     async fn outputs(&self) -> zbus::fdo::Result<String> {
         display::ossido(
@@ -830,6 +861,22 @@ impl System {
         .await
         .map(|_| ())
         .map_err(failed)
+    }
+
+    /// Checks `password` for the user the daemon runs as (the lock screen asks): true when it is
+    /// right, false after a short wait when it is not. It unlocks nothing itself: the lock
+    /// screen, which holds the session lock, unlocks (ext-session-lock) after a true answer.
+    /// `Failed` when the password cannot be checked at all: the session stays locked.
+    async fn unlock(&self, password: &str) -> zbus::fdo::Result<bool> {
+        let user = unlock::user_name().ok_or_else(|| failed("no user name"))?;
+        if unlock::check_password(&user, password)
+            .await
+            .map_err(failed)?
+        {
+            return Ok(true);
+        }
+        async_io::Timer::after(unlock::WRONG_PASSWORD_DELAY).await;
+        Ok(false)
     }
 
     /// Ossido's report (a JSON object of the keys in `REPORTED_KEYS`): they join the state.

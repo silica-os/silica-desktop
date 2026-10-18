@@ -76,6 +76,9 @@ pub fn command_for(gesture: &Gesture, view: Option<Mode>) -> Option<&'static str
 
 impl State {
     pub fn gesture_begin(&mut self, kind: GestureKind, fingers: u32) {
+        if self.locked {
+            return;
+        }
         self.gesture = Some(Gesture {
             kind,
             fingers,

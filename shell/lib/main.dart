@@ -18,6 +18,7 @@ import 'l10n/l10n.dart';
 import 'dock/dock.dart';
 import 'dock/model.dart';
 import 'faro/faro.dart';
+import 'lock/lock_screen.dart';
 import 'menubar/menubar.dart';
 import 'notifications/notifications.dart';
 import 'notifications/service.dart';
@@ -103,6 +104,10 @@ class ShellComponent extends StatelessWidget {
         system: DBusSystem(),
       ),
       'controlcenter' => ControlCenter(system: DBusSystem()),
+      // The screen saver (and what asks for the session lock) in an ordinary overlay layer; the
+      // lock screen itself is the view of the lock surface the embedder adds while locked.
+      'screensaver' => const ScreenSaverLayer(),
+      'lock' => LockScreen(source: DBusLock(), showUser: readShowUser()),
       // The app switcher never takes input: the same layer hosts the screenshots.
       'switcher' => _followsEntries(
         () => Stack(

@@ -151,6 +151,24 @@ handled yet.
   does not suspend either; a sleep the user asks for still happens. State keys
   `power.preventSleep` and `power.inhibited` (the inhibitor is held).
 
+### Text replacements
+
+- `SetTextReplacements(a(ss))`: the list of (shortcut, phrase) the text fields of every app apply
+  while the user types (`omw` → `On my way!`, after a space or punctuation). At most 500 entries;
+  shortcuts of 1–40 characters without spaces and not repeated, phrases of 1–1000 characters;
+  otherwise `InvalidArgs` and nothing changes. Saved in `$XDG_CONFIG_HOME/silica/text-replacements.json`
+  (the daemon's own file, `{"replacements": [{"shortcut", "phrase"}]}`).
+- State key `text.replacements` (`a(ss)`). silica_ui's `SilicaSystemLook` reads it (typed).
+
+### Unlocking the session
+
+- `Unlock(s password) → b`: checks the password of the user the daemon runs as with
+  `unix_chkpwd` (PAM's helper, `/usr/sbin/unix_chkpwd`; `SILICA_UNIX_CHKPWD` replaces the path)
+  and answers `true` if it is right, `false` after 1.5 s if it is not (the next try waits).
+  `Failed` when the password cannot be checked: the session stays locked. It unlocks nothing:
+  the lock screen holds the session lock (`ext_session_lock_v1`, `docs/control.md`) and calls
+  `unlock_and_destroy` itself after a `true`. Only local accounts (`pam_unix`).
+
 ### System look
 
 - `SetLook(a{sv})`: the Appearance choices every app follows live, any of `accent`
@@ -158,13 +176,13 @@ handled yet.
   `folderColour` (an accent name, or `automatic`), `sidebarIconSize` (`small|medium|large`),
   `scrollBars` (`automatic|whenScrolling|always`), `scrollClick` (`page|spot`), `iconStyle`
   (`default|dark|clear|tinted`) as strings, `glass` (d, 0–1), `windowTint` (b), `keyboardNavigation` (b: Tab reaches every control) and
-  `doubleClickMs` (150–1000, default 300: the longest time between the two clicks of a double click), `reduceTransparency` and `reduceMotion` (b: Accessibility › Display; Ossido reads the same two keys from `theme.json`). An invalid value
+  `doubleClickMs` (150–1000, default 300: the longest time between the two clicks of a double click), `reduceTransparency`, `reduceMotion` (Ossido reads these two from `theme.json` too) `increaseContrast` (b: Accessibility › Display; silica_ui draws the high-contrast palette) and `textScale` (d, 1–1.5, default 1: Accessibility › Larger Text; silica_ui scales the apps' text). An invalid value
   is `InvalidArgs` and changes nothing. Not saved by the daemon: Settings keeps them in
   `$XDG_CONFIG_HOME/silica/theme.json` (its own persistence, read at start; Ossido watches it for
   `glass` and `windowTint`).
 - State keys `look.accent`, `look.highlight`, `look.sidebarIconSize`, `look.scrollBars`,
   `look.scrollClick`, `look.iconStyle`, `look.folderColour`, `look.glass`, `look.windowTint`,
-  `look.keyboardNavigation`, `look.doubleClickMs` (u), `look.reduceTransparency`, `look.reduceMotion`.
+  `look.keyboardNavigation`, `look.doubleClickMs` (u), `look.reduceTransparency`, `look.reduceMotion`, `look.increaseContrast`, `look.textScale` (d).
   silica_ui's `SilicaSystemLook` reads them (typed; no app parses JSON).
 
 ### Displays and night light

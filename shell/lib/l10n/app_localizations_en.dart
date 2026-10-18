@@ -1128,4 +1128,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get notificationsNow => 'now';
+
+  @override
+  String get lockPassword => 'Enter password';
+
+  @override
+  String get lockIncorrect => 'Incorrect password.';
+
+  @override
+  String get lockUnavailable => 'The password could not be checked.';
 }

@@ -204,7 +204,11 @@ List<MenuEntry> logoMenu({
       onSelected: () => power?.call(PowerAction.shutDown, now: option),
     ),
     const MenuDivider(),
-    MenuAction(l.lockScreen, shortcut: '⌃⌘Q', enabled: false),
+    MenuAction(
+      l.lockScreen,
+      shortcut: '⌃⌘Q',
+      onSelected: () => run('session.lock'),
+    ),
     MenuAction(
       option ? l.logOutUserNow(user) : l.logOutUser(user),
       shortcut: option ? '⌥⇧⌘Q' : '⇧⌘Q',

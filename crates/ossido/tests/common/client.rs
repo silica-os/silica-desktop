@@ -17,6 +17,7 @@ use wayland_client::protocol::wl_data_device::{self, WlDataDevice};
 use wayland_client::protocol::wl_data_device_manager::{self, WlDataDeviceManager};
 use wayland_client::protocol::wl_data_offer::{self, WlDataOffer};
 use wayland_client::protocol::wl_data_source::{self, WlDataSource};
+use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
 use wayland_client::protocol::wl_pointer::{self, WlPointer};
 use wayland_client::protocol::wl_region::WlRegion;
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
@@ -76,6 +77,9 @@ struct App {
     appearance: Option<SilicaWindowManagerV1>,
     seat: Option<WlSeat>,
     pointer: Option<WlPointer>,
+    keyboard: Option<WlKeyboard>,
+    /// The keyboard events the window got (`TestWindow::key_log`).
+    key_log: KeyLog,
     /// The serial of the last button press on the window.
     press_serial: Option<u32>,
     /// What the pointer did on the window (`TestWindow::pointer_log`).
@@ -234,6 +238,35 @@ impl Dispatch<WlSeat, ()> for App {
             && state.pointer.is_none()
         {
             state.pointer = Some(seat.get_pointer(qh, ()));
+        }
+        if let wl_seat::Event::Capabilities {
+            capabilities: wayland_client::WEnum::Value(caps),
+        } = event
+            && caps.contains(wl_seat::Capability::Keyboard)
+            && state.keyboard.is_none()
+        {
+            state.keyboard = Some(seat.get_keyboard(qh, ()));
+        }
+    }
+}
+
+impl Dispatch<WlKeyboard, ()> for App {
+    fn event(
+        state: &mut Self,
+        _: &WlKeyboard,
+        event: wl_keyboard::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_keyboard::Event::Enter { .. } => {
+                state.key_log.inside = true;
+                state.key_log.enters += 1;
+            }
+            wl_keyboard::Event::Leave { .. } => state.key_log.inside = false,
+            wl_keyboard::Event::Key { .. } => state.key_log.keys += 1,
+            _ => {}
         }
     }
 }
@@ -486,6 +519,15 @@ impl Dispatch<XdgToplevel, ()> for App {
             _ => {}
         }
     }
+}
+
+/// The keyboard events a window received since it opened.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct KeyLog {
+    /// The window has the keyboard now.
+    pub inside: bool,
+    pub enters: u32,
+    pub keys: u32,
 }
 
 /// The pointer events a window received since it opened.
@@ -951,6 +993,13 @@ impl TestWindow {
     pub fn popup_done(&mut self) -> bool {
         self.queue.roundtrip(&mut self.app).unwrap();
         self.app.popup_done
+    }
+
+    /// The keyboard events received so far (after a roundtrip).
+    #[allow(dead_code)]
+    pub fn key_log(&mut self) -> KeyLog {
+        self.queue.roundtrip(&mut self.app).unwrap();
+        self.app.key_log
     }
 
     /// The pointer events received so far (after a roundtrip).

@@ -28,6 +28,8 @@ parameter schemas. Every catalog id is run by Ossido (test
 | `ui.screenshot` | `path?` | `width`, `height`, `path` or `png_base64` |
 | `ui.animation_scale` | `scale` (0–1000) | — (multiplies the animation durations; 0 turns them off) |
 | `ui.glass_quality` | `quality` (`auto`, `full`, `frosted`, `opaque`) | `quality` in use |
+| `dock.icons` | `icons` (`app_id`, `x`, `y`: the center of each app icon in the Dock surface) | `icons` kept; the shell sends it, windows then minimize into their app's icon (`dock.json` `minimizeToApp`) |
+| `session.lock` | — | locks the session (`Logo+Ctrl+Q`) and asks the shell's locker to take the lock; refused when no shell is running. There is no command to unlock |
 | `engine.commands` | — | the catalog |
 | `engine.execute` | `id`, `params?` | the command's result |
 | `window.list` | — | windows from top to bottom, then the minimized ones: `id`, `title`, `app_id`, `x`, `y`, `width`, `height` (of the content, without the bar), `focused`, `minimized`, `fullscreen`, `space` |
@@ -168,6 +170,32 @@ drawn until the next input); nested and headless only keep the state (`idle.stat
 no `ext-idle-notify-v1` for clients yet (Smithay's implementation needs the event loop's data
 to be the compositor state).
 
+### lockscreen.json and screensaver.json
+
+```json
+{"passwordDelay": 900, "showUser": true}
+{"minutes": 10, "saver": "drift"}
+```
+
+*Lock screen and screen saver.* The lock screen is the shell's client of `ext_session_lock_v1`
+(offered to shell clients only). While the session is locked only its lock surface is drawn and
+only it gets input: pointer motion and hover included, the keyboard, the wheel; no shortcut, VT
+switch, gesture or hot corner runs, and no window or layer takes the focus. If the locker dies
+the session stays locked (a plain black screen, no input) until a new locker, the shell started
+again, takes the lock over; only the client that holds the lock unlocks it
+(`unlock_and_destroy`), after silica-daemon checked the password (`System1.Unlock`). A lock
+asked for by `session.lock`, the Logo menu, the password delay or sleeping starts at once and is
+announced to the shell as `session.locked` (`1` or `0`), so that its locker takes the lock. A
+screenshot taken with the headless software renderer is not covered.
+
+`lockscreen.json`: `passwordDelay`, integer seconds (0 to 86400) between the start of the
+screen saver or the display turning off and the lock; absent: 900 (15 minutes); `null`: never
+(the lock stays manual). The session also locks before sleeping when a delay is set. `showUser`
+(boolean) belongs to the shell. `screensaver.json`: `minutes` without input before the screen
+saver starts (absent or 0: never) and `saver`, `drift`, `clock` or `colors`; Ossido announces
+the saver to the shell as `screensaver.active` (its id, empty when none) and any input ends it.
+`idle.state` has a `lock` object with the state.
+
 ### hotcorners.json
 
 ```json
@@ -182,6 +210,30 @@ when the pointer arrives in that corner (it is armed again after the pointer lea
 nothing. Dragging or resizing a window into a corner does not trigger it. Watched like the other
 settings files.
 
+### dock.json
+
+Ossido reads two keys of the Dock's file (the rest is the shell's):
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `titleBarDoubleClick` | `zoom` (default), `minimize`, `none` | what a double click on the title bar Ossido draws does; the apps that draw their own bar read the same key (silica_ui) |
+| `minimizeToApp` | boolean, default false | a window minimizes into its app's icon (the target of the genie or scale effect) instead of the Dock's right section; the shell tells where the icons are with `dock.icons` |
+
+### shortcuts.json
+
+```json
+{"window.minimize": "Logo+N", "faro.toggle": null, "window.tile_fill": "Logo+Ctrl+F5"}
+```
+
+Settings › Keyboard › Keyboard Shortcuts. The keys are command ids of the catalog
+(`engine.commands`); the value is the shortcut in the catalog's format (`Logo`, `Ctrl`, `Alt`,
+`Shift` and an xkb keysym name, joined by `+`) or `null` to switch the command's shortcut off.
+A command left out keeps the catalog's default; any command can be given a shortcut, also one
+with no default. An unknown id, an invalid shortcut or any other value is ignored (the default
+stays). `"capture": true` (written by Settings while it records a new shortcut) makes Ossido
+let every key reach Settings, and only while Settings is the frontmost app. Two commands with the same keys: the first of the catalog runs (Settings refuses the
+duplicate). Applied at once when the file changes.
+
 ### theme.json
 
 Settings' Appearance choices. Ossido reads one key; the rest is the look the apps follow
@@ -191,6 +243,7 @@ Settings' Appearance choices. Ossido reads one key; the rest is the look the app
 | --- | --- | --- |
 | `reduceTransparency` | boolean | Accessibility › Display: the glass is drawn opaque (the `opaque` quality, no blur); off by default |
 | `reduceMotion` | boolean | Accessibility › Display: Ossido's own animations are skipped (the window genie, closing, space switch, Panorama); off by default |
+| `cursorSize` | integer 16–128 | Accessibility › Pointer: the pointer's size in logical pixels (the cursor theme at that size); the environment's (`XCURSOR_SIZE`, 24 by default) without it |
 | `glass` | number 0–1 | how tinted the glass is: 0 clearest, 1 most tinted; 0.5 (default) is the measured material. Only the tint's strength changes (`GlassProfile::with_glass_level`); clear glass has no tint and stays. A value out of range is the default. |
 
 ### input.json
@@ -213,7 +266,7 @@ Settings' Appearance choices. Ossido reads one key; the rest is the look the app
 | `touchpad.secondaryClick` | `twoFinger`, `bottomRight`, `bottomLeft` | click with two fingers (clickfinger) or in a bottom corner (button areas; `bottomLeft` is left-handed) |
 | `touchpad.tapToClick` | boolean | a tap is a click |
 | `touchpad.disableWhileTyping` | boolean | the touchpad ignores the palm while typing |
-| `doubleClickMs` | integer | for the toolkits (silica-ui reads it); Ossido ignores it |
+| `doubleClickMs` | integer, 100–2000 | the double click time: the toolkits read it, and Ossido uses it for the double click on its own title bars (default 400) |
 
 A device is a touchpad when libinput can tap with it, otherwise a mouse. Every key left out
 gives the device libinput's default. The settings apply to every pointer device at once and

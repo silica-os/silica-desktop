@@ -66,6 +66,9 @@ class ClockStyle {
 /// The counts Settings offers for the recent items (menubar.json `recentItems`).
 const List<int> recentItemChoices = [0, 5, 10, 15, 20, 30, 50];
 
+/// When the bar hides itself (menubar.json `autohide`, Settings › Desktop & Dock).
+enum MenubarAutohide { never, fullscreen, always }
+
 @immutable
 class MenubarConfig {
   const MenubarConfig({
@@ -76,6 +79,8 @@ class MenubarConfig {
     this.focus = false,
     this.clock = const ClockStyle(),
     this.recentItems = 10,
+    this.autohide = MenubarAutohide.fullscreen,
+    this.background = false,
   });
 
   final SoundItem sound;
@@ -92,6 +97,12 @@ class MenubarConfig {
 
   /// How many recent applications and documents the Apple-menu equivalent lists (0: none).
   final int recentItems;
+
+  /// When the bar slides away; it comes back when the pointer reaches the top edge.
+  final MenubarAutohide autohide;
+
+  /// A translucent background under the bar (off: the bar is bare on the wallpaper).
+  final bool background;
 
   factory MenubarConfig.fromJson(Object? json) {
     if (json is! Map) return const MenubarConfig();
@@ -113,6 +124,12 @@ class MenubarConfig {
         final int n when recentItemChoices.contains(n) => n,
         _ => 10,
       },
+      autohide:
+          MenubarAutohide.values
+              .where((v) => v.name == json['autohide'])
+              .firstOrNull ??
+          MenubarAutohide.fullscreen,
+      background: flag('background', false),
     );
   }
 
@@ -125,7 +142,9 @@ class MenubarConfig {
       other.batteryPercent == batteryPercent &&
       other.focus == focus &&
       other.clock == clock &&
-      other.recentItems == recentItems;
+      other.recentItems == recentItems &&
+      other.autohide == autohide &&
+      other.background == background;
 
   @override
   int get hashCode => Object.hash(
@@ -136,6 +155,8 @@ class MenubarConfig {
     focus,
     clock,
     recentItems,
+    autohide,
+    background,
   );
 }
 

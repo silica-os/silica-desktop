@@ -1203,9 +1203,9 @@ mod tests {
         );
         assert!(script.contains("--namespace menubar --view --layer top"));
         assert!(script.contains(
-            "--namespace controlcenter --dart-arg shell /var/lib/silica-dev/shell/flutter_assets"
+            "--namespace screensaver --dart-arg shell /var/lib/silica-dev/shell/flutter_assets"
         ));
-        assert_eq!(script.matches("--namespace ").count(), 8);
+        assert_eq!(script.matches("--namespace ").count(), 9);
         assert!(!script.contains("--spawn-shell"));
         assert!(script.contains("SILICA_ICONS_DIR"));
         assert!(script.contains("export SILICA_ASSETS=\"$D/silica.assets\""));

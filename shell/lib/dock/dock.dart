@@ -687,6 +687,23 @@ class _LiveDockState extends State<LiveDock> {
     ];
   }
 
+  /// The icons moved: Ossido minimizes the windows of an app into its icon.
+  void _iconsMoved(List<(Item, double)> centers, double y) {
+    final toplevels = ShellChannel.instance.toplevels.value;
+    final icons = <Map<String, Object?>>[];
+    for (final (item, x) in centers) {
+      final apps = {
+        for (final window in item.windows)
+          for (final t in toplevels)
+            if (t.id == window && t.appId.isNotEmpty) t.appId,
+      };
+      for (final app in apps) {
+        icons.add({'app_id': app, 'x': x, 'y': y});
+      }
+    }
+    ShellChannel.instance.execute('dock.icons', {'icons': icons});
+  }
+
   @override
   Widget build(BuildContext context) => Dock(
     items: dockItems(
@@ -694,6 +711,7 @@ class _LiveDockState extends State<LiveDock> {
       _pinned,
       ShellChannel.instance.toplevels.value,
       minimized: ShellChannel.instance.minimized.value,
+      minimizeToApp: _o.minimizeToApp,
       thumbnails: _thumbnails,
       recents: _recentsOn ? _closed : null,
       trashLabel: l10nOf(context).trash,
@@ -707,6 +725,7 @@ class _LiveDockState extends State<LiveDock> {
     autohide: _o.autohide,
     indicators: _o.indicators,
     launchAnimation: _o.launchAnimation,
+    onIcons: _o.minimizeToApp ? _iconsMoved : null,
     revealAtStart: true,
     launcher: _launcher.value.value,
     onActivate: _activate,
@@ -999,9 +1018,14 @@ class Dock extends StatefulWidget {
     this.stackSettingsFor,
     this.stackListMenu,
     this.revealAtStart = false,
+    this.onIcons,
   });
 
   final List<Item> items;
+
+  /// Where the app icons are (the center of each in x, and the common y, in the Dock
+  /// surface): Ossido needs it for the windows that minimize into their app's icon.
+  final void Function(List<(Item, double)> centers, double y)? onIcons;
 
   /// Session start: hidden below the screen until its icons are decoded (never empty cells
   /// that fill in), then it slides up ([sessionReveal]). Without it the Dock is there at once
@@ -1940,6 +1964,28 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
   }
 
   /// Input region, surface height and keyboard: only when they change.
+  String _iconsKey = '';
+
+  /// Tells where the icons are, once they stop moving (and only when they changed).
+  void _reportIcons(List<Item> items, Layout l, double y) {
+    final report = widget.onIcons;
+    if (report == null) {
+      _iconsKey = '';
+      return;
+    }
+    final centers = <(Item, double)>[
+      for (var i = 0; i < items.length && i < l.cells.length; i++)
+        if (items[i].windows.isNotEmpty)
+          (items[i], l.center(i).roundToDouble()),
+    ];
+    final key = '${y.round()} ${[for (final (_, x) in centers) x]}';
+    if (key == _iconsKey) return;
+    _iconsKey = key;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) report(centers, y.roundToDouble());
+    });
+  }
+
   void _syncLayer(Rect dock, Rect? menu, Rect? alert, Size size) {
     final stack = _stackIndex != null;
     // The open stack takes a surface as tall as the screen, like the alert.
@@ -2478,6 +2524,7 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
           _stackRect = null;
         }
         _syncLayer(dockRect, menuRect, alertRect, size);
+        _reportIcons(items, l, by + bh / 2);
         return Listener(
           behavior: HitTestBehavior.translucent,
           onPointerDown: (e) => _pointerDown(e, l, size),

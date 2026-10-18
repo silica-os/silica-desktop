@@ -116,6 +116,14 @@ pub struct State {
     /// Last id assigned to a window.
     pub next_window_id: u64,
     pub shortcuts: Vec<(Shortcut, &'static str)>,
+    /// Settings is recording a shortcut (`shortcuts.json` `capture`): see `handle_key`.
+    pub shortcuts_capture: bool,
+    /// `dock.json`, and the last press on a title bar (window, time in ms, place) for the
+    /// double click.
+    pub dock_config: crate::config::DockConfig,
+    /// The centers of the Dock's app icons in its surface, by app id (`dock.icons`).
+    pub dock_icons: Vec<(String, (f64, f64))>,
+    pub bar_press: Option<(smithay::desktop::Window, u32, Point<f64, Logical>)>,
     /// Keycodes for the synthetic keys (`input.key`, `input.type`).
     pub keys: crate::keys::KeyLookup,
     /// What `keys` was built for (the keyboard settings and the active input source): it is
@@ -141,6 +149,18 @@ pub struct State {
     /// the next frame tick draws even if the output is idle (`State::wake`, drm.rs).
     pub redraw: bool,
     pub idle_slept: bool,
+    /// The session is locked (`lock.rs`), the window that had the focus, the lock and screen
+    /// saver settings, and since when the saver or the display off began (the password delay
+    /// counts from there).
+    pub locked: bool,
+    pub locked_focus: Option<smithay::desktop::Window>,
+    /// ext-session-lock: the manager's state and the client that holds the lock.
+    pub session_lock_state: smithay::wayland::session_lock::SessionLockManagerState,
+    pub lock_client: crate::lock::LockClient,
+    pub lock_config: crate::config::LockConfig,
+    pub saver_config: crate::config::SaverConfig,
+    pub saver_active: bool,
+    pub lock_started: Option<Instant>,
     /// The mouse and touchpad settings applied (`input.json`).
     pub input_config: crate::config::InputConfig,
     /// Frame pace, startup and memory of the clients (`perf.*`).
@@ -327,6 +347,11 @@ impl State {
         let app_menus = crate::app_menu::AppMenus::new(&dh);
         let foreign_toplevel_list = crate::shell::toplevel_list(&dh);
         let shell_manager_state = crate::shell::ShellManagerState::new(&dh);
+        // Only the shell's locker may lock the session.
+        let session_lock_state = smithay::wayland::session_lock::SessionLockManagerState::new::<
+            State,
+            _,
+        >(&dh, crate::shell::is_shell_client);
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(&dh, "seat0");
         let (delay, rate) = key_repeat();
@@ -421,6 +446,10 @@ impl State {
             mapped: 0,
             next_window_id: 0,
             shortcuts: crate::commands::shortcuts(),
+            shortcuts_capture: false,
+            dock_config: crate::config::DockConfig::default(),
+            dock_icons: Vec::new(),
+            bar_press: None,
             keys: crate::keys::KeyLookup::new()?,
             keys_for: None,
             config_dir: None,
@@ -434,6 +463,14 @@ impl State {
             display_off: false,
             redraw: true,
             idle_slept: false,
+            locked: false,
+            locked_focus: None,
+            session_lock_state,
+            lock_client: crate::lock::LockClient::default(),
+            lock_config: crate::config::LockConfig::default(),
+            saver_config: crate::config::SaverConfig::default(),
+            saver_active: false,
+            lock_started: None,
             color_temperature: crate::displays::NEUTRAL_KELVIN,
             perf: crate::perf::Perf::default(),
             clear_color: CLEAR_COLOR,

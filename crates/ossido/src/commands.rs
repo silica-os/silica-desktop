@@ -10,8 +10,8 @@ use silica_control::commands::{
     ExecuteParams, FARO_TOGGLE, GLASS_LIST, GlassQualityParams, INPUT_CLICK, INPUT_KEY,
     INPUT_POINTER_BUTTON, INPUT_POINTER_MOVE, INPUT_SCROLL, INPUT_TYPE, Key, LAYER_LIST,
     NOTIFICATIONS_TOGGLE, PERF_FRAMES, PERF_PROCESS, PERF_RENDER, PerfFramesParams,
-    PerfProcessParams, PerfRenderParams, PointerButton, PointerMove, SESSION_QUIT, Scroll,
-    TypeText, UI_ANIMATION_SCALE, UI_GLASS_QUALITY, UI_SCREENSHOT, WINDOW_ARRANGE_2,
+    PerfProcessParams, PerfRenderParams, PointerButton, PointerMove, SESSION_LOCK, SESSION_QUIT,
+    Scroll, TypeText, UI_ANIMATION_SCALE, UI_GLASS_QUALITY, UI_SCREENSHOT, WINDOW_ARRANGE_2,
     WINDOW_ARRANGE_3, WINDOW_ARRANGE_4, WINDOW_CLOSE, WINDOW_FOCUS, WINDOW_FULLSCREEN, WINDOW_LIST,
     WINDOW_MINIMIZE, WINDOW_MOVE, WINDOW_TILE_BOTTOM, WINDOW_TILE_FILL, WINDOW_TILE_LEFT,
     WINDOW_TILE_RIGHT, WINDOW_TILE_TOP, WindowInfo, WindowMove, WindowTarget,
@@ -35,6 +35,9 @@ use silica_control::commands::{
 use silica_control::commands::{
     DESKTOP_SHOW, PANORAMA_APP, PANORAMA_SPACES_BAR, PANORAMA_STATE, PANORAMA_TOGGLE,
 };
+use silica_control::commands::{
+    DOCK_ICONS, DockIconsParams, MinimizeEffectParams, WINDOW_MINIMIZE_EFFECT,
+};
 use silica_control::commands::{IDLE_STATE, INPUT_STATE, KEYBOARD_NEXT_SOURCE, KEYBOARD_STATE};
 use silica_control::commands::{
     IndexParams, MoveToSpaceParams, SPACE_ADD, SPACE_GOTO, SPACE_LIST, SPACE_NEXT, SPACE_PREVIOUS,
@@ -44,7 +47,6 @@ use silica_control::commands::{
     LAUNCHER_TOGGLE, SWITCHER_CANCEL, SWITCHER_COMMIT, SWITCHER_EXPOSE, SWITCHER_NEXT,
     SWITCHER_PREVIOUS,
 };
-use silica_control::commands::{MinimizeEffectParams, WINDOW_MINIMIZE_EFFECT};
 use silica_control::commands::{OUTPUT_COLOR_TEMPERATURE, OUTPUT_CONFIGURE, OUTPUT_LIST};
 use silica_control::{CaptureAnnouncement, CaptureOptions, ScreenshotSettings};
 use silica_control::{Request, Response, Screenshot, ScreenshotParams, Shortcut};
@@ -66,15 +68,30 @@ pub struct WindowId(pub u64);
 
 /// The catalog shortcuts, already parsed.
 pub fn shortcuts() -> Vec<(Shortcut, &'static str)> {
+    shortcuts_with(&crate::config::ShortcutOverrides::default())
+}
+
+/// The catalog shortcuts with the user's changes (`shortcuts.json`): a command may get a
+/// shortcut of its own (even one with no default), or none at all.
+pub fn shortcuts_with(
+    overrides: &crate::config::ShortcutOverrides,
+) -> Vec<(Shortcut, &'static str)> {
     commands::CATALOG
         .iter()
         .filter_map(|spec| {
-            let text = spec.shortcut?;
+            let text = match overrides.get(spec.id) {
+                Some(Some(text)) => text,
+                Some(None) => return None,
+                None => spec.shortcut?,
+            };
             match Shortcut::parse(text) {
                 Ok(shortcut) => Some((shortcut, spec.id)),
                 Err(err) => {
                     warn!("shortcut of {} ignored: {err}", spec.id);
-                    None
+                    // A bad user value falls back to the default.
+                    spec.shortcut
+                        .and_then(|text| Shortcut::parse(text).ok())
+                        .map(|shortcut| (shortcut, spec.id))
                 }
             }
         })
@@ -210,6 +227,16 @@ impl State {
                 self.minimize_effect = crate::render::MinimizeEffect::parse(&effect)
                     .ok_or_else(|| format!("unknown minimize effect (genie, scale): {effect}"))?;
                 Ok(json!({ "effect": effect }))
+            }
+            DOCK_ICONS => {
+                let DockIconsParams { icons } = parse_required(params)?;
+                let count = icons.len();
+                self.dock_icons = icons
+                    .into_iter()
+                    .filter(|icon| icon.x.is_finite() && icon.y.is_finite())
+                    .map(|icon| (icon.app_id, (icon.x, icon.y)))
+                    .collect();
+                Ok(json!({ "icons": count }))
             }
             UI_GLASS_QUALITY => {
                 let GlassQualityParams { quality } = parse_required(params)?;
@@ -652,6 +679,10 @@ impl State {
                 let PerfProcessParams { pid } = parse_required(params)?;
                 to_value(crate::perf::process_info(pid)?)
             }
+            SESSION_LOCK => {
+                self.lock_session()?;
+                Ok(json!({ "locked": true }))
+            }
             SESSION_QUIT => {
                 info!("quit requested");
                 self.loop_signal.stop();
@@ -958,6 +989,13 @@ impl State {
 
     /// Gives the focus to a window (or to none) and brings it to the top.
     pub fn focus_window(&mut self, window: Option<Window>) {
+        // Locked: nothing takes the focus from the lock surface; the window is remembered.
+        if self.locked {
+            if window.is_some() {
+                self.locked_focus = window;
+            }
+            return;
+        }
         // Activation leaving the window (or app) an open menu belongs to closes the menu.
         if !self.transients.is_empty() && self.focused_window() != window {
             self.dismiss_transients();

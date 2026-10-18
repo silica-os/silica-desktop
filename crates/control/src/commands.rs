@@ -34,6 +34,8 @@ pub const WINDOW_MOVE: &str = "window.move";
 pub const WINDOW_MINIMIZE: &str = "window.minimize";
 /// The minimize effect (Dock setting): genie or scale.
 pub const WINDOW_MINIMIZE_EFFECT: &str = "window.minimize_effect";
+/// Where the Dock's app icons are, for windows that minimize into their app's icon.
+pub const DOCK_ICONS: &str = "dock.icons";
 pub const WINDOW_FULLSCREEN: &str = "window.fullscreen";
 pub const WINDOW_TILE_LEFT: &str = "window.tile_left";
 pub const WINDOW_TILE_RIGHT: &str = "window.tile_right";
@@ -45,6 +47,8 @@ pub const WINDOW_ARRANGE_3: &str = "window.arrange_3";
 pub const WINDOW_ARRANGE_4: &str = "window.arrange_4";
 pub const APP_LAUNCH: &str = "app.launch";
 pub const SESSION_QUIT: &str = "session.quit";
+/// Locks the session (the lock screen asks for the password).
+pub const SESSION_LOCK: &str = "session.lock";
 pub const APP_QUIT: &str = "app.quit";
 /// Hides the frontmost app (or `app_id`): its windows leave the screen until it is activated.
 pub const APP_HIDE: &str = "app.hide";
@@ -361,6 +365,34 @@ pub const CATALOG: &[CommandSpec] = &[
                 "type": "object",
                 "properties": {"effect": {"type": "string", "enum": ["genie", "scale"]}},
                 "required": ["effect"],
+                "additionalProperties": false
+            })
+        },
+    },
+    CommandSpec {
+        id: DOCK_ICONS,
+        label: "Dock icons",
+        description: "The shell tells where the Dock's app icons are (centers, in the Dock surface), so that a window minimizes into its app's icon when the Dock setting minimizeToApp is on.",
+        shortcut: None,
+        params: || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "icons": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "app_id": {"type": "string"},
+                                "x": {"type": "number"},
+                                "y": {"type": "number"}
+                            },
+                            "required": ["app_id", "x", "y"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["icons"],
                 "additionalProperties": false
             })
         },
@@ -934,6 +966,13 @@ pub const CATALOG: &[CommandSpec] = &[
         label: "Quit the session",
         description: "Closes Ossido and every window.",
         shortcut: Some("Logo+Shift+Q"),
+        params: no_params,
+    },
+    CommandSpec {
+        id: SESSION_LOCK,
+        label: "Lock the screen",
+        description: "Locks the session: only the lock screen (the shell's ext-session-lock client) is drawn and gets input until the password is right. Refused when no shell is running.",
+        shortcut: Some("Logo+Ctrl+Q"),
         params: no_params,
     },
     CommandSpec {
@@ -1568,6 +1607,22 @@ pub struct ValueParams {
 #[serde(deny_unknown_fields)]
 pub struct GlassQualityParams {
     pub quality: String,
+}
+
+/// One app icon of [`DOCK_ICONS`]: the app id of its windows and the center of the icon.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DockIcon {
+    pub app_id: String,
+    pub x: f64,
+    pub y: f64,
+}
+
+/// Parameters of [`DOCK_ICONS`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DockIconsParams {
+    pub icons: Vec<DockIcon>,
 }
 
 /// Parameters of [`WINDOW_MINIMIZE_EFFECT`]: `genie` or `scale`.
