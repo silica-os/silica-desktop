@@ -300,7 +300,17 @@ class LockScreen extends StatefulWidget {
 
 class LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
   final TextEditingController _password = TextEditingController();
-  final FocusNode _focus = FocusNode();
+  late final FocusNode _focus = FocusNode(
+    onKeyEvent: (node, event) {
+      // Escape empties the field, whatever the platform does with the selection.
+      if (event is KeyDownEvent &&
+          event.logicalKey == LogicalKeyboardKey.escape) {
+        _escape();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    },
+  );
   late final AnimationController _shake = AnimationController(
     vsync: this,
     duration: lockShake,
@@ -405,8 +415,27 @@ class LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
   }
 
   void _typed() {
-    // Typing replaces the selected dots: the failure is over.
-    if (_wrong && _password.text != _wrongText) _wrong = false;
+    // Typing replaces the selected dots: the failure is over. The platform's text input may not
+    // honour the selection (it appends, or deletes one character): do what a selection does.
+    final text = _password.text;
+    if (_wrong && text != _wrongText) {
+      _wrong = false;
+      final old = _wrongText;
+      String? replaced;
+      if (text.length > old.length && text.startsWith(old)) {
+        replaced = text.substring(old.length);
+      } else if (text.length < old.length && old.startsWith(text)) {
+        replaced = '';
+      }
+      if (replaced != null) {
+        _password.removeListener(_typed);
+        _password.value = TextEditingValue(
+          text: replaced,
+          selection: TextSelection.collapsed(offset: replaced.length),
+        );
+        _password.addListener(_typed);
+      }
+    }
     if (_unavailable && _password.text != _wrongText) _unavailable = false;
     if (mounted) setState(() {});
   }

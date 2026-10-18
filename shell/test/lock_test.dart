@@ -866,4 +866,75 @@ void main() {
     expect(rectOf(tester, 'lock password'), field);
     await tester.pumpAndSettle();
   });
+
+  EditableText inputOf(WidgetTester tester) => tester.widget<EditableText>(
+    find.descendant(
+      of: find.byKey(const ValueKey('lock password')),
+      matching: find.byType(EditableText),
+    ),
+  );
+
+  testWidgets('after a failure, typing replaces the dots with no click', (
+    tester,
+  ) async {
+    await pump(tester, FakeLock());
+    await tester.pumpAndSettle();
+    // Type into the focused field as the platform does, then Return.
+    tester.testTextInput.enterText('bad');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(stateOf(tester).fieldState, LockFieldState.wrong);
+    expect(inputOf(tester).focusNode.hasFocus, isTrue);
+    expect(tester.testTextInput.hasAnyClients, isTrue);
+    // The platform appends at the caret, without honouring the selection.
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'bads',
+        selection: TextSelection.collapsed(offset: 4),
+      ),
+    );
+    await tester.pump();
+    expect(inputOf(tester).controller.text, 's');
+    expect(stateOf(tester).fieldState, LockFieldState.typing);
+    // Or it honours it and replaces.
+    tester.testTextInput.enterText('silica');
+    await tester.pump();
+    expect(inputOf(tester).controller.text, 'silica');
+  });
+
+  testWidgets('after a failure, a platform that deletes one character '
+      'clears the selected dots', (tester) async {
+    await pump(tester, FakeLock());
+    await tester.pumpAndSettle();
+    await fail(tester, 'bad');
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'ba',
+        selection: TextSelection.collapsed(offset: 2),
+      ),
+    );
+    await tester.pump();
+    expect(inputOf(tester).controller.text, isEmpty);
+  });
+
+  testWidgets('Escape clears the field, with and without a failure', (
+    tester,
+  ) async {
+    await pump(tester, FakeLock());
+    await tester.pumpAndSettle();
+    tester.testTextInput.enterText('abcdefg');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(inputOf(tester).controller.text, isEmpty);
+    expect(stateOf(tester).fieldState, LockFieldState.placeholder);
+    await fail(tester, 'bad');
+    expect(stateOf(tester).fieldState, LockFieldState.wrong);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(inputOf(tester).controller.text, isEmpty);
+    expect(stateOf(tester).fieldState, LockFieldState.placeholder);
+  });
 }

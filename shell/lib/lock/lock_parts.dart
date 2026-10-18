@@ -397,6 +397,9 @@ class _LockPasswordFieldState extends State<LockPasswordField> {
                     enableSuggestions: false,
                     maxLines: 1,
                     textInputAction: TextInputAction.done,
+                    // Return must not give the focus away (the default for "done"): the
+                    // field stays the first responder across a failed try.
+                    onEditingComplete: () {},
                     onSubmitted: (_) => widget.onSubmit(),
                   ),
                 ),
@@ -1043,9 +1046,8 @@ class LockActionButton extends StatelessWidget {
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: AmalfiType.callout(
-                color: look.ink,
-              ).copyWith(shadows: look.textShadow),
+              style: AmalfiType.callout(color: look.ink)
+                  .copyWith(shadows: look.textShadow),
             ),
           ],
         ),
