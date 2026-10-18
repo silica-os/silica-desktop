@@ -19,7 +19,7 @@ out = here / "golden"
 out.mkdir(exist_ok=True)
 ACCENT = "#d6336c"
 LOOKS = [("light", "light", False), ("dark", "light", True), ("clear", "clear", False),
-         ("tinted", "tinted", False), ("tinted-dark", "tinted", True)]
+         ("clear-dark", "clear", True), ("tinted", "tinted", False), ("tinted-dark", "tinted", True)]
 
 
 def static_copy(src: Path, tmp: Path) -> Path:

@@ -1,5 +1,5 @@
-//! App icons composed from `icon.assets` ([`silica_assets::appicon`]) in light, dark, clear (light
-//! only) and tinted (docs/thumbnails.md, "App icons"). A port of `tools/compose.py` of silica-icons
+//! App icons composed from `icon.assets` ([`silica_assets::appicon`]) in light, dark, clear and
+//! tinted (docs/thumbnails.md, "App icons"). A port of `tools/compose.py` of silica-icons
 //! (docs/icon-format.md, Format 2): SVG layers rasterized with resvg, the per-appearance colour
 //! transforms in OKLab, glass, blends, the dark forms, `min_size`, the clip to the body.
 //! Dynamic layers are not drawn: the host draws them live on top. Cast shadows and the rim
@@ -31,7 +31,6 @@ type Px = [f32; 4];
 type Rgb = [f32; 3];
 
 /// The appearance word of the D-Bus method: the low two bits pick the look, bit 2 the dark form.
-/// Clear exists only in light: clear with the dark bit is clear.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Look {
     Light,
@@ -46,7 +45,7 @@ pub struct Appearance {
 }
 
 impl Appearance {
-    /// 0 light, 1 clear, 2 tinted; add 4 for the dark form (4 dark, 6 tinted dark; 5 is clear).
+    /// 0 light, 1 clear, 2 tinted; add 4 for the dark form (4 dark, 5 clear dark, 6 tinted dark).
     pub fn from_u32(v: u32) -> Option<Appearance> {
         let look = match v & 3 {
             0 => Look::Light,
@@ -56,7 +55,7 @@ impl Appearance {
         };
         (v < 8).then_some(Appearance {
             look,
-            dark: v & 4 != 0 && look != Look::Clear,
+            dark: v & 4 != 0,
         })
     }
 
@@ -64,7 +63,8 @@ impl Appearance {
         match (self.look, self.dark) {
             (Look::Light, false) => "light",
             (Look::Light, true) => "dark",
-            (Look::Clear, _) => "clear",
+            (Look::Clear, false) => "clear",
+            (Look::Clear, true) => "clear-dark",
             (Look::Tinted, false) => "tinted",
             (Look::Tinted, true) => "tinted-dark",
         }
@@ -293,6 +293,7 @@ fn over(dst: Px, src: Px, blend: Blend) -> Px {
 fn background(icon: &AppIcon, side: u32, ap: Appearance, accent: Rgb) -> Option<Img> {
     let s = side as usize;
     let g = |c: [u8; 3]| c.map(|v| f32::from(v) / 255.0);
+    let graphite = (g([0x3a, 0x3a, 0x3c]), g([0x14, 0x14, 0x16]));
     Some(match (ap.look, ap.dark) {
         (Look::Light, dark) => {
             let b = icon.background.get(usize::from(dark))?;
@@ -303,7 +304,8 @@ fn background(icon: &AppIcon, side: u32, ap: Appearance, accent: Rgb) -> Option<
                 Background::Svg(i) => render_svg(icon.blob(*i)?, side)?,
             }
         }
-        (Look::Clear, _) => Img::vertical(s, WHITE, WHITE, 0.50, 0.25),
+        (Look::Clear, true) => Img::vertical(s, graphite.0, BLACK, 0.50, 0.55),
+        (Look::Clear, false) => Img::vertical(s, WHITE, WHITE, 0.50, 0.25),
         (Look::Tinted, true) => Img::vertical(
             s,
             mix(accent, BLACK, 0.62),
@@ -353,7 +355,9 @@ fn transform(
             let (lo, hi) = if mode == Mode::Light {
                 (200.0, 255.0)
             } else {
-                luma.map_or((105.0, 255.0), |l| (l[0], l[1]))
+                luma.map_or(if dark { (150.0, 255.0) } else { (105.0, 255.0) }, |l| {
+                    (l[0], l[1])
+                })
             };
             [(lo + (hi - lo) * lum) / 255.0; 3]
         } else if mode == Mode::Accent {

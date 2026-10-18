@@ -15,10 +15,11 @@ use silica_assets::appicon::AppIcon;
 use silica_daemon::icons::appicon::{Appearance, compose};
 
 const ACCENT: u32 = 0xd6_33_6c;
-const LOOKS: [(&str, u32); 5] = [
+const LOOKS: [(&str, u32); 6] = [
     ("light", 0),
     ("dark", 4),
     ("clear", 1),
+    ("clear-dark", 5),
     ("tinted", 2),
     ("tinted-dark", 6),
 ];
@@ -113,11 +114,12 @@ fn the_pilot_icons_match_compose_py_without_their_dynamic_layers() {
 }
 
 #[test]
-fn clear_has_no_dark_form() {
+fn clear_has_a_dark_form() {
     use silica_daemon::icons::appicon::Look;
     let clear = Appearance::from_u32(1).unwrap();
-    assert_eq!(Appearance::from_u32(5).unwrap(), clear);
     assert_eq!((clear.look, clear.dark), (Look::Clear, false));
+    let clear_dark = Appearance::from_u32(5).unwrap();
+    assert_eq!((clear_dark.look, clear_dark.dark), (Look::Clear, true));
     assert!(Appearance::from_u32(4).unwrap().dark);
     assert!(Appearance::from_u32(6).unwrap().dark);
 }
