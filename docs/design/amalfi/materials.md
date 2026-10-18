@@ -68,6 +68,7 @@ an opaque fill = tint over `Surface/Window`, keep rim and shadow.
 | Alerts | Thick (glass variant) or `Surface/Raised` opaque | 20 | system alerts use glass, app alerts in a window use opaque |
 | Sheets attached to a window | Thick | 20 | |
 | HUDs (volume, brightness), Screenshot bar | Regular | capsule / 20 | |
+| Lock screen field, help button, avatar disc, action buttons | **Glass/Lock**: background blur σ 20, saturation 1.1, white 28 % (dark) / 60 % (light), 1 pt light edge, no refraction or shadow | capsule / circle | see [`lock-screen.md`](lock-screen.md); banners on the lock screen stay Regular |
 | Toolbar controls (icon buttons, action segments, search capsule) | Regular | capsule | the toolbar itself is flat (window surface) |
 | Title bar section over a sidebar (split title bars) | **blur strip** (not glass): blur σ 10, tint `Surface/Sidebar` 80 %, no refraction, rim or shadow | — | the sidebar rows scroll under it; see `components.md` › Sidebar in a split title bar |
 | Window, sidebar, inspector, content | **opaque** `Surface/Window` / `Surface/Sidebar` | window 18 | separators 1 pt, inset as in the layout rules; none between sidebar and content |
