@@ -77,14 +77,11 @@ fn draw_layer(
     if let Some((tint, ramp)) = layer.tint {
         tint_pixmap(&mut pixmap, tint, ramp);
     }
-    canvas.draw_pixmap(
-        0,
-        0,
-        pixmap.as_ref(),
-        &PixmapPaint::default(),
-        Transform::identity(),
-        None,
-    );
+    let paint = PixmapPaint {
+        opacity: layer.opacity.clamp(0.0, 1.0),
+        ..PixmapPaint::default()
+    };
+    canvas.draw_pixmap(0, 0, pixmap.as_ref(), &paint, Transform::identity(), None);
     Some(())
 }
 

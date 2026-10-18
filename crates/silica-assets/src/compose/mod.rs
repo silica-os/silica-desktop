@@ -33,10 +33,14 @@ pub enum Look {
 pub struct Appearance {
     pub look: Look,
     pub dark: bool,
+    /// No background: only the foreground layers, on a transparent body. The Clear looks use it
+    /// when the host puts the compositor's glass behind the icon (silica-desktop#232).
+    pub bare: bool,
 }
 
 impl Appearance {
-    /// 0 light, 1 clear, 2 tinted; add 4 for the dark form (4 dark, 5 clear dark, 6 tinted dark).
+    /// 0 light, 1 clear, 2 tinted; add 4 for the dark form (4 dark, 5 clear dark, 6 tinted dark)
+    /// and 8 for the bare composition (no background; only meaningful for clear and tinted).
     pub fn from_u32(v: u32) -> Option<Appearance> {
         let look = match v & 3 {
             0 => Look::Light,
@@ -44,13 +48,24 @@ impl Appearance {
             2 => Look::Tinted,
             _ => return None,
         };
-        (v < 8).then_some(Appearance {
+        (v < 16).then_some(Appearance {
             look,
             dark: v & 4 != 0,
+            bare: v & 8 != 0,
         })
     }
 
     pub fn name(self) -> &'static str {
+        if self.bare {
+            return match (self.look, self.dark) {
+                (Look::Light, false) => "light-bare",
+                (Look::Light, true) => "dark-bare",
+                (Look::Clear, false) => "clear-bare",
+                (Look::Clear, true) => "clear-dark-bare",
+                (Look::Tinted, false) => "tinted-bare",
+                (Look::Tinted, true) => "tinted-dark-bare",
+            };
+        }
         match (self.look, self.dark) {
             (Look::Light, false) => "light",
             (Look::Light, true) => "dark",
@@ -502,7 +517,11 @@ pub fn compose_with(
     }
     let accent = hex_rgb(accent);
     let map = AccentMap::new(accent);
-    let mut out = background(icon, side, ap, accent, supersample)?;
+    let mut out = if ap.bare {
+        Img::blank(side as usize)
+    } else {
+        background(icon, side, ap, accent, supersample)?
+    };
     let form_ix = usize::from(ap.dark);
     let tune = icon.glass;
     for layer in &icon.layers {

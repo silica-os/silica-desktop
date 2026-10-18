@@ -57,6 +57,50 @@ blue = "#2f7cf6"
 purple = "#a052e0"
 gray = "#8e8e93"
 
+# The folder in the icon styles other than Default (silica-desktop#232). silica-icons has no
+# dark or clear folder artwork (the generic folder is the same in every theme), so the three
+# layers are recoloured by the same ramp rules as the labelled tints: per layer a base color (or
+# the system accent, `accent = true`), the luminance of the drawn layer maps from `shade` times
+# the base (at `luminance[0]`) to the base lightened by `glow` (at `luminance[1]`), and the layer
+# is drawn at `opacity`. The folder's own tint colour replaces the accent and the base colour of
+# every style but Clear, which is glass and has no colour of its own. `symbol` is the engraving:
+# its colors and opacities, or, with `accent = true`, the folder effect's colours through the
+# front layer's ramp and the accent.
+#
+# Values chosen by analogy with the app icons (icon-format.md, "Themes"; there is no measured
+# folder in these styles): dark is graphite, tinted follows the labelled-tint ramp (dark form:
+# deeper), clear light/dark is the app glass (white / graphite) drawn translucent so the
+# wallpaper shows through the folder, as through the body of a clear app icon.
+[folder.styles.dark]
+back = { color = "#505056", luminance = [0.35, 0.85], shade = 0.6, glow = 0.0 }
+middle = { color = "#a0a0a6", luminance = [0.35, 0.85], shade = 1.0, glow = 0.0 }
+front = { color = "#78787e", luminance = [0.35, 0.85], shade = 0.6, glow = 0.0 }
+symbol = { color = "#2a2a2e", highlight = "#ffffff", opacity = 0.8, highlight_opacity = 0.18 }
+
+[folder.styles.clear]
+back = { color = "#ffffff", luminance = [0.35, 0.85], shade = 0.78, glow = 0.0, opacity = 0.42 }
+middle = { color = "#ffffff", luminance = [0.35, 0.85], shade = 1.0, glow = 0.0, opacity = 0.8 }
+front = { color = "#ffffff", luminance = [0.35, 0.85], shade = 0.86, glow = 0.0, opacity = 0.55 }
+symbol = { color = "#3c3c43", highlight = "#ffffff", opacity = 0.6, highlight_opacity = 0.5 }
+
+[folder.styles.clear-dark]
+back = { color = "#8e8e93", luminance = [0.35, 0.85], shade = 0.6, glow = 0.0, opacity = 0.45 }
+middle = { color = "#d8d8de", luminance = [0.35, 0.85], shade = 1.0, glow = 0.0, opacity = 0.7 }
+front = { color = "#c7c7cc", luminance = [0.35, 0.85], shade = 0.7, glow = 0.0, opacity = 0.5 }
+symbol = { color = "#f2f2f7", highlight = "#000000", opacity = 0.7, highlight_opacity = 0.3 }
+
+[folder.styles.tinted]
+back = { accent = true, luminance = [0.35, 0.85], shade = 0.72, glow = 0.5 }
+middle = { accent = true, luminance = [0.35, 0.85], shade = 0.92, glow = 0.92 }
+front = { accent = true, luminance = [0.35, 0.85], shade = 0.72, glow = 0.5 }
+symbol = { accent = true }
+
+[folder.styles.tinted-dark]
+back = { accent = true, luminance = [0.35, 0.85], shade = 0.4, glow = 0.1 }
+middle = { accent = true, luminance = [0.35, 0.85], shade = 0.7, glow = 0.7 }
+front = { accent = true, luminance = [0.35, 0.85], shade = 0.5, glow = 0.3 }
+symbol = { accent = true }
+
 [folder.folders]
 HOME = "house"
 DESKTOP = "display"

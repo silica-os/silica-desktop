@@ -227,6 +227,7 @@ fn the_tint_reaches_back_front_and_symbol_but_not_the_middle() {
         non_empty: true,
         symbol: Some("doc-text".to_owned()),
         tint: Some([0xf2, 0x38, 0x2e]),
+        style: None,
     };
     let plan = rules::plan_folder(rules, 256, 128.0, &look);
     let fonts = compose::Fonts::from_assets(&s.icons.assets);
@@ -940,5 +941,53 @@ fn a_preview_and_a_thumbnailer_beat_every_icon() {
     )
     .unwrap();
     assert!(!preview && near(pixel(&path, 10, 10), [0x80, 0, 0xc0, 255], 1));
+    let _ = fs::remove_dir_all(&s.root);
+}
+
+#[test]
+fn folders_follow_the_icon_style_and_files_do_not() {
+    use crate::icons::rules::StyleSel;
+    let s = setup("styles");
+    let folder = s.root.join("folder");
+    fs::create_dir_all(&folder).unwrap();
+    let sel = |name: &str| {
+        Some(StyleSel {
+            name: name.to_owned(),
+            accent: [0xd6, 0x33, 0x6c],
+        })
+    };
+    let at = |style: Option<StyleSel>| {
+        let png = s.icons.icon_styled(&folder, 256, 128.0, style).unwrap();
+        pixel(&png, 128, 200)
+    };
+    let default = at(None);
+    assert!(near(default, [0x82, 0xc4, 0xfd, 255], 1));
+    // Dark: graphite, darker than the default panel, still opaque.
+    let dark = at(sel("dark"));
+    assert_eq!(dark[3], 255);
+    assert!(dark[0].abs_diff(dark[2]) < 12, "{dark:?}");
+    let sum = |c: [u8; 4]| u32::from(c[0]) + u32::from(c[1]) + u32::from(c[2]);
+    assert!(sum(dark) + 150 < sum(default), "{dark:?}");
+    // Tinted: the accent, red here, not the blue of the artwork.
+    let tinted = at(sel("tinted"));
+    assert!(tinted[0] > tinted[2], "{tinted:?}");
+    // Clear: glass, translucent, with no colour of its own.
+    for name in ["clear", "clear-dark"] {
+        let clear = at(sel(name));
+        assert!(clear[3] > 60 && clear[3] < 200, "{name}: {clear:?}");
+        assert!(clear[0].abs_diff(clear[2]) < 12, "{name}: {clear:?}");
+    }
+    // A request without a style is the old icon, from the same file.
+    assert_eq!(
+        s.icons.icon(&folder, 256, 128.0),
+        s.icons.icon_styled(&folder, 256, 128.0, None)
+    );
+    // A file is the same in every style.
+    let file = s.root.join("a.pdf");
+    fs::write(&file, "x").unwrap();
+    assert_eq!(
+        s.icons.icon_styled(&file, 256, 128.0, sel("dark")),
+        s.icons.icon(&file, 256, 128.0)
+    );
     let _ = fs::remove_dir_all(&s.root);
 }

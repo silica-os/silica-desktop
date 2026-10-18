@@ -427,7 +427,11 @@ fn composites_from_format2(
     };
     let mut has_dark = false;
     for (theme, look, dark) in COMPOSED {
-        let ap = Appearance { look, dark };
+        let ap = Appearance {
+            look,
+            dark,
+            bare: false,
+        };
         let image = match compose_with(&icon, side, side as f32, ap, DEFAULT_ACCENT, 2) {
             Some(rgba) => raster::image_from_straight(side, &rgba),
             None if look == Look::Light => {
@@ -829,6 +833,80 @@ fn rect_strict(value: Option<&Value>, what: &str) -> Result<[f32; 4], CompileErr
         *slot = v.as_f64().ok_or_else(bad)? as f32;
     }
     Ok(out)
+}
+
+/// The styles of the folder (`[folder.styles.<style>]`): per layer role a base color (or the
+/// accent), a luminance ramp and an opacity; for the symbol the engraving colors.
+fn folder_styles(
+    ctx: &mut Ctx<'_>,
+    entry: u32,
+    styles: &serde_json::Map<String, Value>,
+) -> Result<(), CompileError> {
+    const STYLES: [&str; 5] = ["dark", "clear", "clear-dark", "tinted", "tinted-dark"];
+    for (style, roles) in styles {
+        if !STYLES.contains(&style.as_str()) {
+            return Err(CompileError::new(format!(
+                "folder.styles.{style}: not a style (dark, clear, clear-dark, tinted, tinted-dark)"
+            )));
+        }
+        let roles = roles
+            .as_object()
+            .ok_or_else(|| CompileError::new(format!("folder.styles.{style}: not a table")))?;
+        for (name, rule) in roles {
+            let (role, symbol) = match name.as_str() {
+                "symbol" => (LayerRole::Symbol, true),
+                other => (
+                    layer_role(other).ok_or_else(|| {
+                        CompileError::new(format!("folder.styles.{style}.{other}: not a layer"))
+                    })?,
+                    false,
+                ),
+            };
+            let accent = rule.get("accent").and_then(Value::as_bool).unwrap_or(false);
+            let color = color_of(str_of(rule, "color")) & 0xFFFF_FF00;
+            if !accent && !symbol && str_of(rule, "color").is_none() {
+                return Err(CompileError::new(format!(
+                    "folder.styles.{style}.{name}: needs a color or accent = true"
+                )));
+            }
+            let spec = if symbol {
+                let highlight = color_of(str_of(rule, "highlight")) & 0xFFFF_FF00;
+                SlotSpec {
+                    kind: Some(SlotKind::FolderStyle),
+                    unit: role as u8,
+                    weight: u16::from(accent),
+                    color: [color, highlight],
+                    rect: [
+                        num(rule.get("opacity"), 1.0) as f32,
+                        num(rule.get("highlight_opacity"), 0.0) as f32,
+                        0.0,
+                        0.0,
+                    ],
+                    format: Some(style.clone()),
+                    ..SlotSpec::default()
+                }
+            } else {
+                let range = rect_of(rule.get("luminance"));
+                SlotSpec {
+                    kind: Some(SlotKind::FolderStyle),
+                    unit: role as u8,
+                    weight: u16::from(accent),
+                    color: [color, color],
+                    rect: [
+                        range[0],
+                        range[1],
+                        num(rule.get("shade"), 1.0) as f32,
+                        num(rule.get("glow"), 0.0) as f32,
+                    ],
+                    tracking: num(rule.get("opacity"), 1.0) as f32,
+                    format: Some(style.clone()),
+                    ..SlotSpec::default()
+                }
+            };
+            ctx.builder.add_slot(entry, spec)?;
+        }
+    }
+    Ok(())
 }
 
 fn layer_role(name: &str) -> Option<LayerRole> {
@@ -1236,6 +1314,9 @@ fn generic_folder(
                 )?;
             }
         }
+    }
+    if let Some(styles) = dynamic.get("styles").and_then(Value::as_object) {
+        folder_styles(ctx, entry, styles)?;
     }
     if let Some(folders) = dynamic.get("folders").and_then(Value::as_object) {
         for (key, symbol) in folders {

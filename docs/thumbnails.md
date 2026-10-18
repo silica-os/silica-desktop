@@ -180,6 +180,17 @@ Order: `back`, `middle`, `front`, then the symbol.
   metadata `metadata::silica-folder`; else the first colour tag of `user.xdg.tags` (English or
   Italian names) tints. Invalid values are dropped. A symbol that is not in the set keeps the
   special folder's own.
+- **Icon styles** (silica-desktop#232): `Icon` flags bits 1 to 3 carry the system's icon style as
+  the `AppIcon` appearance word (0 Default, 1 clear, 2 tinted, plus 4 for the dark forms; bit 0 is
+  `NO_PREVIEW`) and bits 8 to 31 the accent (`0xRRGGBB`, 0 the default `#0e77e6`). Only folders
+  change; a file is the same in every style. silica-icons has no dark or clear folder artwork, so
+  `[folder.styles.<style>]` in `compose.toml` recolours the same three layers (`FolderStyle` slots):
+  per layer role a base colour or the accent, the luminance ramp of the labelled tints and an
+  opacity, and for the symbol the engraving. Dark is graphite; tinted is the accent through the
+  tint ramp (deeper in the dark form); clear and clear dark are white or graphite glass drawn
+  translucent, with no colour of their own (the folder's tint is ignored; in every other style it
+  replaces the accent or base colour of the back and front layers, never of the paper). The values
+  are ours, by analogy with the app icons (nothing measured). A style the assets lack is Default.
 - **Special folders** (symbol when no custom one): the `xdg-user-dirs` keys (`DESKTOP` display,
   `DOCUMENTS` doc-text, `DOWNLOAD` arrow-down-circle, `MUSIC` music-note, `PICTURES` photo,
   `VIDEOS` film, `TEMPLATES` doc-plus, `PUBLICSHARE` share) from `user-dirs.dirs`; `HOME` house
@@ -196,7 +207,12 @@ an app from its `icon/icon.assets` (docs/assets-format.md, "App icon file"), the
 - `app`: a desktop id (`dev.frascella.Clock`, with or without `.desktop`; its entry's
   `X-Silica-Icon=` folder) or an absolute icon folder.
 - `appearance`: 0 light, 1 clear, 2 tinted; add 4 for the dark form (4 dark, 5 clear dark,
-  6 tinted dark). Any other value gives "".
+  6 tinted dark), 8 for bare (below). Any other value gives "".
+- `appearance` bit 8 (value 8, with 1 or 2 and 4: 9, 10, 13, 14): the **bare** composition, only
+  the foreground layers on a transparent body, without the generated background. The host puts
+  the compositor's glass behind a Clear icon (a glass region with the body shape) and draws this
+  on top, so the body is the compositor's blur and not a baked translucent fill (silica-desktop#232).
+  The cache name has a `-bare` suffix.
 - `accent_rgb`: 0xRRGGBB, used by the tinted looks only (0 is `Accent/Amalfi`, `#0e77e6`).
 - Result: the path of a PNG of exactly `size_px` (at most 2048) pixels, `scale` giving the side
   in points for `min_size`; "" when the app has no `icon.assets`, it is damaged or the request
