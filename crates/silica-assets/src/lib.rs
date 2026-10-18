@@ -12,6 +12,9 @@ pub mod format;
 mod mph;
 mod reader;
 
+#[cfg(feature = "compose")]
+pub mod compose;
+
 #[cfg(feature = "compile")]
 pub mod compile;
 

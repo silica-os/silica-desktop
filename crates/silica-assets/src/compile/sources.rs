@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use xxhash_rust::xxh3::Xxh3;
 
+use crate::appicon::AppIcon;
+use crate::compose::{Appearance, DEFAULT_ACCENT, Look, compose_with};
 use crate::format::*;
 
 use super::builder::{Builder, SlotSpec, VariantSpec};
@@ -276,9 +278,10 @@ fn apps(
             &format!("apps/{name}/icon.json"),
         )?;
         let id = str_of(&manifest, "id").unwrap_or(&name).to_owned();
+        let format2 = manifest.get("format").and_then(Value::as_u64) == Some(2);
         let dynamic = manifest.get("dynamic").filter(|d| !d.is_null());
         let mut flags = 0;
-        if dynamic.is_some() {
+        if dynamic.is_some() || (format2 && has_dynamic_layers(&manifest)) {
             flags |= FLAG_HAS_DYNAMIC;
         }
         let entry = ctx.builder.add_entry(&id, EntryKind::App, 0);
@@ -287,7 +290,9 @@ fn apps(
 
         let rendered = manifest.get("rendered").and_then(Value::as_object);
         let mut has_dark = false;
-        if let Some(rendered) = rendered.filter(|r| !r.is_empty()) {
+        if format2 {
+            has_dark = composites_from_format2(ctx, &app_dir, &name, &manifest, entry)?;
+        } else if let Some(rendered) = rendered.filter(|r| !r.is_empty()) {
             for (key, theme) in THEMES {
                 let Some(file) = rendered.get(key).and_then(Value::as_str) else {
                     continue;
@@ -304,7 +309,9 @@ fn apps(
         if has_dark {
             flags |= FLAG_HAS_DARK;
         }
-        if let Some(dynamic) = dynamic {
+        if format2 {
+            format2_slots(ctx, &app_dir, &manifest, entry)?;
+        } else if let Some(dynamic) = dynamic {
             dynamic_slots(ctx, &app_dir, dynamic, entry)?;
         }
         set_flags(ctx, entry, flags);
@@ -367,6 +374,198 @@ fn composite_from_layers(
     Ok(has_dark)
 }
 
+/// The six themes of a format 2 app, in the order of `THEMES`: the look and the dark form that
+/// the composer ([`crate::compose`]) takes.
+const COMPOSED: [(Theme, Look, bool); 6] = [
+    (Theme::Default, Look::Light, false),
+    (Theme::Dark, Look::Light, true),
+    (Theme::Clear, Look::Clear, false),
+    (Theme::ClearDark, Look::Clear, true),
+    (Theme::Tinted, Look::Tinted, false),
+    (Theme::TintedDark, Look::Tinted, true),
+];
+
+fn has_dynamic_layers(manifest: &Value) -> bool {
+    manifest
+        .get("layers")
+        .and_then(Value::as_array)
+        .is_some_and(|a| {
+            a.iter()
+                .any(|l| l.get("dynamic").is_some_and(Value::is_object))
+        })
+}
+
+/// A format 2 app: the six themes composed from its layers with the composer of the thumbnail
+/// service (the static layers only: the dynamic ones are slots), at the default accent. When the
+/// composer cannot draw the Default or Dark theme, the flat `fallback` PNG stands in for it.
+/// Returns whether a Dark theme was added (always, a format 2 icon has a dark form).
+fn composites_from_format2(
+    ctx: &mut Ctx<'_>,
+    dir: &Path,
+    name: &str,
+    manifest: &Value,
+    entry: u32,
+) -> Result<bool, CompileError> {
+    let bytes = super::app_icon::app_icon(dir)
+        .map_err(|e| CompileError::new(format!("apps/{name}: {e}")))?;
+    // Every file the composition reads counts for the content digest.
+    ctx.reader.note(&format!("apps/{name}/icon.assets"), &bytes);
+    let icon = AppIcon::decode(&bytes)
+        .ok_or_else(|| CompileError::new(format!("apps/{name}: compiled icon does not decode")))?;
+    let side = raster::CANVAS;
+    let fallback = |dark: bool| -> String {
+        let (key, default) = if dark {
+            ("dark", "icon-dark.png")
+        } else {
+            ("light", "icon.png")
+        };
+        manifest
+            .get("fallback")
+            .and_then(|f| str_of(f, key))
+            .unwrap_or(default)
+            .to_owned()
+    };
+    let mut has_dark = false;
+    for (theme, look, dark) in COMPOSED {
+        let ap = Appearance { look, dark };
+        let image = match compose_with(&icon, side, side as f32, ap, DEFAULT_ACCENT, 2) {
+            Some(rgba) => raster::image_from_straight(side, &rgba),
+            None if look == Look::Light => {
+                let file = fallback(dark);
+                let bytes = ctx.reader.read(dir, &file)?;
+                raster::image_from_png(&bytes)
+                    .map_err(|e| CompileError::new(format!("apps/{name}/{file}: {e}")))?
+            }
+            None => {
+                return Err(CompileError::new(format!(
+                    "apps/{name}: the {look:?} theme cannot be composed"
+                )));
+            }
+        };
+        has_dark |= dark;
+        ctx.add_ladder(entry, theme, Layer::Composite, State::Normal, &image)?;
+    }
+    Ok(has_dark)
+}
+
+/// The dynamic layers of a format 2 app as slots: hands and cap with their SVG layers (and the
+/// `-dark` ones), calendar text with its fields. The composite leaves them out.
+fn format2_slots(
+    ctx: &mut Ctx<'_>,
+    dir: &Path,
+    manifest: &Value,
+    entry: u32,
+) -> Result<(), CompileError> {
+    let layers = manifest.get("layers").and_then(Value::as_array);
+    for item in layers.into_iter().flatten() {
+        let (Some(id), Some(dynamic)) = (
+            str_of(item, "id"),
+            item.get("dynamic").filter(|d| d.is_object()),
+        ) else {
+            continue;
+        };
+        let file = format!("layers/{id}.svg");
+        let pivot = match dynamic
+            .get("pivot")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+        {
+            Some([x, y]) => [
+                num(Some(x), 512.0) as f32,
+                num(Some(y), 512.0) as f32,
+                0.0,
+                0.0,
+            ],
+            _ => [512.0, 512.0, 0.0, 0.0],
+        };
+        match str_of(dynamic, "kind") {
+            Some("clock-hand") => {
+                let (unit, layer) = match str_of(dynamic, "unit") {
+                    Some("hour") => (Unit::Hour, Layer::HandHour),
+                    Some("minute") => (Unit::Minute, Layer::HandMinute),
+                    Some("second") => (Unit::Second, Layer::HandSecond),
+                    other => {
+                        return Err(CompileError::new(format!(
+                            "layer {id}: clock hand with unit {other:?}"
+                        )));
+                    }
+                };
+                layer_variants(ctx, dir, &file, layer, entry)?;
+                ctx.builder.add_slot(
+                    entry,
+                    SlotSpec {
+                        kind: Some(SlotKind::ClockHand),
+                        unit: unit as u8,
+                        min_size: num(item.get("min_size"), 0.0) as u16,
+                        rect: pivot,
+                        ..SlotSpec::default()
+                    },
+                )?;
+            }
+            Some("clock-cap") => {
+                layer_variants(ctx, dir, &file, Layer::Cap, entry)?;
+                ctx.builder.add_slot(
+                    entry,
+                    SlotSpec {
+                        kind: Some(SlotKind::ClockCap),
+                        min_size: num(item.get("min_size"), 0.0) as u16,
+                        rect: pivot,
+                        ..SlotSpec::default()
+                    },
+                )?;
+            }
+            Some("calendar-month") => {
+                calendar_slot(ctx, entry, "month", SlotKind::CalendarMonth, dynamic)?;
+            }
+            Some("calendar-day") => {
+                calendar_slot(ctx, entry, "day", SlotKind::CalendarDay, dynamic)?;
+            }
+            other => {
+                return Err(CompileError::new(format!(
+                    "layer {id}: unknown dynamic kind {other:?}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A calendar text slot from the text fields (`font`, `size`, `weight`, `tracking`, `color`,
+/// `dark_color`, `box`, `case`, `format`, `max_width`). Its `format` string is
+/// `<month|day>[:<case>[:<format>]]`, e.g. `month:upper:short`.
+fn calendar_slot(
+    ctx: &mut Ctx<'_>,
+    entry: u32,
+    key: &str,
+    kind: SlotKind,
+    text: &Value,
+) -> Result<(), CompileError> {
+    let color = color_of(str_of(text, "color"));
+    let dark = str_of(text, "dark_color").map_or(color, |c| color_of(Some(c)));
+    let mut format = key.to_owned();
+    match (str_of(text, "case"), str_of(text, "format")) {
+        (Some(case), Some(style)) => format = format!("{key}:{case}:{style}"),
+        (Some(case), None) => format = format!("{key}:{case}"),
+        (None, Some(style)) => format = format!("{key}::{style}"),
+        (None, None) => {}
+    }
+    ctx.builder.add_slot(
+        entry,
+        SlotSpec {
+            kind: Some(kind),
+            rect: rect_of(text.get("box")),
+            font: str_of(text, "font").map(str::to_owned),
+            size: num(text.get("size"), 0.0) as u16,
+            weight: num(text.get("weight"), 400.0) as u16,
+            color: [color, dark],
+            format: Some(format),
+            tracking: num(text.get("tracking"), 0.0) as f32,
+            max_width: num(text.get("max_width"), 0.0) as f32,
+            ..SlotSpec::default()
+        },
+    )
+}
+
 fn dark_name(file: &str) -> String {
     match file.strip_suffix(".svg") {
         Some(stem) => format!("{stem}-dark.svg"),
@@ -426,30 +625,9 @@ fn dynamic_slots(
                 ("month", SlotKind::CalendarMonth),
                 ("day", SlotKind::CalendarDay),
             ] {
-                let Some(text) = dynamic.get(key) else {
-                    continue;
-                };
-                let color = color_of(str_of(text, "color"));
-                let dark = str_of(text, "dark_color").map_or(color, |c| color_of(Some(c)));
-                let format = match str_of(text, "case") {
-                    Some(case) => format!("{key}:{case}"),
-                    None => key.to_owned(),
-                };
-                ctx.builder.add_slot(
-                    entry,
-                    SlotSpec {
-                        kind: Some(kind),
-                        rect: rect_of(text.get("box")),
-                        font: str_of(text, "font").map(str::to_owned),
-                        size: num(text.get("size"), 0.0) as u16,
-                        weight: num(text.get("weight"), 400.0) as u16,
-                        color: [color, dark],
-                        format: Some(format),
-                        tracking: num(text.get("tracking"), 0.0) as f32,
-                        max_width: num(text.get("max_width"), 0.0) as f32,
-                        ..SlotSpec::default()
-                    },
-                )?;
+                if let Some(text) = dynamic.get(key) {
+                    calendar_slot(ctx, entry, key, kind, text)?;
+                }
             }
         }
         Some("file-label") => {

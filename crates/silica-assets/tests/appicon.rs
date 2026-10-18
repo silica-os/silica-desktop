@@ -73,7 +73,7 @@ fn format_two_resolves_defaults_and_dark_overrides() {
         "no dark file: the same blob"
     );
     assert_eq!(b.forms[0].blend, Blend::Normal);
-    let hand = icon.layers[2].dynamic.unwrap();
+    let hand = icon.layers[2].dynamic.clone().unwrap();
     assert_eq!(hand.pivot, [500.0, 510.0]);
     // Deterministic.
     assert_eq!(app_icon(tmp.path()).unwrap(), app_icon(tmp.path()).unwrap());

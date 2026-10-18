@@ -155,8 +155,13 @@ dark, clear, tinted -> default.
 
 The entry kind `file-kind` (10) is reserved: no entry has it any more.
 
-Where the images come from: an app icon uses its `rendered` PNGs (six themes, 1024 px); an app
-without them is composed from its SVG layers for default and dark; file, folder, volume, Trash
+Where the images come from: a format 2 app icon (`icon.json` `"format": 2`, every app of
+silica-icons) is composed from its layers for the six themes at 1024 px by the composer of the
+thumbnail service (`silica_assets::compose`, 2 samples per pixel side, default accent, static
+layers only; the flat `fallback` PNG stands in for default or dark if a layer cannot be drawn);
+its dynamic layers become slots (clock hands and cap with their SVG layers, calendar text with
+its fields). A format 1 app icon uses its `rendered` PNGs (six themes, 1024 px); one without
+them is composed from its SVG layers for default and dark; file, folder, volume, Trash
 and badge icons are rasterized from their SVG with resvg (`icon.svg`, `icon-dark.svg`). The `background` and
 `foreground` layers of an app are not stored: the rendered composites cover the themes. The
 generic file and folder are the exception, see below.
@@ -173,8 +178,9 @@ pivot / box f32 x 4  pivot (x, y, 0, 0) for hands and caps, or box (x, y, w, h) 
 font        u32  string offset (font entry name) for text slots, u32::MAX if none
 size, weight u16 x 2  font size and weight on the 1024 canvas
 color       u32 x 2  light and dark 0xRRGGBBAA
-format      u32  string offset, u32::MAX if none: "month:upper", "day" (calendar), the case
-                 of the label ("upper"), the category name (type-category)
+format      u32  string offset, u32::MAX if none: "<month|day>[:<case>[:<format>]]" (calendar:
+                 "month:upper:short", "month:upper", "day"; `<format>` is the month style
+                 `short` (three letters), `long` or `narrow`), the case of the label ("upper"), the category name (type-category)
 tracking    f32  letter spacing on the 1024 canvas
 max_width   f32  widest text on the 1024 canvas (shrinks proportionally beyond it)
 ```
@@ -277,7 +283,7 @@ reach the thumbnail service. A compile error is a warning: the app keeps its fla
 
 The thumbnail service (`AppIcon` of `dev.frascella.Silica.Thumbnails1`, docs/thumbnails.md)
 composes light, dark, clear and tinted from this file. Both formats of silica-icons compile:
-format 2 as it is; format 1 as the background file plus one `body` layer (the foreground, ramp
+format 2 as it is (the text fields of the calendar layers included: the host draws the month and day live, the service draws no dynamic layer); format 1 as the background file plus one `body` layer (the foreground, ramp
 in clear and tinted, neutral shadow).
 
 Binary layout, little endian, deterministic (same sources, same bytes):
@@ -285,11 +291,11 @@ Binary layout, little endian, deterministic (same sources, same bytes):
 | Field | Type | Meaning |
 | --- | --- | --- |
 | magic | `"SAIC"` | |
-| version | u32 | 1 |
+| version | u32 | 2 (1 had no text fields in the dynamic block) |
 | digest | u64 | xxh3-64 of the payload; names the icon in caches |
 | background | 2 x background | light, dark. Gradient: `0`, top rgb (3 bytes), bottom rgb; SVG: `1`, u32 blob index |
 | glass | 3 x f32 | opacity at the top, at the bottom, blur sigma (canvas units) |
-| layers | u32 count (max 16), then per layer | id (u32 length + UTF-8), role u8 (body, detail, highlight, dynamic), dynamic flag u8 and, if 1: kind u8 (clock-hand, clock-cap, calendar-month, calendar-day), unit u8 (0 none, hour, minute, second), pivot 2 x f32; then 2 forms: light, dark |
+| layers | u32 count (max 16), then per layer | id (u32 length + UTF-8), role u8 (body, detail, highlight, dynamic), dynamic flag u8 and, if 1: kind u8 (clock-hand, clock-cap, calendar-month, calendar-day), unit u8 (0 none, hour, minute, second), pivot 2 x f32, text flag u8 and, if 1 (calendar kinds): font (u32 length + UTF-8), size f32, weight u32, tracking f32, light and dark colour (2 x 3 bytes), box 4 x f32, case u8 (as is, upper, lower), format (u32 length + UTF-8; month style or empty), refresh u8 (never, midnight); then 2 forms: light, dark |
 | form | | blob index u32, opacity f32, blend u8 (normal, multiply, screen), shadow u8 (none, neutral, chromatic), min_size f32, then clear and tinted specs |
 | spec | | mode u8 (ramp, light, glass, accent, keep, hide), opacity f32 (multiplies the layer opacity; role factor already applied), luma flag u8 and, if 1, 2 x f32 |
 | blobs | u32 count, then each u32 length + bytes | the SVG files, deduplicated; at most 16 MB each |

@@ -8,8 +8,8 @@ use serde_json::{Map, Value};
 
 use super::CompileError;
 use crate::appicon::{
-    AppIcon, Background, Blend, Dynamic, DynamicKind, Form, HandUnit, Layer, Mode, ModeSpec, Role,
-    Shadow,
+    AppIcon, Background, Blend, Dynamic, DynamicKind, DynamicText, Form, HandUnit, Layer, Mode,
+    ModeSpec, Refresh, Role, Shadow, TextCase,
 };
 
 const GRAPHITE: ([u8; 3], [u8; 3]) = ([0x3a, 0x3a, 0x3c], [0x14, 0x14, 0x16]);
@@ -227,7 +227,67 @@ fn dynamic(layer: &Map<String, Value>, id: &str) -> Result<Option<Dynamic>, Comp
         ],
         _ => [512.0, 512.0],
     };
-    Ok(Some(Dynamic { kind, unit, pivot }))
+    let text = match kind {
+        DynamicKind::CalendarMonth | DynamicKind::CalendarDay => Some(dynamic_text(d, id)?),
+        _ => None,
+    };
+    Ok(Some(Dynamic {
+        kind,
+        unit,
+        pivot,
+        text,
+    }))
+}
+
+/// The text fields of a calendar layer; `font`, `size`, `color` and `box` are required.
+fn dynamic_text(d: &Map<String, Value>, id: &str) -> Result<DynamicText, CompileError> {
+    let bad = |what: &str| CompileError::new(format!("layer {id}: calendar text needs {what}"));
+    let size = num(d.get("size")).filter(|s| *s > 0.0 && *s <= 1024.0);
+    let size = size.ok_or_else(|| bad("a `size` in 1..1024"))?;
+    let color = hex(d.get("color").and_then(Value::as_str).unwrap_or(""))
+        .map_err(|_| bad("a `color` (#rrggbb)"))?;
+    let dark_color = match d.get("dark_color").and_then(Value::as_str) {
+        Some(c) => hex(c)?,
+        None => color,
+    };
+    let rect = match d.get("box").and_then(Value::as_array).map(Vec::as_slice) {
+        Some([x, y, w, h]) => match (x.as_f64(), y.as_f64(), w.as_f64(), h.as_f64()) {
+            (Some(x), Some(y), Some(w), Some(h)) if w > 0.0 && h > 0.0 => {
+                [x as f32, y as f32, w as f32, h as f32]
+            }
+            _ => return fail(format!("layer {id}: `box` must be [x, y, width, height]")),
+        },
+        _ => return fail(format!("layer {id}: `box` must be [x, y, width, height]")),
+    };
+    let case = match d.get("case").and_then(Value::as_str) {
+        Some(c) => TextCase::parse(c)
+            .ok_or_else(|| CompileError::new(format!("layer {id}: unknown case {c}")))?,
+        None => TextCase::AsIs,
+    };
+    let refresh = match d.get("refresh").and_then(Value::as_str) {
+        Some(r) => Refresh::parse(r)
+            .ok_or_else(|| CompileError::new(format!("layer {id}: unknown refresh {r}")))?,
+        None => Refresh::Midnight,
+    };
+    Ok(DynamicText {
+        font: d
+            .get("font")
+            .and_then(Value::as_str)
+            .unwrap_or("Inter")
+            .to_owned(),
+        size,
+        weight: num(d.get("weight")).unwrap_or(400.0).clamp(1.0, 1000.0) as u16,
+        tracking: num(d.get("tracking")).unwrap_or(0.0),
+        color: [color, dark_color],
+        rect,
+        case,
+        format: d
+            .get("format")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        refresh,
+    })
 }
 
 /// Compiles the icon folder `dir` into the bytes of an `icon.assets`.

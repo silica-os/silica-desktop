@@ -14,7 +14,7 @@
 use xxhash_rust::xxh3::xxh3_64;
 
 pub const MAGIC: &[u8; 4] = b"SAIC";
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 /// More layers than this are refused (the format allows 9; format 1 has one).
 pub const MAX_LAYERS: usize = 16;
 /// A blob (SVG) bigger than this is refused.
@@ -219,12 +219,94 @@ impl HandUnit {
     }
 }
 
+/// Letter case of a dynamic text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextCase {
+    AsIs,
+    Upper,
+    Lower,
+}
+
+impl TextCase {
+    pub fn parse(name: &str) -> Option<TextCase> {
+        Some(match name {
+            "upper" => TextCase::Upper,
+            "lower" => TextCase::Lower,
+            _ => return None,
+        })
+    }
+
+    fn from_u8(v: u8) -> Option<TextCase> {
+        Some(match v {
+            0 => TextCase::AsIs,
+            1 => TextCase::Upper,
+            2 => TextCase::Lower,
+            _ => return None,
+        })
+    }
+
+    fn to_u8(self) -> u8 {
+        match self {
+            TextCase::AsIs => 0,
+            TextCase::Upper => 1,
+            TextCase::Lower => 2,
+        }
+    }
+}
+
+/// When a dynamic text is redrawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refresh {
+    Never,
+    /// At local midnight and on a date or time zone change.
+    Midnight,
+}
+
+impl Refresh {
+    pub fn parse(name: &str) -> Option<Refresh> {
+        Some(match name {
+            "never" => Refresh::Never,
+            "midnight" => Refresh::Midnight,
+            _ => return None,
+        })
+    }
+
+    fn from_u8(v: u8) -> Option<Refresh> {
+        Some(match v {
+            0 => Refresh::Never,
+            1 => Refresh::Midnight,
+            _ => return None,
+        })
+    }
+}
+
+/// The text fields of a calendar layer (`calendar-month`, `calendar-day`): the host draws the
+/// localized month or day in [`rect`](Self::rect), centred, instead of the layer's SVG (which is
+/// the text at the design pose, for the fallback).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DynamicText {
+    pub font: String,
+    pub size: f32,
+    pub weight: u16,
+    pub tracking: f32,
+    /// Light and dark colour.
+    pub color: [[u8; 3]; 2],
+    /// `[x, y, width, height]` on the 1024 canvas.
+    pub rect: [f32; 4],
+    pub case: TextCase,
+    /// `short` (three letters), `long` or `narrow` for a month; empty for a day.
+    pub format: String,
+    pub refresh: Refresh,
+}
+
 /// The data of a layer the host draws live.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Dynamic {
     pub kind: DynamicKind,
     pub unit: Option<HandUnit>,
     pub pivot: [f32; 2],
+    /// Only for the calendar kinds.
+    pub text: Option<DynamicText>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -418,6 +500,28 @@ impl AppIcon {
                     });
                     o.f32(d.pivot[0]);
                     o.f32(d.pivot[1]);
+                    match &d.text {
+                        Some(t) => {
+                            o.u8(1);
+                            o.bytes(t.font.as_bytes());
+                            o.f32(t.size);
+                            o.u32(u32::from(t.weight));
+                            o.f32(t.tracking);
+                            for c in t.color {
+                                o.0.extend_from_slice(&c);
+                            }
+                            for v in t.rect {
+                                o.f32(v);
+                            }
+                            o.u8(t.case.to_u8());
+                            o.bytes(t.format.as_bytes());
+                            o.u8(match t.refresh {
+                                Refresh::Never => 0,
+                                Refresh::Midnight => 1,
+                            });
+                        }
+                        None => o.u8(0),
+                    }
                 }
                 None => o.u8(0),
             }
@@ -471,10 +575,38 @@ impl AppIcon {
                         3 => Some(HandUnit::Second),
                         _ => return None,
                     };
+                    let pivot = [i.f32()?, i.f32()?];
+                    let text = match i.u8()? {
+                        0 => None,
+                        1 => {
+                            let font = String::from_utf8(i.bytes()?.to_vec()).ok()?;
+                            let size = i.f32()?;
+                            let weight = u16::try_from(i.u32()?).ok()?;
+                            let tracking = i.f32()?;
+                            let color = [i.rgb()?, i.rgb()?];
+                            let rect = [i.f32()?, i.f32()?, i.f32()?, i.f32()?];
+                            let case = TextCase::from_u8(i.u8()?)?;
+                            let format = String::from_utf8(i.bytes()?.to_vec()).ok()?;
+                            let refresh = Refresh::from_u8(i.u8()?)?;
+                            Some(DynamicText {
+                                font,
+                                size,
+                                weight,
+                                tracking,
+                                color,
+                                rect,
+                                case,
+                                format,
+                                refresh,
+                            })
+                        }
+                        _ => return None,
+                    };
                     Some(Dynamic {
                         kind,
                         unit,
-                        pivot: [i.f32()?, i.f32()?],
+                        pivot,
+                        text,
                     })
                 }
                 _ => return None,

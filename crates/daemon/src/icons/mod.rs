@@ -17,7 +17,6 @@ pub mod compose;
 pub mod folder;
 pub mod mime;
 pub mod rules;
-mod svgfix;
 pub mod thumbnailer;
 
 use std::collections::HashMap;

@@ -20,7 +20,10 @@ required-features = ["compile"]
 # The compiler (sources to silica.assets). Readers that only map the file turn it off with
 # `default-features = false`.
 default = ["compile"]
-compile = ["dep:resvg", "dep:png", "dep:qoi", "dep:toml", "dep:serde_json"]
+# Composes an `icon.assets` in light, dark, clear and tinted (the daemon, and the compiler for the
+# app composites of silica.assets).
+compose = ["dep:resvg", "dep:roxmltree", "dep:svgtypes"]
+compile = ["compose", "dep:png", "dep:qoi", "dep:toml", "dep:serde_json"]
 
 [dependencies]
 memmap2 = "0.9"
@@ -29,6 +32,8 @@ resvg = { version = "0.48", default-features = false, features = ["raster-images
 png = { version = "0.17", optional = true }
 qoi = { version = "0.4", optional = true }
 toml = { version = "0.9", optional = true }
+roxmltree = { version = "0.21", optional = true }
+svgtypes = { version = "0.16", optional = true }
 serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
