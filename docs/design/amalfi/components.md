@@ -195,7 +195,9 @@ Read each one from the kit for exact geometry (see README, "How to read the kit"
 | Forms | Layout; Section: Profile, Preferences, Validation; Row: Text, Popup, Check, Switch, Help, Error; Footer | 400×496 |
 | Group Boxes | Box: Titled, Titled Disabled, Untitled, Nested | |
 | Image Wells | Empty (Rest, Drag Over, Disabled), Filled (Rest, Focused, Disabled) × Small/Regular/Large | 72, 120, 168 |
-| Menu Bar | Bar: Closed, Menu Open; Item: Status, Menu, Name, Clock × Rest/Active | 32 tall, items 28 at y 2, status glyph 20 (2026-10-17; macOS 30) |
+| Lock Screen | Clock: Standard, Increase Contrast, Reduce Transparency; User: Default, Increase Contrast; Password Field: Placeholder, Typing, Verifying, Wrong, Placeholder Increase Contrast, Placeholder Reduce Transparency; Help Button: Rest, Increase Contrast, Reduce Transparency; Hint; Help Address; Notification: Collapsed; Action Button; Power Buttons ([`lock-screen.md`](lock-screen.md)) | clock 960×240; user 320×108; field 208×32; help 32; hint 320×68 |
+| Menu Bar | Bar: Closed, Menu Open (the status cluster is a nested `Status Bar/Bar/Menu Bar/Default`); Item: Menu, Name × Rest/Active | 32 tall, items 28 at y 2, status glyph 20 (2026-10-17; macOS 30) |
+| Status Bar | Item: Glyph (Rest/Active), Battery, Input Source, Clock; Bar: Menu Bar, Lock Screen × Default/Increase Contrast/Reduce Transparency ([`status-bar.md`](status-bar.md)) | items 28 tall, glyph 36 × 28, battery 72, input source 80, clock 120; menu bar cluster 372, lock 188 |
 | Menus | Menu: Simple, Full, Context, Submenu, Cascade; Item: Plain, Shortcut, Submenu, Icon, Destructive, Checkmark × Rest/Highlighted/Checked/Disabled; Header; Separator | items 24 tall; separator 8 |
 | Notifications | Banner: Basic, With Actions, Panel, Panel With Actions; Stack Grouped; Centre Panel; App Icon | 360×76, 360×108; centre 380×416 |
 | Popovers | Popover: Form, List, Text × Top/Bottom/Leading/Trailing × Start/Center/End + Detached; Content | ~204–268 wide |

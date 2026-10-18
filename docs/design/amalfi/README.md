@@ -10,7 +10,8 @@ which the shell (`shell/`), the compositor's glass (`crates/ossido`), `silica_ui
 | [`materials.md`](materials.md) | Glass/Regular, Glass/Thick, Glass/Clear (lens), opaque surfaces: parameters, render order, **where each one goes** |
 | [`motion.md`](motion.md) | spring and fade tokens, rules, the animation of every surface re-derived for Amalfi |
 | [`components.md`](components.md) | binding layout metrics, the full component inventory, Faro and Launcher specs |
-| [`lock-screen.md`](lock-screen.md) | the lock screen: screen layout rule, masters and states, Glass/Lock, motion (lock, unlock, wake, shake, minute roll), accessibility, provisional values |
+| [`lock-screen.md`](lock-screen.md) | the lock screen: behaviour from `docs/spec/lock.md`, Amalfi layout on the grid, masters and states, Glass/Lock and Glass/Clock, motion geometry, accessibility, provisional values |
+| [`status-bar.md`](status-bar.md) | the shared Status Bar: the status cluster of the menu bar and the lock screen, items, metrics, hit areas, variants per context (Menu Bar, Lock Screen × Default, Increase Contrast, Reduce Transparency) |
 
 ## Sources of truth, in order
 
