@@ -80,8 +80,18 @@ menu code and keeps it on the output:
 
 ### Pop-up button
 
-Measured (silica-reference#107). The menu opens over the control with the selected row exactly on
-it:
+Measured (silica-reference#107), with Amalfi's values where they differ (kit masters
+Buttons/Pop-up/Open, Buttons/Pull-down/Open): the menu opens over the control with the selected
+row on it:
+
+- **Amalfi values:** rows 24 pt and 4 pt of padding (Menus/Menu/Simple); the Regular control is
+  28 pt, so the selected row is centred on it (baselines coincide, the row top 2 pt below the
+  control top); the row text starts 28 pt into the menu, 4 pt right of the label (12 pt left
+  edge). Small (24 pt control) and mini (20 pt) keep the 22 and 19 pt rows and the text drop
+  below (1 and 4 pt): row top `(control - row) / 2 + drop`. The pull-down menu is 120 under a
+  124 pt button, 3 pt below it, 5 pt left, its rows about 11 pt right of the title. The macOS
+  numbers below (5 pt padding, 30 pt text inset, 24 pt control) are the measurement they derive
+  from.
 
 - **Vertical:** the selected row's top is the control's top; a regular control is 24 pt tall like
   the row, so the row's text centre and baseline coincide with the label's (0 pt). The same holds

@@ -386,12 +386,13 @@ void main() {
       testWidgets('a pop-up button: the chosen row is over the control', (
         tester,
       ) async {
-        await open(tester, const Rect.fromLTWH(300, 300, 120, 24));
+        await open(tester, const Rect.fromLTWH(300, 300, 120, 28));
         final menu = tester.getRect(find.byType(AmalfiMenu));
         expect(menu.left, 288);
-        expect(menu.top + 5 + 24, 300);
+        // Row 2 centred on the 28 pt control (2 below its top), 4 pt of padding.
+        expect(menu.top + 4 + 24, 302);
         expect(menu.width, 120);
-        // The text of the row: 5 pt right of the control's label (12 + 1 in).
+        // The text of the row: 4 pt right of the control's label (12 in).
         expect(
           tester.getTopLeft(find.text('Two')).dx,
           greaterThanOrEqualTo(288 + 28),
@@ -401,17 +402,17 @@ void main() {
       testWidgets('a pull-down: 3 below, 5 left, 4 narrower', (tester) async {
         await open(
           tester,
-          const Rect.fromLTWH(300, 300, 120, 24),
+          const Rect.fromLTWH(300, 300, 124, 28),
           popUp: false,
         );
         final menu = tester.getRect(find.byType(AmalfiMenu));
-        expect((menu.left, menu.top, menu.width), (295, 327, 116));
+        expect((menu.left, menu.top, menu.width), (295, 331, 120));
       });
 
       testWidgets('near the bottom the rows scroll and keep the alignment', (
         tester,
       ) async {
-        await open(tester, const Rect.fromLTWH(300, 590, 120, 24), selected: 2);
+        await open(tester, const Rect.fromLTWH(300, 590, 120, 28), selected: 2);
         final menu = tester.getRect(find.byType(AmalfiMenu));
         expect(menu.bottom, 594);
         expect(find.byType(AmalfiGlyph), findsWidgets);
@@ -423,7 +424,7 @@ void main() {
         var gone = 0;
         await open(
           tester,
-          const Rect.fromLTWH(300, 300, 120, 24),
+          const Rect.fromLTWH(300, 300, 120, 28),
           onDismissed: () => gone++,
         );
         double opacity() => tester
@@ -446,7 +447,7 @@ void main() {
         var gone = 0;
         await open(
           tester,
-          const Rect.fromLTWH(300, 300, 120, 24),
+          const Rect.fromLTWH(300, 300, 120, 28),
           chosen: chosen,
           onDismissed: () => gone++,
         );

@@ -114,16 +114,16 @@ void main() {
   });
 
   group('a pop-up button', () {
-    const control = Rect.fromLTWH(300, 300, 120, 24);
+    const control = Rect.fromLTWH(300, 300, 120, 28);
 
     test('puts the selected row on the control: first, middle, last', () {
       for (final id in [1, 3, 5]) {
         final layout = popupMenuLayout(request(anchor: control, selected: id))!;
         final place = layout.place(screen, 150);
-        // 5 of padding, 24 per row.
-        expect(place.top + 5 + 24.0 * (id - 1), 300, reason: 'item $id');
+        // 4 of padding, 24 per row, the row 2 below the 28 pt control's top.
+        expect(place.top + 4 + 24.0 * (id - 1), 302, reason: 'item $id');
         expect(place.left, 288);
-        expect(layout.height, 130);
+        expect(layout.height, 128);
         expect(layout.minWidth, 120);
       }
     });
@@ -145,20 +145,20 @@ void main() {
         ],
       );
       final layout = popupMenuLayout(r)!;
-      // 5 + section 24 + separator 8 + submenu 24.
-      expect(layout.selectedTop, 61);
-      expect(layout.height, 5 + 24 + 8 + 24 + 24 + 5);
+      // 4 + section 24 + separator 8 + submenu 24.
+      expect(layout.selectedTop, 60);
+      expect(layout.height, 4 + 24 + 8 + 24 + 24 + 4);
     });
 
     test('no selected row aligns the first', () {
       final layout = popupMenuLayout(request(anchor: control, selected: 0))!;
       expect(layout.first, isTrue);
-      expect(layout.place(screen, 150).top, 295);
+      expect(layout.place(screen, 150).top, 298);
     });
 
     test('the first item flips above without room below', () {
       final layout = popupMenuLayout(
-        request(anchor: const Rect.fromLTWH(300, 770, 120, 24), selected: 1),
+        request(anchor: const Rect.fromLTWH(300, 770, 120, 28), selected: 1),
       )!;
       final place = layout.place(screen, 150);
       expect(place.flipped, isTrue);
@@ -167,7 +167,7 @@ void main() {
 
     test('a middle item near the bottom scrolls with an arrow strip', () {
       final layout = popupMenuLayout(
-        request(anchor: const Rect.fromLTWH(300, 760, 120, 24), selected: 3),
+        request(anchor: const Rect.fromLTWH(300, 760, 120, 28), selected: 3),
       )!;
       final place = layout.place(screen, 150);
       expect(place.flipped, isFalse);
@@ -177,56 +177,57 @@ void main() {
 
     test('the last item near the top scrolls instead of flipping', () {
       final layout = popupMenuLayout(
-        request(anchor: const Rect.fromLTWH(300, 20, 120, 24), selected: 5),
+        request(anchor: const Rect.fromLTWH(300, 20, 120, 28), selected: 5),
       )!;
       final place = layout.place(screen, 150);
       expect(place.flipped, isFalse);
       expect(place.top, 6);
       expect(place.arrowTop, isTrue);
-      expect(place.top - place.scroll + 5 + 24 * 4, 20);
+      expect(place.top - place.scroll + 4 + 24 * 4, 22);
     });
 
     test(
       'past the right edge it slides left and keeps the row on the control',
       () {
         final layout = popupMenuLayout(
-          request(anchor: const Rect.fromLTWH(940, 300, 120, 24), selected: 3),
+          request(anchor: const Rect.fromLTWH(940, 300, 120, 28), selected: 3),
         )!;
         final place = layout.place(screen, 200);
         expect(place.left, 1000 - 6 - 200);
-        expect(place.top + 5 + 48, 300);
+        expect(place.top + 4 + 48, 302);
       },
     );
 
     test('small and mini controls use 22 and 19 pt rows', () {
       final small = popupMenuLayout(
-        request(anchor: const Rect.fromLTWH(300, 300, 100, 20), selected: 2),
+        request(anchor: const Rect.fromLTWH(300, 300, 100, 24), selected: 2),
       )!;
       expect(small.rowHeight, 22);
-      expect(small.height, 5 + 5 * 22 + 5);
+      expect(small.height, 4 + 5 * 22 + 4);
       expect(small.place(screen, 120).left, 289);
       final mini = popupMenuLayout(
-        request(anchor: const Rect.fromLTWH(300, 300, 100, 16), selected: 2),
+        request(anchor: const Rect.fromLTWH(300, 300, 100, 20), selected: 2),
       )!;
       expect(mini.rowHeight, 19);
-      expect(mini.place(screen, 120).top + 5 + 19, 303);
+      // Baselines coincide plus the mini text drop (4): the row is 4.5 below the top.
+      expect(mini.place(screen, 120).top + 4 + 19, 304.5);
     });
   });
 
   group('a pull-down', () {
-    const control = Rect.fromLTWH(100, 200, 80, 24);
+    const control = Rect.fromLTWH(100, 200, 80, 28);
 
     test('opens 3 below its control, 5 left of it and 4 narrower', () {
       final layout = popupMenuLayout(request(anchor: control, popUp: false))!;
       final place = layout.place(screen, 76);
-      expect(place.top, 227);
+      expect(place.top, 231);
       expect(place.left, 95);
       expect(layout.minWidth, 76);
     });
 
     test('opens above without room below', () {
       final layout = popupMenuLayout(
-        request(anchor: const Rect.fromLTWH(100, 760, 80, 24), popUp: false),
+        request(anchor: const Rect.fromLTWH(100, 760, 80, 28), popUp: false),
       )!;
       final place = layout.place(screen, 76);
       expect(place.flipped, isTrue);
