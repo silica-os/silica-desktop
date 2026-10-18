@@ -13,7 +13,7 @@ Terminal › Settings… (⌘,) in Amalfi. Behaviour and content come from the T
 | Size | **800 × 680**, fixed (not resizable). The reference measured 671 × 628; Amalfi widens it so the six profile sub-tabs (6 × 80) and the longest option ("Only if there are processes other than the login shell", 321 pt at Body 13) fit without truncation, and adds 52 for the Settings Tabs bar under the title bar |
 | Chrome | window corner 18, smooth 0.6, `Surface/Window`, rim `Line/Border`, shadow `#0000002E` 0/12/32; `Titlebars/Piece/Controls/Active` at 0,0 (96 × 52); no title text, as the other settings windows of the kit |
 | Title bar | 52 tall, window controls only |
-| Pane tabs | `Settings Tabs/Bar/4 Panes` (see [`components.md`](components.md) › Settings Tabs), 456 × 52 at x 172, y 52 (centred under the title bar): four panes of 112 ("Window Groups", 84 pt at Caption 11, + 24 rounded up to 8): General (`gear`), Profiles (`terminal`), Window Groups (`window-stack`), Encodings (`globe`). The chosen pane swaps to `Settings Tabs/Item/Selected` (control surface, accent glyph) |
+| Pane tabs | `Segments/Control/One 4 Icon + Label` (see [`components.md`](components.md) › Segmented Control, Icon + Label), 456 × 52 at x 172, y 52 (centred under the title bar): four panes of 112 ("Window Groups", 84 pt at Caption 11, + 24 rounded up to 8): General (`gear`), Profiles (`terminal`), Window Groups (`window-stack`), Encodings (`globe`). The chosen pane swaps to `Segments/Icon + Label Item/Selected` (control surface, accent glyph) |
 | Content padding | 24 (settings) |
 | Sections | title `Headline/Secondary` at y 124 (20 below the pane tabs), box below it at y 148: `Surface/Sidebar`, radius 12 (smooth 0.6), full width 752 |
 | Form rows | label `Body/Primary`, **right-aligned** in a label cell, 12 to the control. Regular controls (28). Rows of 28 pt controls at a pitch of 40; checkbox and radio rows are 28 slots (control 20 at +4) stacked without gap; 8 between groups; 12 inside the box top and bottom |
@@ -148,6 +148,6 @@ Present in the design (from the spec, `docs/spec/settings.md` ST-APPSET-05/06) b
   window reopens, Lines to restore.
 - Profiles list: the ten presets as ready-made profiles (the app ships only Basic and offers the presets as
   colour schemes in Colors).
-- Code differences to align: window 800 × 680 (app 671 × 628); pane tabs as the Settings Tabs bar under
+- Code differences to align: window 800 × 680 (app 671 × 628); pane tabs as the icon + label segmented control under
   the title bar (app: a small segmented control); profile sub-tabs 80 each; regular controls, not small; Ask before closing as radios; profile
   rows 44 with a 40 × 28 preview in Mono 12 (app: 45 and 9 pt text, below Amalfi's 11 pt minimum).

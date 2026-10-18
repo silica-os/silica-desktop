@@ -175,12 +175,13 @@ and Back/Forward have none.
   first row level with the parent item (submenu top = item top − 4); the parent item stays highlighted.
   Open With: the default app with "(default)", separator, other apps, separator, Other….
 
-## Settings Tabs (pane switcher of settings windows)
+## Segmented Control, Icon + Label (pane switcher)
 
-An app's settings window switches its panes with **Settings Tabs**, never with toolbar buttons
-(user decision 2026-10-19). Kit masters `Settings Tabs/Item/<State>/<Light|Dark>` and
-`Settings Tabs/Bar/<N> Panes/<Light|Dark>` (N = 2–7); sheet `Settings tabs / <Light|Dark>` on the
-Segmented Controls page.
+A variant of the Segmented Control whose segments carry an icon over a label. It is generic: any surface
+that switches between a few panes can use it; settings windows always do, never toolbar buttons (user
+decision 2026-10-19). Kit masters `Segments/Icon + Label Item/<State>/<Light|Dark>` and
+`Segments/Control/One <N> Icon + Label/<Light|Dark>` (N = 2–7); sheet
+`Segmented control, icon + label / <Light|Dark>` on the Segmented Controls page.
 
 Anatomy: a glass track (the Segmented Control's: `Glass/Regular` + `Fill/Glass/Tint`, rim, shadow 0/4/12)
 holding N equal panes in a row; each pane is an icon over a label.
@@ -205,7 +206,7 @@ States (per pane, the bar has no state of its own):
 | Pressed | `Line/Border` (light `#1D1E2124`, dark `#F4F5F729`) | `Text/Primary` | `Text/Primary` |
 | Disabled | none, whole pane at 35 % | — | — |
 
-The Segmented Control has no Increase Contrast variant, so Settings Tabs has none either. Hover and press
+The Segmented Control has no Increase Contrast variant, so this variant has none either. Hover and press
 appear in one frame, no fade; the selection moves in one frame when the pane changes (the window then resizes
 to the new pane's height).
 
@@ -214,11 +215,11 @@ minus 2 × 24, use a sidebar settings window (the Settings app) instead.
 
 Building instances: the bar masters are stacks whose panes fill the width equally, so an instance is resized
 to N × W + 8 and every pane follows; choose the selected pane by swapping its nested symbol to
-`Settings Tabs/Item/Selected/…`, and set icon and label through the overrides.
+`Segments/Icon + Label Item/Selected/…`, and set icon and label through the overrides.
 
 Which control to use:
 
-- **Settings Tabs**: switching the panes of an app's settings window (General, Profiles, Advanced…). Icon
+- **Segmented Control, Icon + Label**: switching the panes of a window, such as an app's settings window (General, Profiles, Advanced…). Icon
   and label, one row, top of the window.
 - **Segmented Control** (`Segments/Control/One <N> Text|Icon`, 2–6 segments): switching views or sub-pages
   inside content, such as the Terminal profile sub-tabs or list/grid views. Text or icon only.
@@ -257,7 +258,7 @@ Read each one from the kit for exact geometry (see README, "How to read the kit"
 | Progress | Bar: Determinate (25/60/100/Disabled), Indeterminate (3 phases) × Small/Regular/Large; Circular; Spinner | bar 4/8 tall; spinner 16/24/32 |
 | Scrollbars | Overlay: Thin, Expanded, Dragging × V/H; Legacy: Rest, Hover, Disabled × V/H; Corner; Area | overlay 12; legacy 16 |
 | Segmented | Action segments (toolbar, glass): Icon 2–5, Text 2–3 × Large/Small × Rest/Hover/Pressed/Disabled/Inactive (240); Control (select one/any): 2–5 Text/Icon and 6 Text × Small/Regular/Large × Rest/Pressed/Disabled (+ Mini Rest); segments fill the width equally, so instances can be widened; Icon Item; Text Item; Align | segments 32 (Large), 24 (Small) |
-| Settings Tabs | Item: Rest, Selected, Hover, Pressed, Disabled; Bar: 2–7 Panes (see Settings Tabs above) | pane 44 tall, bar 52 tall, width N × W + 8 |
+| Segmented Control, Icon + Label | Item: Rest, Selected, Hover, Pressed, Disabled; Control: One 2–7 (see the section above) | pane 44 tall, bar 52 tall, width N × W + 8 |
 | Sidebars | Panel; Row: Plain, Badge × Rest/Hover/Selected/Disabled; Header; Group Open/Closed; Badge; Footer | panel 240; rows 216×32, icon 20 |
 | Sliders | Horizontal: Plain, Ticks, Glyphs × states + Dragging; Vertical; Circular dial; Thumb: Round × states, Lens Dragging | 200×20/28/36 |
 | Steppers | Stepper × 4 sizes × Rest/Hover Up/Down/Pressed Up/Down/Disabled/Focused; Value Field; With Field | 16×20 … 28×32 |
