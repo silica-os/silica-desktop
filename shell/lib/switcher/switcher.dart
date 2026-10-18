@@ -313,7 +313,7 @@ class _AppSwitcherState extends State<AppSwitcher>
       case 'switcher.commit':
         final window = _commit();
         setState(() {});
-        if (window != null) unawaited(_shell.activate(window));
+        if (window != null) unawaited(_shell.activateApp(window));
       case 'switcher.cancel':
         setState(_model.cancel);
       case 'switcher.expose':
@@ -325,7 +325,7 @@ class _AppSwitcherState extends State<AppSwitcher>
   }
 
   Future<void> _exposeOf(String window) async {
-    await _shell.activate(window);
+    await _shell.activateApp(window);
     await _shell.execute('panorama.app');
   }
 
@@ -374,7 +374,7 @@ class _AppSwitcherState extends State<AppSwitcher>
     setState(() => _model.select(index));
     final window = _commit();
     setState(() {});
-    if (window != null) unawaited(_shell.activate(window));
+    if (window != null) unawaited(_shell.activateApp(window));
   }
 
   @override
@@ -541,9 +541,8 @@ class SwitcherPanel extends StatelessWidget {
             textAlign: TextAlign.center,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: AmalfiType.bodyEmphasis(
-              color: theme.colors.textPrimary,
-            ).copyWith(fontSize: AmalfiType.bodyEmphasisToken.size * k),
+            style: AmalfiType.bodyEmphasis(color: theme.colors.textPrimary)
+                .copyWith(fontSize: AmalfiType.bodyEmphasisToken.size * k),
           ),
         ),
     ];

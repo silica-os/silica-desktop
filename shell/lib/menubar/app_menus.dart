@@ -19,6 +19,7 @@ class AppMenuActions {
     required this.activate,
     required this.run,
     this.activateWindow,
+    this.activateApp,
     this.openUrl,
     this.systemHide = false,
   });
@@ -29,8 +30,12 @@ class AppMenuActions {
   /// Runs a command of Ossido's catalog.
   final void Function(String command) run;
 
-  /// Brings a window of the app to the front (it raises all of the app's windows).
+  /// Brings one window of the app to the front, the others stay (silica-ui#101).
   final void Function(String id)? activateWindow;
+
+  /// Brings all of the app's windows forward, this one on top (Bring All to Front);
+  /// without it, [activateWindow].
+  final void Function(String id)? activateApp;
   final void Function(String url)? openUrl;
 
   /// Ossido can hide apps (`app.hide`, `app.hide_others`, `app.show_all`).
@@ -286,10 +291,11 @@ class _Builder {
     ];
     final list = <MenuEntry>[
       if (activate != null && windows.isNotEmpty) ...[
-        // Activating one window brings every window of the app forward, that one on top.
+        // Every window of the app forward, the front one on top.
         MenuAction(
           l.bringAllToFront,
-          onSelected: () => activate((front ?? windows.last).id),
+          onSelected: () =>
+              (actions.activateApp ?? activate)((front ?? windows.last).id),
         ),
         const MenuDivider(),
         for (final w in windows)

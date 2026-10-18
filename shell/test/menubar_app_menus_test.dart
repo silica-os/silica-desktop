@@ -159,6 +159,7 @@ void main() {
         activate: activated.add,
         run: ran.add,
         activateWindow: windows.add,
+        activateApp: (id) => windows.add('app:$id'),
         systemHide: systemHide,
       ),
     );
@@ -296,7 +297,8 @@ void main() {
         expect(list.map((a) => a.checked), [false, true]);
         list.first.onSelected!();
         action(window, englishTexts.bringAllToFront).onSelected!();
-        expect(windows, ['w1', 'w2']);
+        // One window alone; Bring All to Front the whole app (silica-ui#101).
+        expect(windows, ['w1', 'app:w2']);
       },
     );
 

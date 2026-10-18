@@ -31,6 +31,8 @@ const CHILD_SOCKET: &str = "SILICA_TEST_SHELL_SOCKET";
 const CHILD_LISTEN: &str = "SILICA_TEST_SHELL_LISTEN";
 const CHILD_THUMBNAIL: &str = "SILICA_TEST_SHELL_THUMBNAIL";
 const CHILD_BROADCAST: &str = "SILICA_TEST_SHELL_BROADCAST";
+/// Set: the child activates the whole app of "first" (`activate_app`) instead of the window.
+const CHILD_WHOLE_APP: &str = "SILICA_TEST_SHELL_WHOLE_APP";
 
 #[derive(Default)]
 struct Shell {
@@ -62,14 +64,18 @@ impl Dispatch<WlRegistry, ()> for Shell {
         qh: &QueueHandle<Self>,
     ) {
         if let wl_registry::Event::Global {
-            name, interface, ..
+            name,
+            interface,
+            version,
         } = event
         {
             match interface.as_str() {
                 "ext_foreign_toplevel_list_v1" => {
                     state.list = Some(registry.bind(name, 1, qh, ()));
                 }
-                "silica_shell_manager_v1" => state.manager = Some(registry.bind(name, 4, qh, ())),
+                "silica_shell_manager_v1" => {
+                    state.manager = Some(registry.bind(name, version.min(10), qh, ()));
+                }
                 _ => {}
             }
             state.globals.push(interface);
@@ -221,7 +227,11 @@ fn shell_client(socket: &str) {
         .find(|(_, title)| title == "first")
         .map(|(identifier, _)| identifier.clone());
     if let (Some(manager), Some(identifier)) = (shell.manager.clone(), target) {
-        manager.activate(identifier);
+        if std::env::var_os(CHILD_WHOLE_APP).is_some() {
+            manager.activate_app(identifier);
+        } else {
+            manager.activate(identifier);
+        }
         queue.roundtrip(&mut shell).unwrap();
         // A catalog command requested by the shell goes back to the whole shell.
         manager.execute("faro.toggle".to_owned());
@@ -257,7 +267,16 @@ fn shell_child() {
 }
 
 fn run_child(socket: &std::path::Path, shell: bool) -> String {
+    run_child_with(socket, shell, false)
+}
+
+fn run_child_with(socket: &std::path::Path, shell: bool, whole_app: bool) -> String {
     let mut command = Command::new(std::env::current_exe().unwrap());
+    if whole_app {
+        command.env(CHILD_WHOLE_APP, "1");
+    } else {
+        command.env_remove(CHILD_WHOLE_APP);
+    }
     command
         .args([
             "--exact",
@@ -382,42 +401,95 @@ fn the_logo_key_drives_the_app_switcher() {
     );
 }
 
-#[test]
-fn activating_a_window_brings_all_the_windows_of_its_app() {
+/// Two windows of app "one" with a window of "due" between them, "due" on top:
+/// first < third < other.
+fn three_windows(ossido: &Headless) -> [TestWindow; 3] {
     use common::client::APP_ID;
     use silica_control::commands::WINDOW_FOCUS;
-    let ossido = Headless::start("shell-app");
     APP_ID.with(|id| *id.borrow_mut() = "one".to_owned());
-    let _first = TestWindow::open(&ossido.wayland, "first");
+    let first = TestWindow::open(&ossido.wayland, "first");
     APP_ID.with(|id| *id.borrow_mut() = "due".to_owned());
-    let _other = TestWindow::open(&ossido.wayland, "other");
+    let other = TestWindow::open(&ossido.wayland, "other");
     APP_ID.with(|id| *id.borrow_mut() = "one".to_owned());
-    let _third = TestWindow::open(&ossido.wayland, "third");
+    let third = TestWindow::open(&ossido.wayland, "third");
     APP_ID.with(|id| id.borrow_mut().clear());
-    let titles = |ossido: &Headless| -> Vec<String> {
-        let list: Vec<WindowInfo> =
-            serde_json::from_value(ossido.client().call(WINDOW_LIST, Value::Null).unwrap())
-                .unwrap();
-        list.iter().filter_map(|w| w.title.clone()).collect()
-    };
-    // "other" on top: first < third < other.
-    let other = {
-        let list: Vec<WindowInfo> =
-            serde_json::from_value(ossido.client().call(WINDOW_LIST, Value::Null).unwrap())
-                .unwrap();
-        list.into_iter()
-            .find(|w| w.title.as_deref() == Some("other"))
-            .unwrap()
-    };
+    let id = windows(ossido)
+        .into_iter()
+        .find(|w| w.title.as_deref() == Some("other"))
+        .unwrap()
+        .id;
     ossido
         .client()
-        .call(WINDOW_FOCUS, json!({"id": other.id}))
+        .call(WINDOW_FOCUS, json!({ "id": id }))
         .unwrap();
-    assert_eq!(titles(&ossido), ["other", "third", "first"]);
-    // The shell's child activates "first": both windows of "one" come to the front, with
-    // "first" (the requested one) on top.
+    assert_eq!(titles(ossido), ["other", "third", "first"]);
+    [first, other, third]
+}
+
+fn windows(ossido: &Headless) -> Vec<WindowInfo> {
+    serde_json::from_value(ossido.client().call(WINDOW_LIST, Value::Null).unwrap()).unwrap()
+}
+
+/// The titles from the top window down.
+fn titles(ossido: &Headless) -> Vec<String> {
+    windows(ossido)
+        .iter()
+        .filter_map(|w| w.title.clone())
+        .collect()
+}
+
+#[test]
+fn activating_a_window_brings_only_that_window() {
+    // A window chosen in the Window menu or the Dock menu (silica-ui#101): the app's other
+    // window stays behind "other".
+    let ossido = Headless::start("shell-window");
+    let _windows = three_windows(&ossido);
     run_child(&ossido.wayland, true);
+    assert_eq!(titles(&ossido), ["first", "other", "third"]);
+}
+
+#[test]
+fn activating_an_app_brings_all_its_windows() {
+    // The app switcher, Bring All to Front (D-03): both windows of "one" come to the front,
+    // keeping their order, with "first" (the requested one) on top.
+    let ossido = Headless::start("shell-app");
+    let _windows = three_windows(&ossido);
+    run_child_with(&ossido.wayland, true, true);
     assert_eq!(titles(&ossido), ["first", "third", "other"]);
+}
+
+#[test]
+fn clicking_a_window_raises_only_that_window() {
+    use silica_control::commands::INPUT_CLICK;
+    // The reference: a click raises the window under it, not the rest of its app.
+    let ossido = Headless::start("shell-click");
+    let _windows = three_windows(&ossido);
+    // A point of "first" that no other window covers.
+    let list = windows(&ossido);
+    let frame = |title: &str| {
+        let w = list
+            .iter()
+            .find(|w| w.title.as_deref() == Some(title))
+            .unwrap();
+        (w.x, w.y, w.width, w.height)
+    };
+    let (fx, fy, fw, fh) = frame("first");
+    let covered = |x: i32, y: i32| {
+        ["other", "third"].iter().any(|t| {
+            let (ox, oy, ow, oh) = frame(t);
+            x >= ox && x < ox + ow && y >= oy && y < oy + oh
+        })
+    };
+    let point = (fy + 40..fy + fh - 10)
+        .step_by(10)
+        .flat_map(|y| (fx + 10..fx + fw - 10).step_by(10).map(move |x| (x, y)))
+        .find(|&(x, y)| !covered(x, y))
+        .expect("a visible point of the first window");
+    ossido
+        .client()
+        .call(INPUT_CLICK, json!({"x": point.0, "y": point.1}))
+        .unwrap();
+    assert_eq!(titles(&ossido), ["first", "other", "third"]);
 }
 
 #[test]
