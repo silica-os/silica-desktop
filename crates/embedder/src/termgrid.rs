@@ -2061,4 +2061,96 @@ mod tests {
         assert_eq!(palette(None, &colors), -1);
         assert_eq!(default_rgb(196), Rgb { r: 255, g: 0, b: 0 });
     }
+
+    /// A flood of output through the real worker, as the embedder runs it: the parser thread
+    /// parses while this thread takes a frame every 16.7 ms and asks the grid something
+    /// every millisecond (what a key, a click or the wheel would). Prints the throughput, the
+    /// cost and size of the frames, and how long the "input" waited for the grid.
+    ///
+    /// `cargo test --release -p silica-embedder --lib bench_flood -- --ignored --nocapture`
+    #[test]
+    #[ignore = "benchmark"]
+    fn bench_flood_throughput_and_latency() {
+        use std::time::{Duration, Instant};
+
+        fn percentile(sorted: &[f64], p: f64) -> f64 {
+            sorted
+                .get(((sorted.len() as f64 - 1.0) * p).round() as usize)
+                .copied()
+                .unwrap_or(0.0)
+        }
+
+        let seq: Vec<u8> = (1..=10_000_000u32)
+            .flat_map(|i| format!("{i}\r\n").into_bytes())
+            .collect();
+        let yes: Vec<u8> = b"y\r\n".repeat(5_000_000);
+        let line = "The quick brown fox jumps over the lazy dog, and then some more words follow it.";
+        let cat: Vec<u8> = (0..1_000_000u32)
+            .flat_map(|i| format!("{i:07} {line}\r\n").into_bytes())
+            .collect();
+        let colour: Vec<u8> = (0..1_000_000u32)
+            .flat_map(|i| {
+                format!(
+                    "\x1b[3{}m{i:07}\x1b[0m \x1b[1;4{}m{}\x1b[0m {}\r\n",
+                    i % 8,
+                    (i + 3) % 8,
+                    &line[..30],
+                    &line[30..60]
+                )
+                .into_bytes()
+            })
+            .collect();
+        for (name, data) in [
+            ("seq 1 10000000", seq),
+            ("yes (5M lines)", yes),
+            ("cat 100 MB of text", cat),
+            ("colour (SGR per word)", colour),
+        ] {
+            let worker = GridWorker::with_options(120, 50, Options::default()).unwrap();
+            let total = data.len();
+            let started = Instant::now();
+            for chunk in data.chunks(64 * 1024) {
+                worker.feed(chunk.to_vec());
+            }
+            let mut frames_ms = Vec::new();
+            let mut bytes = Vec::new();
+            let mut waits_ms = Vec::new();
+            let mut next_frame = Instant::now();
+            while worker.queued() > 0 {
+                let t = Instant::now();
+                worker.with(|g| g.display_offset());
+                waits_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+                if Instant::now() >= next_frame {
+                    let t = Instant::now();
+                    let (frames, _) = worker.frames(1);
+                    let encoded: usize = frames
+                        .iter()
+                        .map(|f| serde_json::to_vec(f).map_or(0, |v| v.len()))
+                        .sum();
+                    frames_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+                    bytes.push(encoded as f64);
+                    next_frame += Duration::from_nanos(16_666_667);
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let wall = started.elapsed().as_secs_f64();
+            frames_ms.sort_by(f64::total_cmp);
+            waits_ms.sort_by(f64::total_cmp);
+            bytes.sort_by(f64::total_cmp);
+            println!(
+                "{name}: {:.0} MB in {wall:.2} s = {:.0} MB/s; {} frames (build + encode) p50 {:.2} ms p99 {:.2} ms max {:.2} ms, {:.1} KB each (p99 {:.1} KB); grid lock wait p50 {:.3} ms p99 {:.3} ms max {:.3} ms",
+                total as f64 / 1e6,
+                total as f64 / 1e6 / wall,
+                frames_ms.len(),
+                percentile(&frames_ms, 0.5),
+                percentile(&frames_ms, 0.99),
+                percentile(&frames_ms, 1.0),
+                percentile(&bytes, 0.5) / 1e3,
+                percentile(&bytes, 0.99) / 1e3,
+                percentile(&waits_ms, 0.5),
+                percentile(&waits_ms, 0.99),
+                percentile(&waits_ms, 1.0),
+            );
+        }
+    }
 }
