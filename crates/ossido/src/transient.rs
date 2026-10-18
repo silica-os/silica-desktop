@@ -109,6 +109,13 @@ pub enum Source {
     },
     /// An app popup with a grab, closed with `popup_done`.
     Popup { popup: PopupKind, root: WlSurface },
+    /// A context menu or pop-up button of an app, drawn by the shell (`popup_menu.rs`); the
+    /// shell's surface is known once it reports where the menu is.
+    PopupMenu {
+        serial: u32,
+        object: silica_protocols::menu::server::silica_popup_menu_v1::SilicaPopupMenuV1,
+        surface: Option<WlSurface>,
+    },
 }
 
 /// The app whose surfaces follow the owner rule.
@@ -148,10 +155,11 @@ pub struct Transient {
 
 impl Transient {
     /// The surface the transient belongs to (for replacing and clearing).
-    pub fn surface(&self) -> &WlSurface {
+    pub fn surface(&self) -> Option<&WlSurface> {
         match &self.source {
-            Source::Shell { surface, .. } => surface,
-            Source::Popup { root, .. } => root,
+            Source::Shell { surface, .. } => Some(surface),
+            Source::Popup { root, .. } => Some(root),
+            Source::PopupMenu { surface, .. } => surface.as_ref(),
         }
     }
 
@@ -159,6 +167,7 @@ impl Transient {
         match &self.source {
             Source::Shell { surface, manager } => surface.is_alive() && manager.is_alive(),
             Source::Popup { popup, .. } => popup.alive(),
+            Source::PopupMenu { object, .. } => object.is_alive(),
         }
     }
 }
@@ -321,6 +330,9 @@ impl State {
                     .any(|rect| rect.to_f64().contains(location));
                 let on_source = match &transient.source {
                     Source::Shell { surface, .. } => under.root.as_ref() == Some(surface),
+                    Source::PopupMenu { surface, .. } => {
+                        surface.is_some() && under.root.as_ref() == surface.as_ref()
+                    }
                     // The popup and the popups next to it (submenus) on the same window.
                     Source::Popup { root, .. } => under
                         .surface
@@ -443,6 +455,9 @@ impl State {
                     manager.dismissed(&surface);
                 }
             }
+            Source::PopupMenu { serial, .. } => {
+                self.finish_popup_menu(serial, crate::popup_menu::Ended::Dismissed);
+            }
             Source::Popup { popup, root } => {
                 if let Err(err) = PopupManager::dismiss_popup(&root, &popup) {
                     tracing::warn!("popup dismiss: {err}");
@@ -500,7 +515,7 @@ impl State {
         owner: OwnerApp,
         (owner_rule, other_rule): (Rule, Rule),
     ) {
-        self.transients.retain(|t| t.surface() != &surface);
+        self.transients.retain(|t| t.surface() != Some(&surface));
         self.transients.push(Transient {
             source: Source::Shell { surface, manager },
             region,
@@ -569,7 +584,7 @@ impl State {
                 Source::Popup { popup: p, root: r } => {
                     r != &root || ancestors.contains(p.wl_surface())
                 }
-                Source::Shell { .. } => true,
+                Source::Shell { .. } | Source::PopupMenu { .. } => true,
             });
         self.transients = keep;
         for transient in replaced {

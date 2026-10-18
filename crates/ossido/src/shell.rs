@@ -53,7 +53,7 @@ pub struct ShellManagerState;
 impl ShellManagerState {
     pub fn new(dh: &DisplayHandle) -> Self {
         dh.create_global::<State, SilicaShellManagerV1, _>(
-            8,
+            crate::popup_menu::SHELL_VERSION,
             ShellGlobal {
                 filter: Box::new(is_shell_client),
             },
@@ -231,6 +231,8 @@ impl State {
     pub fn announce_focus(&mut self, focus: Option<&WlSurface>) {
         // The frontmost app's menus follow the focus (silica-menu-v1, #25).
         self.announce_app_menu(focus);
+        // A menu of an app ends when the keyboard goes to another app (#237).
+        self.popup_menus_follow_focus(focus);
         let identifier = self.identifier_of(focus);
         if self.announced_focus.as_deref() == Some(identifier.as_str()) {
             return;
@@ -382,7 +384,7 @@ impl State {
 
 impl State {
     /// A transient's `wl_region` (surface coordinates) on the screen, logical.
-    fn transient_region(
+    pub(crate) fn transient_region(
         &self,
         surface: &WlSurface,
         region: Option<WlRegion>,
@@ -533,6 +535,19 @@ impl Dispatch<SilicaShellManagerV1, ()> for State {
                 if !state.activate_menu_item(serial, id) {
                     info!("shell: menu {serial} is gone, item {id} dropped");
                 }
+            }
+            silica_shell_manager_v1::Request::PopupMenuTransient {
+                serial,
+                surface,
+                region,
+            } => state.set_popup_menu_region(serial, surface, region),
+            silica_shell_manager_v1::Request::PopupMenuChoose { serial, id } => {
+                if !state.choose_popup_menu(serial, id) {
+                    info!("shell: popup menu {serial} is gone or has no item {id}");
+                }
+            }
+            silica_shell_manager_v1::Request::PopupMenuClose { serial } => {
+                state.finish_popup_menu(serial, crate::popup_menu::Ended::Dismissed);
             }
             silica_shell_manager_v1::Request::Destroy => {}
             _ => {}

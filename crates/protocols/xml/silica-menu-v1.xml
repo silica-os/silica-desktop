@@ -27,7 +27,7 @@
     the bar runs it itself and may give it its own label. Unknown keys are ignored.
   </description>
 
-  <interface name="silica_menu_manager_v1" version="1">
+  <interface name="silica_menu_manager_v1" version="2">
     <description summary="creates the menu object of an app"/>
 
     <request name="destroy" type="destructor">
@@ -38,6 +38,12 @@
 
     <enum name="error">
       <entry name="already_has_menu" value="0" summary="the client already has a menu object"/>
+      <entry name="invalid_surface" value="1" summary="the surface is not a surface of this client's window or popup"/>
+    </enum>
+
+    <enum name="popup_kind">
+      <entry name="context" value="0" summary="a context menu at the pointer (or a pull-down below a control)"/>
+      <entry name="pop_up" value="1" summary="a pop-up button's menu, the selected item over the control"/>
     </enum>
 
     <request name="get_menu">
@@ -47,6 +53,28 @@
         client's windows, or the client itself as the windowless frontmost app, is in front.
       </description>
       <arg name="id" type="new_id" interface="silica_menu_v1"/>
+    </request>
+
+    <request name="get_popup_menu" since="2">
+      <description summary="starts a context menu or a pop-up button's menu">
+        The shell draws the menu and Ossido places it and decides when it ends: the app only
+        describes the rows (add_item, add_separator, add_section, begin_submenu,
+        end_submenu), makes the menu visible with show, and learns the result with selected
+        or dismissed (silica-desktop#241).
+
+        The anchor is a rectangle in the coordinates of surface, in logical pixels: a 0 × 0
+        rectangle at the pointer for a context menu, the control's rectangle for a pop-up
+        button. selected is the id of the item the pop-up button currently shows (0 for none),
+        which the menu aligns over the control.
+      </description>
+      <arg name="id" type="new_id" interface="silica_popup_menu_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="kind" type="uint" enum="popup_kind"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+      <arg name="selected" type="uint"/>
     </request>
   </interface>
 
@@ -85,6 +113,90 @@
         since the bar showed it: an id the app no longer knows is ignored.
       </description>
       <arg name="id" type="uint"/>
+    </event>
+  </interface>
+
+  <interface name="silica_popup_menu_v1" version="2">
+    <description summary="a context menu or a pop-up button's menu">
+      A menu of rows built with requests, in document order, then shown. It is shown at most
+      once and answered at most once: selected (the user chose an item) or dismissed (Ossido
+      ended it: a press outside, a change of context, the surface going away, or a newer menu
+      of the same client). Destroying the object ends the menu without an event.
+
+      Rows: an item has an id (non-zero, unique in the menu), a label, flags, an icon (a
+      symbol name or an absolute path; empty for none) and an optional shortcut shown at the
+      right (key name as in silica-menu-v1, modifiers a bit set); a section is a heading row;
+      a submenu is begin_submenu, its rows, end_submenu. Limits: 1024 rows, 4 levels of
+      submenu, 256 bytes for labels, icons and keys.
+    </description>
+
+    <enum name="error">
+      <entry name="invalid_state" value="0" summary="a request in the wrong order, or after show"/>
+      <entry name="invalid_row" value="1" summary="a repeated or zero id, or text past the limits"/>
+      <entry name="too_many_rows" value="2" summary="more rows or levels than the limits"/>
+    </enum>
+
+    <enum name="flags" bitfield="true">
+      <entry name="disabled" value="1"/>
+      <entry name="checked" value="2"/>
+      <entry name="mixed" value="4" summary="a dash instead of the checkmark"/>
+      <entry name="destructive" value="8"/>
+    </enum>
+
+    <enum name="modifiers" bitfield="true">
+      <entry name="meta" value="1"/>
+      <entry name="ctrl" value="2"/>
+      <entry name="alt" value="4"/>
+      <entry name="shift" value="8"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="the menu is not needed any more">
+        A menu that is open ends without selected or dismissed.
+      </description>
+    </request>
+
+    <request name="add_item">
+      <arg name="id" type="uint"/>
+      <arg name="label" type="string"/>
+      <arg name="flags" type="uint" enum="flags"/>
+      <arg name="icon" type="string"/>
+      <arg name="key" type="string"/>
+      <arg name="modifiers" type="uint" enum="modifiers"/>
+    </request>
+
+    <request name="add_separator"/>
+
+    <request name="add_section">
+      <arg name="label" type="string"/>
+    </request>
+
+    <request name="begin_submenu">
+      <arg name="label" type="string"/>
+      <arg name="flags" type="uint" enum="flags"/>
+      <arg name="icon" type="string"/>
+    </request>
+
+    <request name="end_submenu"/>
+
+    <request name="show">
+      <description summary="makes the menu visible">
+        Ends the description. A menu with no item is not shown and gets dismissed at once; a
+        submenu left open is an invalid_state error.
+      </description>
+    </request>
+
+    <event name="selected">
+      <description summary="the user chose an item">
+        Sent once, after the shell's blink of the chosen row. The menu is over.
+      </description>
+      <arg name="id" type="uint"/>
+    </event>
+
+    <event name="dismissed">
+      <description summary="the menu ended without a choice">
+        Sent once. The menu is over; the object stays valid until destroyed.
+      </description>
     </event>
   </interface>
 </protocol>
