@@ -121,6 +121,29 @@ float rounded_distance(vec2 p, vec4 rect, float r) {
     return max(d.x, d.y) - max(r, 0.0);
 }
 
+// The same with continuous corners: the corner starts r * (1 + s) from the corner point along
+// each edge and is a superellipse over that extent (exponent 2 at s = 0, 3.53 at 0.6, the fit
+// of the Sketch body path); `continuous_exponent` in glass.rs is the CPU twin.
+float continuous_distance(vec2 p, vec4 rect, float r, float s) {
+    vec2 half_size = rect.zw * 0.5;
+    float a = min(r * (1.0 + s), min(half_size.x, half_size.y));
+    vec2 d = abs(p - (rect.xy + half_size)) - (half_size - vec2(a));
+    if (a > 0.0 && d.x > 0.0 && d.y > 0.0) {
+        float n = 2.0 + 2.55 * s;
+        vec2 q = d / a;
+        float f = pow(pow(q.x, n) + pow(q.y, n), 1.0 / n);
+        float grad = sqrt(pow(q.x, 2.0 * n - 2.0) + pow(q.y, 2.0 * n - 2.0)) / pow(f, n - 1.0);
+        return (f - 1.0) * a / max(grad, 1e-3);
+    }
+    return max(d.x, d.y) - a;
+}
+
+// A region's corner: circular, or continuous when its smoothing (the x of its tip column) is
+// above 0.
+float region_distance(vec2 p, vec4 rect, float r, float s) {
+    return s > 0.0 ? continuous_distance(p, rect, r, s) : rounded_distance(p, rect, r);
+}
+
 // Distance from the arc of `c`, radius `r`, between the directions `a0` and `a1` (an arc
 // under 180°); far away outside that sector (the neighbouring pieces cover its ends).
 float arc_distance(vec2 q, vec2 c, float r, vec2 a0, vec2 a1) {
@@ -197,7 +220,7 @@ float lens_width_at(vec2 p, out vec2 frame) {
         vec4 rect = shapes[i / 4][i - (i / 4) * 4];
         float r = max(radii[i / 4][i - (i / 4) * 4], 0.0);
         vec2 cs = rotation_of(i);
-        float d = rounded_distance(to_region(p, rect, cs), rect, r);
+        float d = region_distance(to_region(p, rect, cs), rect, r, tips[i / 4][i - (i / 4) * 4].x);
         if (d < best) {
             best = d;
             width = lens_widths[i / 4][i - (i / 4) * 4];
@@ -225,7 +248,7 @@ float union_distance(vec2 screen, float min_radius, vec2 shift) {
         vec4 k = tips[i / 4][i - (i / 4) * 4];
         vec2 near = p - rect.xy;
         vec2 far = rect.xy + rect.zw - p;
-        float shape = r > -0.5 ? rounded_distance(p, rect, max(r, min_radius))
+        float shape = r > -0.5 ? region_distance(p, rect, max(r, min_radius), k.x)
                     : r > -1.5 ? tip_distance(near, rect.zw, k)
                     : r > -2.5 ? tip_distance(vec2(near.x, far.y), rect.zw, k)
                     : r > -3.5 ? tip_distance(vec2(near.y, far.x), rect.wz, k)

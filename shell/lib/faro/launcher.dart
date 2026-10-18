@@ -752,7 +752,7 @@ class LauncherState extends State<Launcher>
               top: 14,
               width: previewSide,
               height: previewSide,
-              child: SilicaIcon(preview, side: previewSide, dark: false),
+              child: SilicaIcon(preview, side: previewSide),
             ),
           // "…": the view menu (grid or list), 20 pt, 24 from the right edge.
           Positioned(
@@ -872,7 +872,7 @@ class LauncherState extends State<Launcher>
                     height: 32,
                     child: icon == null
                         ? null
-                        : SilicaIcon(icon, side: 32, dark: false),
+                        : SilicaIcon(icon, side: 32),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -928,7 +928,7 @@ class LauncherState extends State<Launcher>
               height: gridIcon,
               child: icon == null
                   ? const SizedBox()
-                  : SilicaIcon(icon, side: gridIcon, dark: false),
+                  : SilicaIcon(icon, side: gridIcon),
             ),
             Positioned(
               left: 0,

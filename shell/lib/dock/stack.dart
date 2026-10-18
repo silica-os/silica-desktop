@@ -416,7 +416,7 @@ class _FanStackState extends State<FanStack> {
                       ? FanFolderButton(side: side, dark: dark)
                       : icon == null
                       ? const SizedBox()
-                      : SilicaIcon(icon, side: side, dark: false),
+                      : SilicaIcon(icon, side: side),
                 ),
               ),
             ),
@@ -869,7 +869,7 @@ class _GridStackState extends State<GridStack> {
                 height: gridIconCanvas,
                 child: icon == null
                     ? const SizedBox.shrink()
-                    : SilicaIcon(icon, side: gridIconCanvas, dark: false),
+                    : SilicaIcon(icon, side: gridIconCanvas),
               ),
               _name(
                 middleEllipsis(

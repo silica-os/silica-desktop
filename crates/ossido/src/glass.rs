@@ -100,6 +100,9 @@ pub struct GlassRegion {
     pub width: i32,
     pub height: i32,
     pub radius: f64,
+    /// Continuous corners (`add_continuous_region`, version 9): how far the curve spreads along
+    /// the edges, 0–1; 0 is a circular corner.
+    pub smoothing: f64,
     pub material: Material,
     /// Opacity the glass is composed with (since version 3; 1 with `add_region`).
     pub opacity: f64,
@@ -167,7 +170,7 @@ pub struct GlassManagerState;
 
 impl GlassManagerState {
     pub fn new(dh: &DisplayHandle) -> Self {
-        dh.create_global::<State, SilicaGlassManagerV1, _>(8, ());
+        dh.create_global::<State, SilicaGlassManagerV1, _>(9, ());
         Self
     }
 }
@@ -288,85 +291,119 @@ impl Dispatch<SilicaGlassV1, Weak<WlSurface>> for State {
             }),
             silica_glass_v1::Request::AddRegion { .. }
             | silica_glass_v1::Request::AddTranslucentRegion { .. }
+            | silica_glass_v1::Request::AddContinuousRegion { .. }
             | silica_glass_v1::Request::AddTip { .. }
             | silica_glass_v1::Request::AddUpwardTip { .. }
             | silica_glass_v1::Request::AddSideTip { .. } => {
-                let (x, y, width, height, radius, material, opacity, shape) = match request {
-                    silica_glass_v1::Request::AddRegion {
-                        x,
-                        y,
-                        width,
-                        height,
-                        radius,
-                        material,
-                    } => (x, y, width, height, radius, material, 1.0, Shape::Rounded),
-                    silica_glass_v1::Request::AddTranslucentRegion {
-                        x,
-                        y,
-                        width,
-                        height,
-                        radius,
-                        material,
-                        opacity,
-                    } => (
-                        x,
-                        y,
-                        width,
-                        height,
-                        radius,
-                        material,
-                        opacity,
-                        Shape::Rounded,
-                    ),
-                    silica_glass_v1::Request::AddTip {
-                        x,
-                        y,
-                        width,
-                        height,
-                        material,
-                        opacity,
-                    } => (x, y, width, height, 0.0, material, opacity, Shape::Tip),
-                    silica_glass_v1::Request::AddUpwardTip {
-                        x,
-                        y,
-                        width,
-                        height,
-                        material,
-                        opacity,
-                    } => (
-                        x,
-                        y,
-                        width,
-                        height,
-                        0.0,
-                        material,
-                        opacity,
-                        Shape::UpwardTip,
-                    ),
-                    silica_glass_v1::Request::AddSideTip {
-                        x,
-                        y,
-                        width,
-                        height,
-                        side,
-                        material,
-                        opacity,
-                    } => {
-                        let shape = match side {
-                            WEnum::Value(silica_glass_v1::Side::Left) => Shape::LeftTip,
-                            WEnum::Value(silica_glass_v1::Side::Right) => Shape::RightTip,
-                            _ => {
-                                glass.post_error(
-                                    silica_glass_v1::Error::InvalidRegion,
-                                    "unknown tip side",
-                                );
-                                return;
-                            }
-                        };
-                        (x, y, width, height, 0.0, material, opacity, shape)
-                    }
-                    _ => return,
-                };
+                let (x, y, width, height, radius, material, opacity, shape, smoothing) =
+                    match request {
+                        silica_glass_v1::Request::AddRegion {
+                            x,
+                            y,
+                            width,
+                            height,
+                            radius,
+                            material,
+                        } => (
+                            x,
+                            y,
+                            width,
+                            height,
+                            radius,
+                            material,
+                            1.0,
+                            Shape::Rounded,
+                            0.0,
+                        ),
+                        silica_glass_v1::Request::AddTranslucentRegion {
+                            x,
+                            y,
+                            width,
+                            height,
+                            radius,
+                            material,
+                            opacity,
+                        } => (
+                            x,
+                            y,
+                            width,
+                            height,
+                            radius,
+                            material,
+                            opacity,
+                            Shape::Rounded,
+                            0.0,
+                        ),
+                        silica_glass_v1::Request::AddContinuousRegion {
+                            x,
+                            y,
+                            width,
+                            height,
+                            radius,
+                            smoothing,
+                            material,
+                            opacity,
+                        } => (
+                            x,
+                            y,
+                            width,
+                            height,
+                            radius,
+                            material,
+                            opacity,
+                            Shape::Rounded,
+                            smoothing,
+                        ),
+                        silica_glass_v1::Request::AddTip {
+                            x,
+                            y,
+                            width,
+                            height,
+                            material,
+                            opacity,
+                        } => (x, y, width, height, 0.0, material, opacity, Shape::Tip, 0.0),
+                        silica_glass_v1::Request::AddUpwardTip {
+                            x,
+                            y,
+                            width,
+                            height,
+                            material,
+                            opacity,
+                        } => (
+                            x,
+                            y,
+                            width,
+                            height,
+                            0.0,
+                            material,
+                            opacity,
+                            Shape::UpwardTip,
+                            0.0,
+                        ),
+                        silica_glass_v1::Request::AddSideTip {
+                            x,
+                            y,
+                            width,
+                            height,
+                            side,
+                            material,
+                            opacity,
+                        } => {
+                            let shape = match side {
+                                WEnum::Value(silica_glass_v1::Side::Left) => Shape::LeftTip,
+                                WEnum::Value(silica_glass_v1::Side::Right) => Shape::RightTip,
+                                _ => {
+                                    glass.post_error(
+                                        silica_glass_v1::Error::InvalidRegion,
+                                        "unknown tip side",
+                                    );
+                                    return;
+                                }
+                            };
+                            (x, y, width, height, 0.0, material, opacity, shape, 0.0)
+                        }
+                        _ => return,
+                    };
                 let material = match material {
                     WEnum::Value(silica_glass_v1::Material::Clear) => Some(Material::Clear),
                     WEnum::Value(silica_glass_v1::Material::Thick) => Some(Material::Thick),
@@ -383,6 +420,7 @@ impl Dispatch<SilicaGlassV1, Weak<WlSurface>> for State {
                     && height > 0
                     && radius.is_finite()
                     && radius >= 0.0
+                    && (0.0..=1.0).contains(&smoothing)
                     && (0.0..=1.0).contains(&opacity);
                 let Some(material) = material.filter(|_| valid) else {
                     glass.post_error(
@@ -404,6 +442,7 @@ impl Dispatch<SilicaGlassV1, Weak<WlSurface>> for State {
                             width,
                             height,
                             radius,
+                            smoothing,
                             material,
                             opacity,
                             shape,

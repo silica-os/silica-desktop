@@ -558,6 +558,39 @@ void main() {
     expect(second, isNot(first));
   });
 
+  testWidgets('a folder added to a running Dock shows its pile', (
+    tester,
+  ) async {
+    final dir = Directory.systemTemp.createTempSync('pila3');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    for (final name in ['a.txt', 'b.txt']) {
+      File('${dir.path}/$name').writeAsStringSync('x');
+    }
+    tester.view.physicalSize = const Size(1280, 300);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    Widget dock(List<Item> items) => Directionality(
+      textDirection: TextDirection.ltr,
+      child: Dock(items: items, onOpenPath: (_) {}),
+    );
+    final base = [Item.app('Files', command: 'files'), const Item.separator()];
+    await tester.pumpWidget(dock(base));
+    await tester.pump();
+    expect(find.byType(PileIcon), findsNothing);
+    // The folder is added: its slot opens and the pile shows, also while it opens.
+    await tester.pumpWidget(
+      dock([...base, Item.app('Docs', command: 'x', folder: dir.path)]),
+    );
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.byType(PileIcon), findsOneWidget);
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byType(PileIcon), findsOneWidget);
+    expect(
+      tester.widget<PileIcon>(find.byType(PileIcon)).sources,
+      hasLength(2),
+    );
+  });
+
   testWidgets('a folder dragged over the folders opens a gap and closes it', (
     tester,
   ) async {
@@ -588,6 +621,8 @@ void main() {
         const JSONMethodCodec().encodeMethodCall(MethodCall(method, args)),
         (_) {},
       );
+      // One frame starts the animation, the next one runs it to its end.
+      await tester.pump(const Duration(milliseconds: 400));
       await tester.pump(const Duration(milliseconds: 400));
     }
 
@@ -621,5 +656,71 @@ void main() {
     expect(added.single.$2, 0);
     expect(added.single.$1.single, startsWith(dir.path));
     await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('the shelf animates with the gap instead of jumping', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 300);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    const items = [
+      Item.app('Terminal', command: 'term'),
+      Item.separator(),
+      Item.app('Downloads', command: 'x', folder: '/nonexistent-dl'),
+      Item.app('Trash', command: 'xdg-open trash:///', trash: true),
+    ];
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: Dock(items: items, onAddFolders: (_, _) {}),
+      ),
+    );
+    Future<void> send(String method, [Object? args]) async {
+      await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+        SilicaDrag.channel.name,
+        const JSONMethodCodec().encodeMethodCall(MethodCall(method, args)),
+        (_) {},
+      );
+    }
+
+    double width() => tester
+        .getSize(
+          find
+              .byWidgetPredicate(
+                (w) => w is Positioned && w.height == backgroundHeight,
+              )
+              .first,
+        )
+        .width;
+    final rest = layout(items, width: 1280, height: 300);
+    final y = 300 - bottomGap - backgroundHeight / 2;
+    final x = rest.center(1) + 2;
+    final before = width();
+    await send('enter', {'x': x, 'y': y});
+    await send('motion', {'x': x, 'y': y});
+    await tester.pump();
+    final samples = <double>[width()];
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+      samples.add(width());
+    }
+    await tester.pump(const Duration(milliseconds: 100));
+    final open = width();
+    // Opening: it starts at the resting width, grows on every step, ends wider (~250 ms).
+    expect(samples.first, closeTo(before, 1));
+    for (var i = 1; i < samples.length; i++) {
+      expect(samples[i], greaterThanOrEqualTo(samples[i - 1]));
+    }
+    expect(samples[2], allOf(greaterThan(before + 1), lessThan(open - 1)));
+    expect(open, greaterThan(before + 20));
+    // Closing: the same, backwards, in ~265 ms.
+    await send('leave');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    final mid = width();
+    expect(mid, allOf(greaterThan(before + 1), lessThan(open - 1)));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(width(), closeTo(before, 0.5));
   });
 }

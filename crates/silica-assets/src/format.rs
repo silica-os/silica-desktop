@@ -210,6 +210,15 @@ byte_enum! {
         /// pattern: a MIME type, `major/*` or `.ext`). The artwork is the entry
         /// `file.system.<name>` of the `Role` key space, when the build had it.
         SystemType = 21,
+        /// One layer of the folder in an icon style other than Default (`format` the style:
+        /// `dark`, `clear`, `clear-dark`, `tinted`, `tinted-dark`; `unit` the [`LayerRole`]).
+        /// A layer role: `color[0]` the base color (`0xRRGGBB00`), or the accent of the system
+        /// when `weight` is 1; `rect` = (luminance low, luminance high, shade, glow), the same
+        /// ramp as [`SlotKind::FolderTint`]; `tracking` the opacity. The symbol role: `color[0]`
+        /// the engraving, `color[1]` its highlight, `rect` = (opacity, highlight opacity, 0, 0);
+        /// with `weight` 1 the engraving colors are the folder effect's, through the front ramp
+        /// and the accent.
+        FolderStyle = 22,
     }
 }
 

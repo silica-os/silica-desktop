@@ -191,6 +191,7 @@ impl Icons {
             non_empty: folder::has_items(path),
             symbol,
             tint,
+            style: None,
         }
     }
 
@@ -311,10 +312,23 @@ impl Icons {
     /// The path of the PNG of the icon of `path`, rendered at `size_px` pixels (`pt` points
     /// wide: the symbol weight and the label depend on it), or found in the cache.
     pub fn icon(&self, path: &Path, size_px: u32, pt: f32) -> Option<PathBuf> {
+        self.icon_styled(path, size_px, pt, None)
+    }
+
+    /// [`Icons::icon`] with the icon style of the system (Settings > Appearance): folders are
+    /// drawn in it (dark, clear, tinted; docs/thumbnails.md), files do not change.
+    pub fn icon_styled(
+        &self,
+        path: &Path,
+        size_px: u32,
+        pt: f32,
+        style: Option<rules::StyleSel>,
+    ) -> Option<PathBuf> {
         let meta = fs::metadata(path).ok()?;
         let fonts = compose::Fonts::from_assets(&self.assets);
         let (entry, plan) = if meta.is_dir() {
-            let look = self.folder_look(path);
+            let mut look = self.folder_look(path);
+            look.style = style;
             (
                 self.folder_entry,
                 rules::plan_folder(&self.folder_rules, size_px, pt, &look),
@@ -388,6 +402,7 @@ impl Icons {
             let appearance = Appearance {
                 look: Look::Light,
                 dark: false,
+                bare: false,
             };
             let rgba = appicon::compose(&icon, px, pt, appearance, appicon::DEFAULT_ACCENT)?;
             return Some(compose::Bitmap {

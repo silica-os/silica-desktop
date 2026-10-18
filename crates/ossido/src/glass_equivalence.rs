@@ -512,6 +512,7 @@ fn region(case: &Case, scale: f64, blur_scale: BlurScale) -> PhysicalRegion {
             (px(w, scale), px(h, scale)).into(),
         ),
         radius: RADIUS_PT * scale,
+        smoothing: 0.0,
         material: case.material,
         opacity: 1.0,
         scale,
@@ -699,6 +700,7 @@ fn refracted(
     let region = PhysicalRegion {
         rect: Rectangle::new((60, 20).into(), (280, 120).into()),
         radius: 24.0,
+        smoothing: 0.0,
         material,
         opacity: 1.0,
         scale: 1.0,

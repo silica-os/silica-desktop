@@ -49,6 +49,27 @@ const PDF_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// `Icon` flag: never answer with a preview of the content, always the composed icon.
 pub const ICON_NO_PREVIEW: u32 = 1;
+/// `Icon` flags bits 1 to 3: the icon style of the system as the `AppIcon` appearance word (0
+/// light/Default, 1 clear, 2 tinted, plus 4 for the dark forms). Folders are drawn in it.
+pub const ICON_APPEARANCE_SHIFT: u32 = 1;
+/// `Icon` flags bits 8 to 31: the accent as `0xRRGGBB` for the tinted styles (0: the default).
+pub const ICON_ACCENT_SHIFT: u32 = 8;
+
+/// The folder style the `Icon` flags ask for: None for Default.
+pub fn icon_style(flags: u32) -> Option<crate::icons::rules::StyleSel> {
+    use crate::icons::appicon::{Appearance, DEFAULT_ACCENT, Look};
+    let word = (flags >> ICON_APPEARANCE_SHIFT) & 7;
+    let ap = Appearance::from_u32(word)?;
+    if ap.look == Look::Light && !ap.dark {
+        return None;
+    }
+    let rgb = flags >> ICON_ACCENT_SHIFT;
+    let rgb = if rgb == 0 { DEFAULT_ACCENT } else { rgb };
+    Some(crate::icons::rules::StyleSel {
+        name: ap.name().to_owned(),
+        accent: [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8],
+    })
+}
 
 const WORKERS: usize = 3;
 const QUEUE: usize = 128;
@@ -367,7 +388,9 @@ pub(crate) fn icon_job(
     } else {
         size_px as f32
     };
-    icons?.icon(&path, size_px, pt).map(|p| (p, false))
+    icons?
+        .icon_styled(&path, size_px, pt, icon_style(flags))
+        .map(|p| (p, false))
 }
 
 /// A fixed set of threads that render thumbnails.
@@ -489,7 +512,9 @@ impl Thumbnails {
     /// system layers (folders: with their colour and symbol; files: the handling app's icon or
     /// the symbol of their kind, and the extension), or, for a file that has one and unless
     /// `flags` has `NO_PREVIEW` (1), the preview of its content (a cached thumbnail of up to
-    /// the bucket size) with `true`. "" when nothing can be made (the client keeps its own
+    /// the bucket size) with `true`. `flags` bits 1 to 3 carry the icon style of the system (the
+    /// `AppIcon` appearance word) and bits 8 to 31 the accent (`0xRRGGBB`, 0: the default):
+    /// folders are drawn in that style (dark, clear, tinted). "" when nothing can be made (the client keeps its own
     /// icon). Rendering happens off the bus thread; `Ready` follows a success.
     async fn icon(
         &self,
@@ -578,6 +603,28 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn the_icon_flags_carry_the_style_and_the_accent() {
+        // Default (and the old flags) mean no style.
+        assert_eq!(icon_style(0), None);
+        assert_eq!(icon_style(ICON_NO_PREVIEW), None);
+        // Dark, clear dark, tinted with an accent.
+        let flags = |word: u32, rgb: u32| ICON_NO_PREVIEW | (word << 1) | (rgb << 8);
+        let dark = icon_style(flags(4, 0)).unwrap();
+        assert_eq!(dark.name, "dark");
+        let clear = icon_style(flags(5, 0)).unwrap();
+        assert_eq!(clear.name, "clear-dark");
+        let tinted = icon_style(flags(2, 0xd6336c)).unwrap();
+        assert_eq!(
+            (tinted.name.as_str(), tinted.accent),
+            ("tinted", [0xd6, 0x33, 0x6c])
+        );
+        // The default accent when none is sent.
+        assert_eq!(icon_style(flags(2, 0)).unwrap().accent, [0x0e, 0x77, 0xe6]);
+        // The unused appearance word 3 is Default.
+        assert_eq!(icon_style(3 << 1), None);
     }
 
     #[test]

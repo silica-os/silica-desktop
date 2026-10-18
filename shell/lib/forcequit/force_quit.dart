@@ -330,7 +330,7 @@ class _ForceQuitRowState extends State<_ForceQuitRow> {
               SizedBox.square(
                 dimension: 20,
                 child: switch (app.icon) {
-                  final icon? => SilicaIcon(icon, side: 20, dark: false),
+                  final icon? => SilicaIcon(icon, side: 20),
                   null => null,
                 },
               ),

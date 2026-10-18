@@ -1594,6 +1594,7 @@ pub fn output_elements(
                             .to_physical_precise_round(scale),
                     ),
                     radius: region.radius * scale,
+                    smoothing: region.smoothing,
                     // The kind's Amalfi material (the declared material only picks the kind
                     // when the region declares none).
                     material: region.kind().kind().material(dark),

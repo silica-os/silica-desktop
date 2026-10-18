@@ -205,6 +205,29 @@ fn clear_has_a_dark_form() {
     assert!(Appearance::from_u32(6).unwrap().dark);
 }
 
+/// The bare composition (bit 8) leaves out the background: the body is transparent where no
+/// foreground layer is, so the host's glass shows through; the foreground is the same.
+#[test]
+fn bare_clear_has_no_background_and_the_same_foreground() {
+    let icon = load(&fixtures().join("synthetic"));
+    for word in [1, 5] {
+        let full = Appearance::from_u32(word).unwrap();
+        let bare = Appearance::from_u32(word | 8).unwrap();
+        assert!(bare.bare && !full.bare);
+        assert_ne!(full.name(), bare.name());
+        let a = compose(&icon, 128, 128.0, full, ACCENT).unwrap();
+        let b = compose(&icon, 128, 128.0, bare, ACCENT).unwrap();
+        // The body's corner region is background only in the full icon.
+        let at = |img: &[u8], x: usize, y: usize| img[(y * 128 + x) * 4 + 3];
+        assert!(at(&a, 20, 20) > 0, "the full clear icon has its glass body");
+        assert_eq!(at(&b, 20, 20), 0, "the bare one leaves it to the host");
+        let covered = b.as_chunks::<4>().0.iter().filter(|p| p[3] > 0).count();
+        let body = a.as_chunks::<4>().0.iter().filter(|p| p[3] > 0).count();
+        assert!(covered > 0, "the foreground is drawn");
+        assert!(covered < body, "but less than the body");
+    }
+}
+
 #[test]
 fn the_service_composes_caches_and_refuses_what_it_cannot_do() {
     use silica_daemon::icons::appicon::AppIcons;
@@ -237,7 +260,10 @@ fn the_service_composes_caches_and_refuses_what_it_cannot_do() {
     assert_ne!(svc.icon(dir, 96, 1.0, 1, 0).unwrap(), light);
     // Refused: bad appearance, bad size, no compiled icon, an app that is not installed.
     assert!(svc.icon(dir, 96, 1.0, 3, 0).is_none());
-    assert!(svc.icon(dir, 96, 1.0, 8, 0).is_none());
+    assert!(svc.icon(dir, 96, 1.0, 16, 0).is_none());
+    // The bare clear icon is a file of its own, not the full one.
+    let bare = svc.icon(dir, 96, 1.0, 9, 0).unwrap();
+    assert_ne!(bare, svc.icon(dir, 96, 1.0, 1, 0).unwrap());
     assert!(svc.icon(dir, 0, 1.0, 0, 0).is_none());
     assert!(svc.icon(dir, 100_000, 1.0, 0, 0).is_none());
     assert!(svc.icon(tmp.to_str().unwrap(), 96, 1.0, 0, 0).is_none());

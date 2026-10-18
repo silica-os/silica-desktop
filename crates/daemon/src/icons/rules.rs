@@ -92,8 +92,47 @@ impl FileRules {
     }
 }
 
+/// One layer of a folder in an icon style (`FolderStyle` slots): a base colour, or the accent,
+/// a luminance ramp and an opacity.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StyleLayer {
+    pub role: LayerRole,
+    /// The base colour; ignored when `accent`.
+    pub color: [u8; 3],
+    pub accent: bool,
+    pub ramp: Ramp,
+    pub opacity: f32,
+}
+
+/// The engraving of the folder symbol in an icon style.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StyleSymbol {
+    pub color: [u8; 3],
+    pub highlight: [u8; 3],
+    pub opacity: f32,
+    pub highlight_opacity: f32,
+    /// The colours are the folder effect's through the front ramp and the accent.
+    pub accent: bool,
+}
+
+/// A folder in an icon style: `dark`, `clear`, `clear-dark`, `tinted` or `tinted-dark`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FolderStyleRules {
+    pub name: String,
+    pub layers: Vec<StyleLayer>,
+    pub symbol: Option<StyleSymbol>,
+}
+
+/// The icon style a folder is drawn in: the rule set's name and the accent of the system.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StyleSel {
+    pub name: String,
+    pub accent: [u8; 3],
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct FolderRules {
+    pub styles: Vec<FolderStyleRules>,
     pub steps: Vec<Step>,
     pub symbol_box: [f32; 4],
     pub bands: Vec<Band>,
@@ -195,6 +234,49 @@ impl FolderRules {
                         shade: slot.rect[2],
                         glow: slot.rect[3],
                     });
+                }
+                SlotKind::FolderStyle => {
+                    let Some(name) = slot.format else { continue };
+                    let at = match rules.styles.iter().position(|s| s.name == name) {
+                        Some(at) => at,
+                        None => {
+                            rules.styles.push(FolderStyleRules {
+                                name: name.to_owned(),
+                                layers: Vec::new(),
+                                symbol: None,
+                            });
+                            rules.styles.len() - 1
+                        }
+                    };
+                    let Some(style) = rules.styles.get_mut(at) else {
+                        continue;
+                    };
+                    let Some(role) = LayerRole::from_u32(u32::from(slot.unit)) else {
+                        continue;
+                    };
+                    let accent = slot.weight & 1 != 0;
+                    if role == LayerRole::Symbol {
+                        style.symbol = Some(StyleSymbol {
+                            color: rgb(slot.color[0]),
+                            highlight: rgb(slot.color[1]),
+                            opacity: slot.rect[0],
+                            highlight_opacity: slot.rect[1],
+                            accent,
+                        });
+                    } else {
+                        style.layers.push(StyleLayer {
+                            role,
+                            color: rgb(slot.color[0]),
+                            accent,
+                            ramp: Ramp {
+                                low: slot.rect[0],
+                                high: slot.rect[1],
+                                shade: slot.rect[2],
+                                glow: slot.rect[3],
+                            },
+                            opacity: slot.tracking,
+                        });
+                    }
                 }
                 SlotKind::TintLabel => {
                     if let Some(name) = slot.format {
@@ -349,6 +431,8 @@ pub struct LayerDraw {
     pub role: LayerRole,
     /// The tint color and its ramp, when the tint applies.
     pub tint: Option<([u8; 3], Ramp)>,
+    /// How opaque the layer is drawn (1 except in the glass folder styles).
+    pub opacity: f32,
 }
 
 /// A symbol to draw.
@@ -408,10 +492,23 @@ pub struct FolderLook {
     pub non_empty: bool,
     pub symbol: Option<String>,
     pub tint: Option<[u8; 3]>,
+    /// The icon style (null: Default), set by the caller from the request.
+    pub style: Option<StyleSel>,
 }
 
 /// The plan of a folder icon of `side` pixels, `pt` points wide.
 pub fn plan_folder(rules: &FolderRules, side: u32, pt: f32, look: &FolderLook) -> Plan {
+    // The style's rules, when the request names one and the assets have it.
+    let style = look.style.as_ref().and_then(|sel| {
+        rules
+            .styles
+            .iter()
+            .find(|s| s.name == sel.name)
+            .zip(Some(sel))
+    });
+    // Clear is glass: it has no colour of its own, and so ignores the folder's tint.
+    let glass = style.is_some_and(|(s, _)| s.name.starts_with("clear"));
+    let own = if glass { None } else { look.tint };
     let tint = look.tint.zip(rules.ramp);
     let mut layers = Vec::new();
     let mut symbol_tinted = false;
@@ -427,9 +524,26 @@ pub fn plan_folder(rules: &FolderRules, side: u32, pt: f32, look: &FolderLook) -
         if step.when_not_empty && !look.non_empty {
             continue;
         }
-        layers.push(LayerDraw {
-            role: step.role,
-            tint: if step.tint { tint } else { None },
+        let rule = style.and_then(|(s, sel)| {
+            let layer = s.layers.iter().find(|l| l.role == step.role)?;
+            let base = match (layer.accent, own) {
+                (_, Some(own)) if step.role != LayerRole::Middle => own,
+                (true, _) => sel.accent,
+                (false, _) => layer.color,
+            };
+            Some((base, layer))
+        });
+        layers.push(match rule {
+            Some((base, layer)) => LayerDraw {
+                role: step.role,
+                tint: Some((base, layer.ramp)),
+                opacity: layer.opacity,
+            },
+            None => LayerDraw {
+                role: step.role,
+                tint: if step.tint { tint } else { None },
+                opacity: 1.0,
+            },
         });
     }
     if !symbol_step {
@@ -442,22 +556,53 @@ pub fn plan_folder(rules: &FolderRules, side: u32, pt: f32, look: &FolderLook) -
         .zip(band_for(&rules.bands, pt))
         .zip(rules.effect)
         .map(|((name, band), effect)| {
-            let apply = |c: [u8; 3]| match (symbol_tinted, tint) {
-                (true, Some((t, ramp))) => tint_rgb8(c, t, ramp),
-                _ => c,
-            };
             let rect = to_px(scaled_about_center(rules.symbol_box, band.scale), side_f);
             // The shift is at least half a pixel.
             let dy = (effect.offset * side_f / CANVAS).max(0.5);
+            let styled = style.and_then(|(s, sel)| s.symbol.map(|sym| (sym, sel)));
+            let (color, opacity, highlight_color, highlight_opacity) = match styled {
+                // A fixed engraving.
+                Some((sym, _)) if !sym.accent => {
+                    (sym.color, sym.opacity, sym.highlight, sym.highlight_opacity)
+                }
+                // The effect's colours through the front layer's ramp and the accent (or the
+                // folder's own tint).
+                Some((_, sel)) => {
+                    let ramp = style
+                        .and_then(|(s, _)| s.layers.iter().find(|l| l.role == LayerRole::Front))
+                        .map(|l| l.ramp)
+                        .or(rules.ramp);
+                    let base = own.unwrap_or(sel.accent);
+                    let apply = |c: [u8; 3]| ramp.map_or(c, |r| tint_rgb8(c, base, r));
+                    (
+                        apply(effect.color),
+                        effect.opacity,
+                        apply(effect.highlight),
+                        effect.highlight_opacity,
+                    )
+                }
+                None => {
+                    let apply = |c: [u8; 3]| match (symbol_tinted, tint) {
+                        (true, Some((t, ramp))) => tint_rgb8(c, t, ramp),
+                        _ => c,
+                    };
+                    (
+                        apply(effect.color),
+                        effect.opacity,
+                        apply(effect.highlight),
+                        effect.highlight_opacity,
+                    )
+                }
+            };
             SymbolDraw {
                 name: name.clone(),
                 weight: band.weight.clone(),
                 rect,
-                color: apply(effect.color),
-                opacity: effect.opacity,
+                color,
+                opacity,
                 highlight: band
                     .highlight
-                    .then(|| (apply(effect.highlight), effect.highlight_opacity, dy)),
+                    .then_some((highlight_color, highlight_opacity, dy)),
             }
         });
     Plan {
@@ -519,7 +664,11 @@ pub fn plan_file(
                 glyph_step = true;
             }
             LayerRole::Label | LayerRole::Symbol => {}
-            role => layers.push(LayerDraw { role, tint: None }),
+            role => layers.push(LayerDraw {
+                role,
+                tint: None,
+                opacity: 1.0,
+            }),
         }
     }
     if !glyph_step {
@@ -816,6 +965,7 @@ mod tests {
             when_not_empty,
         };
         FolderRules {
+            styles: Vec::new(),
             steps: vec![
                 step(LayerRole::Back, true, false),
                 step(LayerRole::Middle, false, true),
@@ -894,6 +1044,7 @@ mod tests {
             non_empty: true,
             symbol: Some("doc-text".into()),
             tint: Some([0x2f, 0x7c, 0xf6]),
+            style: None,
         };
         let p = plan_folder(&rules, 256, 128.0, &look);
         let tints: Vec<_> = p
@@ -997,5 +1148,116 @@ mod tests {
         assert!(close(new[2] / old[2], 1.12) && close(new[3] / old[3], 1.12));
         assert!(close(new[0] + new[2] / 2.0, old[0] + old[2] / 2.0));
         assert!(close(new[1] + new[3] / 2.0, old[1] + old[3] / 2.0));
+    }
+
+    fn styled_rules() -> FolderRules {
+        let ramp = Ramp {
+            low: 0.35,
+            high: 0.85,
+            shade: 0.6,
+            glow: 0.0,
+        };
+        let layer = |role, color, accent, opacity| StyleLayer {
+            role,
+            color,
+            accent,
+            ramp,
+            opacity,
+        };
+        let style = |name: &str, accent, opacity, symbol| FolderStyleRules {
+            name: name.into(),
+            layers: vec![
+                layer(LayerRole::Back, [0x50, 0x50, 0x56], accent, opacity),
+                layer(LayerRole::Middle, [0xa0, 0xa0, 0xa6], false, opacity),
+                layer(LayerRole::Front, [0x78, 0x78, 0x7e], accent, opacity),
+            ],
+            symbol,
+        };
+        FolderRules {
+            styles: vec![
+                style(
+                    "dark",
+                    false,
+                    1.0,
+                    Some(StyleSymbol {
+                        color: [0x2a, 0x2a, 0x2e],
+                        highlight: [255; 3],
+                        opacity: 0.8,
+                        highlight_opacity: 0.18,
+                        accent: false,
+                    }),
+                ),
+                style("clear", false, 0.5, None),
+                style(
+                    "tinted",
+                    true,
+                    1.0,
+                    Some(StyleSymbol {
+                        color: [0; 3],
+                        highlight: [0; 3],
+                        opacity: 1.0,
+                        highlight_opacity: 0.0,
+                        accent: true,
+                    }),
+                ),
+            ],
+            ..folder_rules()
+        }
+    }
+
+    fn styled(name: &str, tint: Option<[u8; 3]>) -> FolderLook {
+        FolderLook {
+            non_empty: true,
+            symbol: Some("doc-text".into()),
+            tint,
+            style: Some(StyleSel {
+                name: name.into(),
+                accent: [0xd6, 0x33, 0x6c],
+            }),
+        }
+    }
+
+    #[test]
+    fn a_dark_folder_uses_its_own_colours_and_engraving() {
+        let rules = styled_rules();
+        let p = plan_folder(&rules, 256, 128.0, &styled("dark", None));
+        let colours: Vec<_> = p.layers.iter().map(|l| l.tint.map(|t| t.0)).collect();
+        assert_eq!(
+            colours,
+            [
+                Some([0x50, 0x50, 0x56]),
+                Some([0xa0, 0xa0, 0xa6]),
+                Some([0x78, 0x78, 0x7e])
+            ]
+        );
+        assert!(p.layers.iter().all(|l| (l.opacity - 1.0).abs() < 1e-6));
+        let s = p.symbol.as_ref().map(|s| (s.color, s.opacity));
+        assert_eq!(s, Some(([0x2a, 0x2a, 0x2e], 0.8)));
+        // The folder's own tint replaces the base of the back and front, not of the paper.
+        let p = plan_folder(&rules, 256, 128.0, &styled("dark", Some([1, 2, 3])));
+        let colours: Vec<_> = p.layers.iter().map(|l| l.tint.map(|t| t.0)).collect();
+        assert_eq!(
+            colours,
+            [Some([1, 2, 3]), Some([0xa0, 0xa0, 0xa6]), Some([1, 2, 3])]
+        );
+    }
+
+    #[test]
+    fn a_tinted_folder_takes_the_accent_and_a_clear_one_is_translucent_and_colourless() {
+        let rules = styled_rules();
+        let p = plan_folder(&rules, 256, 128.0, &styled("tinted", None));
+        assert_eq!(p.layers[0].tint.map(|t| t.0), Some([0xd6, 0x33, 0x6c]));
+        // The engraving follows the accent through the front ramp.
+        let ramp = rules.styles[2].layers[2].ramp;
+        let want = tint_rgb8([0x1a, 0x64, 0xc8], [0xd6, 0x33, 0x6c], ramp);
+        assert_eq!(p.symbol.as_ref().map(|s| s.color), Some(want));
+        let p = plan_folder(&rules, 256, 128.0, &styled("tinted", Some([9, 9, 9])));
+        assert_eq!(p.layers[0].tint.map(|t| t.0), Some([9, 9, 9]));
+        let p = plan_folder(&rules, 256, 128.0, &styled("clear", Some([9, 9, 9])));
+        assert_eq!(p.layers[0].tint.map(|t| t.0), Some([0x50, 0x50, 0x56]));
+        assert!(p.layers.iter().all(|l| (l.opacity - 0.5).abs() < 1e-6));
+        // A style the assets lack is Default.
+        let p = plan_folder(&rules, 256, 128.0, &styled("clear-dark", None));
+        assert!(p.layers.iter().all(|l| l.tint.is_none()));
     }
 }

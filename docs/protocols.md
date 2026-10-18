@@ -81,6 +81,18 @@ top.
   upright frame (under 0.01°), it sends the region's `x`, `y`, `width`, `height`, which stay
   the bounding box. The shell's `ProfiledGlass` sends `frame` (`shell/lib/system/
   glass_profile.dart`) until `silica_ui`'s `Glass` does.
+- Since version 9: `add_continuous_region(x, y, width, height, radius, smoothing, material,
+  opacity)`: a region whose corners are a continuous curve, not a circular arc (the body of an
+  app icon, silica-desktop#232). `radius` is the radius of the equivalent circular corner,
+  `smoothing` (0 to 1, outside it is `invalid_region`) how far the curve spreads along the
+  edges: the corner starts `radius × (1 + smoothing)` from the corner point along each edge.
+  Ossido draws a superellipse over that extent whose exponent runs from 2 (smoothing 0, the
+  circle) to 3.53 (smoothing 0.6), the least-squares fit of the Sketch body path
+  (`tools/body.svg` of silica-icons: radius 214, smoothing 0.6 on 824): the edge stays within
+  0.5 px of it at 60 and 128 pt (`ossido-render`, `a_continuous_region_follows_the_body_outline`).
+  It merges, rotates and takes profiles like any region. On the `silica/glass` channel the key
+  `smoothing` (0–1) goes with `radius`; below version 9 the embedder sends `add_region` with
+  the circular radius `radius × (1 + 0.26 × smoothing)` (0.30 of the side for the body).
 
 The tip is a rounded isosceles triangle: the rectangle's base side is the triangle's base, its
 depth is where the rounded apex (radius ~2.5 pt) ends, and the sides join the body with a
