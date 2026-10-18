@@ -15,6 +15,7 @@ import 'package:silica_shell/menubar/menubar.dart';
 import 'package:silica_shell/notifications/notifications.dart';
 import 'package:silica_shell/screenshot/screenshot.dart';
 
+import 'package:silica_ui/silica_ui.dart';
 import 'controlcenter_test.dart' show FakeSystem, laptop;
 import 'notifications_test.dart' show FakeSource;
 
@@ -111,9 +112,7 @@ void main() {
     final dir = Directory.systemTemp.createTempSync('shot-it');
     addTearDown(() => dir.deleteSync(recursive: true));
     await tester.pumpWidget(
-      italian(
-        ScreenshotLayer(settingsFile: File('${dir.path}/screenshot.json')),
-      ),
+      italian(ScreenshotLayer(settings: SilicaSettings.withValues({}))),
     );
     await command(tester, 'screenshot.toolbar');
     await tester.pump();

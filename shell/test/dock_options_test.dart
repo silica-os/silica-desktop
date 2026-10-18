@@ -1,33 +1,49 @@
-import 'dart:io';
-
 import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:silica_shell/dock/apps.dart';
 import 'package:silica_shell/dock/dock.dart';
 import 'package:silica_shell/dock/model.dart';
 import 'package:silica_shell/dock/options.dart';
 import 'package:silica_shell/system/glass_profile.dart';
+import 'package:silica_ui/silica_ui.dart';
+
+import 'support/settings.dart';
 
 void main() {
-  test('dock.json options: defaults, then the values Settings writes', () {
-    final dir = Directory.systemTemp.createTempSync('dock-options');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final env = {'XDG_CONFIG_HOME': dir.path};
-    expect(DockOptions.read(env: env), const DockOptions());
-    saveDockOption('autohide', true, env: env);
-    saveDockOption('position', 'left', env: env);
-    saveDockOption('minimizeEffect', 'scale', env: env);
-    saveDockOption('indicators', false, env: env);
-    final o = DockOptions.read(env: env);
+  test('dock options: defaults, then the values Settings sets', () async {
+    final backend = await useSettings();
+    final settings = SilicaSettings.instance;
+    expect(DockOptions.of(settings), const DockOptions());
+    backend.emit('dock.autohide', true);
+    backend.emit('dock.position', 'left');
+    backend.emit('dock.minimizeEffect', 'scale');
+    backend.emit('dock.indicators', false);
+    final o = DockOptions.of(settings);
     expect(o.autohide, isTrue);
     expect(o.position, DockPosition.left);
     expect(o.minimizeEffect, MinimizeEffect.scale);
     expect(o.indicators, isFalse);
     expect(o.magnify, isFalse);
     // A broken value falls back to the default.
-    saveDockOption('position', 'top', env: env);
-    expect(DockOptions.read(env: env).position, DockPosition.bottom);
+    backend.emit('dock.position', 'top');
+    expect(DockOptions.of(settings).position, DockPosition.bottom);
+  });
+
+  test('the watcher follows a Changed signal at once', () async {
+    final backend = await useSettings();
+    final watcher = DockOptionsWatcher();
+    addTearDown(watcher.dispose);
+    expect(watcher.value.value.autohide, isFalse);
+    var seen = 0;
+    watcher.value.addListener(() => seen++);
+    backend.emit('dock.autohide', true);
+    expect(watcher.value.value.autohide, isTrue);
+    backend.emit('dock.tileSize', 122);
+    expect(watcher.value.value.tileSize, 122);
+    expect(seen, 2);
+    // Setting from the Dock itself shows at once too.
+    setDockOption('position', 'right');
+    expect(watcher.value.value.position, DockPosition.right);
   });
 
   testWidgets(
@@ -72,16 +88,15 @@ void main() {
     },
   );
 
-  test('dock.json launchAnimation: bounce by default, none turns it off', () {
-    final dir = Directory.systemTemp.createTempSync('dock-launch');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final env = {'XDG_CONFIG_HOME': dir.path};
-    expect(DockOptions.read(env: env).launchAnimation, isTrue);
-    saveDockOption('launchAnimation', 'none', env: env);
-    expect(DockOptions.read(env: env).launchAnimation, isFalse);
-    saveDockOption('launchAnimation', 'bounce', env: env);
-    expect(DockOptions.read(env: env).launchAnimation, isTrue);
-    saveDockOption('launchAnimation', 7, env: env);
-    expect(DockOptions.read(env: env).launchAnimation, isTrue);
+  test('dock.launchAnimation: bounce by default, none turns it off', () async {
+    final backend = await useSettings();
+    final settings = SilicaSettings.instance;
+    expect(DockOptions.of(settings).launchAnimation, isTrue);
+    backend.emit('dock.launchAnimation', 'none');
+    expect(DockOptions.of(settings).launchAnimation, isFalse);
+    backend.emit('dock.launchAnimation', 'bounce');
+    expect(DockOptions.of(settings).launchAnimation, isTrue);
+    backend.emit('dock.launchAnimation', 7);
+    expect(DockOptions.of(settings).launchAnimation, isTrue);
   });
 }

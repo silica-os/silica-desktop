@@ -14,6 +14,8 @@ import 'package:silica_shell/notifications/service.dart';
 import 'package:silica_shell/notifications/settings.dart';
 import 'package:silica_shell/system/system_status.dart';
 
+import 'support/settings.dart';
+
 class FakeSource extends ChangeNotifier implements NotificationsSource {
   final Map<int, ShellNotification> items = {};
   final StreamController<ShellNotification> _posted =
@@ -271,11 +273,12 @@ void main() {
     expect(source.items, isEmpty);
   });
 
-  test('per-app styles from notifications.json', () {
-    final settings = NotificationSettings.parse(
-      '{"apps": {"org.example.Chat": {"style": "alerts"}, '
-      '"Mail": {"style": "none"}, "Bad": {"style": "loud"}}}',
-    );
+  test('per-app styles from the settings', () {
+    final settings = NotificationSettings.fromValues({
+      'notifications.apps.org.example.Chat.style': 'alerts',
+      'notifications.apps.Mail.style': 'none',
+      'notifications.apps.Bad.style': 'loud',
+    });
     expect(
       settings.styleOf(note(1, app: 'Chat', entry: 'org.example.Chat')),
       NotificationStyle.alerts,
@@ -283,7 +286,9 @@ void main() {
     expect(settings.styleOf(note(2, app: 'Mail')), NotificationStyle.none);
     expect(settings.styleOf(note(3, app: 'Bad')), NotificationStyle.banners);
     expect(
-      NotificationSettings.parse('not json').styleOf(note(4)),
+      NotificationSettings.fromValues({
+        'notifications.apps.x': 'junk',
+      }).styleOf(note(4)),
       NotificationStyle.banners,
     );
   });
@@ -586,9 +591,10 @@ void main() {
     await pumpLayer(
       tester,
       source,
-      settings: NotificationSettings.parse(
-        '{"apps": {"Muted": {"sound": false}, "Quiet": {"style": "none"}}}',
-      ),
+      settings: NotificationSettings.fromValues({
+        'notifications.apps.Muted.sound': false,
+        'notifications.apps.Quiet.style': 'none',
+      }),
     );
     source.post(note(1, app: 'Mail'));
     await tester.pump(const Duration(milliseconds: 500));
@@ -600,28 +606,50 @@ void main() {
     expect(alertsPlayed, 1);
   });
 
+  test('NotificationSettings.read follows the Settings service', () async {
+    final backend = await useSettings();
+    expect(NotificationSettings.read().previews, PreviewMode.always);
+    backend.emit('notifications.previews', 'never');
+    backend.emit('notifications.apps.org.x.Mail.sound', false);
+    backend.emit('notifications.apps.org.x.Mail.style', 'alerts');
+    final settings = NotificationSettings.read();
+    expect(settings.previews, PreviewMode.never);
+    expect(settings.mutedApps, {'org.x.Mail'});
+    expect(settings.styles, {'org.x.Mail': NotificationStyle.alerts});
+    // Back to the default (the daemon sends the default value after a Reset).
+    backend.emit('notifications.apps.org.x.Mail.sound', true);
+    expect(NotificationSettings.read().mutedApps, isEmpty);
+  });
+
   test('previews off hide the text, per app and for all', () {
-    final all = NotificationSettings.parse('{"previews": "never"}');
+    final all = NotificationSettings.fromValues({
+      'notifications.previews': 'never',
+    });
     expect(all.present(note(1)).body, isEmpty);
     expect(all.present(note(1)).summary, 'Titolo 1');
-    final perApp = NotificationSettings.parse(
-      '{"previews": "never", "apps": {"Mail": {"previews": "always"}, '
-      '"Chat": {"previews": "never"}}}',
-    );
+    final perApp = NotificationSettings.fromValues({
+      'notifications.previews': 'never',
+      'notifications.apps.Mail.previews': 'always',
+      'notifications.apps.Chat.previews': 'never',
+    });
     expect(perApp.present(note(1)).body, isNotEmpty);
     expect(perApp.present(note(2, app: 'Chat')).body, isEmpty);
     expect(perApp.present(note(3, app: 'Other')).body, isEmpty);
     // No lock screen: unlocked previews are always shown.
-    final unlocked = NotificationSettings.parse('{"previews": "unlocked"}');
+    final unlocked = NotificationSettings.fromValues({
+      'notifications.previews': 'unlocked',
+    });
     expect(unlocked.present(note(1)).body, isNotEmpty);
     expect(const NotificationSettings().present(note(1)).body, isNotEmpty);
   });
 
   test('showInCenter and grouping per app', () {
-    final settings = NotificationSettings.parse(
-      '{"grouping": "off", "apps": {"Mail": {"showInCenter": false, '
-      '"grouping": "app"}, "Chat": {"showInCenter": true}}}',
-    );
+    final settings = NotificationSettings.fromValues({
+      'notifications.grouping': 'off',
+      'notifications.apps.Mail.showInCenter': false,
+      'notifications.apps.Mail.grouping': 'app',
+      'notifications.apps.Chat.showInCenter': true,
+    });
     expect(settings.inCenter(note(1)), isFalse);
     expect(settings.inCenter(note(2, app: 'Chat')), isTrue);
     expect(settings.groupingOf(note(1)), GroupingMode.app);
@@ -644,10 +672,11 @@ void main() {
     await pumpLayer(
       tester,
       source,
-      settings: NotificationSettings.parse(
-        '{"previews": "never", "apps": {"Mail": {"showInCenter": false}, '
-        '"Chat": {"grouping": "off"}}}',
-      ),
+      settings: NotificationSettings.fromValues({
+        'notifications.previews': 'never',
+        'notifications.apps.Mail.showInCenter': false,
+        'notifications.apps.Chat.grouping': 'off',
+      }),
     );
     source.post(note(4, app: 'Chat', minute: 4));
     await tester.pump(const Duration(milliseconds: 500));

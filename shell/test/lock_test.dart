@@ -8,8 +8,10 @@ import 'package:silica_shell/l10n/l10n.dart';
 import 'package:silica_shell/lock/lock_screen.dart';
 import 'package:silica_shell/lock/savers.dart';
 import 'package:silica_shell/system/shell_channel.dart';
+import 'package:silica_ui/silica_ui.dart';
 
 import 'glass_backend_probe.dart';
+import 'support/settings.dart';
 
 class FakeLock implements LockSource {
   final tries = <String>[];
@@ -50,14 +52,15 @@ Future<void> pumpApp(WidgetTester tester, Widget child) async {
 }
 
 /// The lock screen, as the view of a lock surface.
-Future<void> pump(
+Future<MemorySettingsBackend> pump(
   WidgetTester tester,
   FakeLock source, {
   bool showUser = true,
-}) => pumpApp(
-  tester,
-  LockScreen(source: source, showUser: showUser, now: () => fixedNow),
-);
+}) async {
+  final settings = await useSettings({'lockscreen.showUser': showUser});
+  await pumpApp(tester, LockScreen(source: source, now: () => fixedNow));
+  return settings;
+}
 
 /// The screen saver layer, with a fake for the lock request.
 Future<void> pumpSaver(WidgetTester tester, {Future<bool> Function()? take}) =>
@@ -89,20 +92,6 @@ void main() {
     ));
   });
 
-  test('showUser comes from lockscreen.json, true by default', () {
-    final dir = Directory.systemTemp.createTempSync('lockcfg');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final env = {'XDG_CONFIG_HOME': dir.path};
-    expect(readShowUser(env: env), isTrue);
-    Directory('${dir.path}/silica').createSync();
-    File(
-      '${dir.path}/silica/lockscreen.json',
-    ).writeAsStringSync('{"showUser": false}');
-    expect(readShowUser(env: env), isFalse);
-    File('${dir.path}/silica/lockscreen.json').writeAsStringSync('not json');
-    expect(readShowUser(env: env), isTrue);
-  });
-
   testWidgets('the lock screen shows the time, the date and the user', (
     tester,
   ) async {
@@ -119,6 +108,17 @@ void main() {
     expect(find.text('Anna Rossi'), findsNothing);
     expect(find.text('A'), findsNothing);
     expect(find.byKey(const ValueKey('lock password')), findsOneWidget);
+  });
+
+  testWidgets('lockscreen.showUser applies live', (tester) async {
+    final backend = await pump(tester, FakeLock());
+    expect(find.text('Anna Rossi'), findsOneWidget);
+    backend.emit('lockscreen.showUser', false);
+    await tester.pump();
+    expect(find.text('Anna Rossi'), findsNothing);
+    backend.emit('lockscreen.showUser', true);
+    await tester.pump();
+    expect(find.text('Anna Rossi'), findsOneWidget);
   });
 
   testWidgets('typed characters replace the placeholder and stay obscured', (

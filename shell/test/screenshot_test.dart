@@ -110,9 +110,11 @@ void main() {
   late Directory dir;
   late Directory desk;
   late Directory docs;
+  late SilicaSettings store;
   var seq = 1000;
 
   setUp(() {
+    store = SilicaSettings.withValues({});
     services = FakeServices();
     dir = Directory.systemTemp.createTempSync('istantanee');
     desk = Directory('${dir.path}/Scrivania')..createSync();
@@ -176,7 +178,7 @@ void main() {
             now: () => DateTime(2026, 10, 14, 4, 12, 33),
             windowAt: windowAt,
             services: services,
-            settingsFile: File('${dir.path}/screenshot.json'),
+            settings: store,
             entries: entries,
             env: env ?? {'HOME': dir.path},
           ),
@@ -185,8 +187,7 @@ void main() {
     );
   }
 
-  ScreenshotSettings savedSettings() =>
-      ScreenshotSettings.load(File('${dir.path}/screenshot.json'));
+  ScreenshotSettings savedSettings() => ScreenshotSettings.of(store);
 
   const deskName = 'Screenshot 2026-10-14 at 04.12.33.png';
 
@@ -209,7 +210,7 @@ void main() {
     );
   });
 
-  test('the settings survive a round trip and hostile files', () {
+  test('the settings survive a round trip and hostile values', () {
     final s = ScreenshotSettings(
       destination: const ToFolder('/tmp/x'),
       timer: 10,
@@ -221,7 +222,7 @@ void main() {
       barCenter: const Offset(5, 6),
       recentFolders: ['/tmp/x'],
     );
-    final back = ScreenshotSettings.fromJson(jsonDecode(jsonEncode(s)));
+    final back = ScreenshotSettings.of(SilicaSettings.withValues(s.toValues()));
     expect(back.destination, const ToFolder('/tmp/x'));
     expect(back.timer, 10);
     expect(back.showThumbnail, isFalse);
@@ -231,21 +232,22 @@ void main() {
     expect(back.selection, const Rect.fromLTWH(1, 2, 3, 4));
     expect(back.barCenter, const Offset(5, 6));
     expect(back.recentFolders, ['/tmp/x']);
-    final hostile = ScreenshotSettings.fromJson({
-      'destination': 42,
-      'timer': 7,
-      'thumbnail': 'yes',
-      'selection': [1, 2, -3, 4],
-      'bar': [1],
-      'recent_folders': ['relative', 3, '/ok'],
-    });
+    final hostile = ScreenshotSettings.of(
+      SilicaSettings.withValues({
+        'screenshot.destination': 42,
+        'screenshot.timer': 7,
+        'screenshot.thumbnail': 'yes',
+        'screenshot.selection': [1, 2, -3, 4],
+        'screenshot.bar': [1],
+        'screenshot.recentFolders': ['relative', '/ok'],
+      }),
+    );
     expect(hostile.destination, const ToDesktop());
     expect(hostile.timer, 0);
     expect(hostile.showThumbnail, isTrue);
     expect(hostile.selection, isNull);
     expect(hostile.barCenter, isNull);
     expect(hostile.recentFolders, ['/ok']);
-    expect(ScreenshotSettings.fromJson('nope').mode, ToolbarChoice.selection);
     // Other folders: newest first, at most three.
     final r = ScreenshotSettings();
     for (final f in ['/a', '/b', '/c', '/d', '/b']) {
@@ -1453,9 +1455,7 @@ image/png=missing.desktop;org.example.Viewer.desktop;
   testWidgets('to the clipboard: copied when the thumbnail leaves', (
     tester,
   ) async {
-    File(
-      '${dir.path}/screenshot.json',
-    ).writeAsStringSync(jsonEncode({'destination': 'clipboard'}));
+    store = SilicaSettings.withValues({'screenshot.destination': 'clipboard'});
     await pumpLayer(tester);
     final temp = await announce(tester);
     await tester.pump(const Duration(seconds: 6));
@@ -1472,9 +1472,7 @@ image/png=missing.desktop;org.example.Viewer.desktop;
     File(
       '${config.path}/mimeapps.list',
     ).writeAsStringSync('[Default Applications]\nimage/png=viewer.desktop\n');
-    File(
-      '${dir.path}/screenshot.json',
-    ).writeAsStringSync(jsonEncode({'destination': 'app:viewer'}));
+    store = SilicaSettings.withValues({'screenshot.destination': 'app:viewer'});
     await pumpLayer(
       tester,
       env: {'HOME': dir.path, 'XDG_CONFIG_HOME': config.path},

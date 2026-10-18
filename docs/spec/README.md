@@ -79,6 +79,7 @@ says otherwise. Labels are in English.
 | File | Area |
 |---|---|
 | [menubar.md](menubar.md) | Menu bar, menus, status items and status menus |
+| [shell-config.md](shell-config.md) | Shell configuration: the Settings service keys and who applies them |
 | [dock.md](dock.md) | Dock: geometry, glass, magnification, animations, behaviour |
 | [dock-stacks.md](dock-stacks.md) | Folder stacks in the Dock: fan, grid, list |
 | [controlcenter.md](controlcenter.md) | Control Center: grid, modules, sliders, details |
