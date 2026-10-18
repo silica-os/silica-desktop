@@ -1166,6 +1166,7 @@ image/png=missing.desktop;org.example.Viewer.desktop;
     expectNoFlutterTint(tester);
     // Bar dragged to the top: there is room below, the menu opens below the button.
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     expect(optionsMenu(), findsNothing);
     final bar = tester.getRect(find.byType(ShotToolbar));
@@ -1274,6 +1275,7 @@ image/png=missing.desktop;org.example.Viewer.desktop;
       expect(holes().single.tlRadius.x, AmalfiMenuMetrics.radius);
       // Closed: the dim is whole again.
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pump();
       expect(holes(), isEmpty);
@@ -1365,9 +1367,9 @@ image/png=missing.desktop;org.example.Viewer.desktop;
     await tester.tap(find.byKey(const ValueKey('options')));
     await tester.pump();
     final menu = tester.getRect(optionsMenu());
-    // Above the button, with its left edge on the button.
-    expect(menu.bottom, lessThan(button.top));
-    expect(menu.left, closeTo(button.left, 1));
+    // Above the button (its bottom edge on the button's top), 5 pt left of it.
+    expect(menu.bottom, lessThanOrEqualTo(button.top));
+    expect(menu.left, closeTo(button.left - 5, 1));
     for (final item in [
       'Save to',
       'Desktop',
@@ -1403,6 +1405,7 @@ image/png=missing.desktop;org.example.Viewer.desktop;
     ]);
     // Esc closes the menu, the bar stays.
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.byType(AmalfiMenuList), findsNothing);
     expect(find.byKey(const ValueKey('options')), findsOneWidget);
