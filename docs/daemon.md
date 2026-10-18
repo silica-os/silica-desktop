@@ -264,6 +264,36 @@ The system actions of Faro's actions scope (`crates/daemon/src/actions.rs`), on
   (`silica-control`), for the commands a person runs by name. Faro runs them with
   `engine.execute`.
 
+## dev.frascella.Silica.Settings1
+
+Path `/dev/frascella/Silica/Settings1`, name `dev.frascella.Silica` like the other services
+(the issue's `org.silica.Settings1` is this interface). One typed store for the settings the
+shell applies live and Settings edits; code in `crates/daemon/src/settings.rs`, which holds
+the schema (`KEYS`: name, type, default, range or set of values) and is the reference.
+
+| Member | Meaning |
+| --- | --- |
+| `Get(s key) -> v` | the value, the default if never set; `InvalidArgs` for an unknown key |
+| `GetAll() -> a{sv}` | every static key with its value, plus the per-app keys that are set |
+| `Set(s key, v value)` | `InvalidArgs` when the key is unknown or the value is outside the schema (type, range, enum); integers of any width are accepted for `x` and `d` |
+| `SetMany(a{sv})` | all or none; one `Changed` per key that changed |
+| `Reset(s key)` | back to the default |
+| `Changed(s key, v value)` | signal, also after `Reset` (the default) |
+
+Types: `b`, `x` (integer), `d`, `s` (an enum has a fixed set), `as`, `ad`. Keys are dotted:
+`dock.*`, `menubar.*` (`menubar.clock.*`), `wallpaper.*` (`image`, `color`, `id`: the first not
+empty wins; `fit`), `lockscreen.*` (`passwordDelay` in seconds, -1 never), `screensaver.*`,
+`notifications.previews|grouping` and `notifications.apps.<app id>.<style|previews|grouping|
+showInCenter|sound>`, `controlcenter.modules` (`id:size`), `screenshot.*`.
+
+On disk: `$XDG_CONFIG_HOME/silica/settings.bin`, binary (format in the module documentation),
+only the values that differ from the default. When it does not exist the values of the old JSON
+files (`dock.json`, `menubar.json`, `wallpaper.json`, `lockscreen.json`, `screensaver.json`,
+`notifications.json`, `controlcenter.json`, `screenshot.json`) are imported once; they are left
+in place. Ossido still reads its own keys from JSON (`input.json`, `theme.json`, `hotcorners.json`,
+`shortcuts.json`, `dock.json` `titleBarDoubleClick` and `minimizeToApp`, `lockscreen.json`
+`passwordDelay`, `screensaver.json`): moving them is open (#236).
+
 ## dev.frascella.Silica.Sound1
 
 The interface sound effects (`crates/daemon/src/sound.rs`), on `/dev/frascella/Silica/Sound1`,

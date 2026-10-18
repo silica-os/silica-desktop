@@ -11,6 +11,7 @@ pub mod clipboard;
 pub mod icons;
 pub mod notifications;
 pub mod server;
+pub mod settings;
 pub mod share;
 pub mod sound;
 pub mod sun;

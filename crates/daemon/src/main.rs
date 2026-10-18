@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 use futures_lite::{StreamExt, future};
 use silica_daemon::actions::{ACTIONS_PATH, Actions};
+use silica_daemon::settings::{SETTINGS_PATH, Settings};
 use silica_daemon::share::{SHARE_PATH, Share};
 use silica_daemon::sound::{SOUND_PATH, Sound, SoundConfig};
 use silica_daemon::thumbnails::{THUMBNAILS_PATH, Thumbnails};
@@ -89,6 +90,11 @@ async fn run(address: Option<String>, replace: bool) -> zbus::Result<()> {
     connection
         .object_server()
         .at(THUMBNAILS_PATH, Thumbnails::from_env())
+        .await?;
+    // The typed settings the shell applies live and Settings edits.
+    connection
+        .object_server()
+        .at(SETTINGS_PATH, Settings::from_env())
         .await?;
     // The interface sound effects (the Trash, copies), for apps and the shell.
     connection
