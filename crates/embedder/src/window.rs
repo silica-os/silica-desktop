@@ -286,6 +286,8 @@ struct View {
     input_wanted: bool,
     /// For a popup, the view it hangs from.
     popup_parent: Option<i64>,
+    /// For a popup, how it was asked for (its size changes with `resizePopup`).
+    popup_spec: Option<views::PopupSpec>,
     /// For a popup, where Ossido put it: x, y relative to its parent, width, height.
     popup_placed: Option<(i32, i32, i32, i32)>,
 }
@@ -315,6 +317,7 @@ impl View {
             removing: false,
             namespace: None,
             input_wanted: false,
+            popup_spec: None,
             popup_parent: None,
             popup_placed: None,
         }
@@ -395,6 +398,8 @@ struct App {
     /// Several windows (`--multi-window`): the engine composes through backing stores.
     multi_view: bool,
     next_view: i64,
+    /// The token of the last `xdg_popup.reposition` (`resize_popup`).
+    popup_token: u32,
     /// For new windows: the xdg shell and the engine thread's view events.
     xdg_shell: Option<XdgShell>,
     /// For the shell layers drawn as more views of this engine (`--view`, #201).
@@ -905,6 +910,7 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         })]),
         multi_view,
         next_view: MAIN_VIEW + 1,
+        popup_token: 0,
         xdg_shell,
         layer_shell,
         session_lock_state: SessionLockState::new(&globals, &qh),
@@ -1167,6 +1173,18 @@ impl App {
                 );
             }
             return crate::text_input::success(serde_json::Value::Null);
+        }
+        if method == Some("resizePopup") {
+            let size = call.get("args").and_then(|args| {
+                let side = |key: &str| {
+                    args.get(key)
+                        .and_then(serde_json::Value::as_f64)
+                        .and_then(views::window_side)
+                };
+                side("width").zip(side("height"))
+            });
+            let done = size.is_some_and(|size| self.resize_popup(id, size));
+            return crate::text_input::success(serde_json::json!(done));
         }
         if method == Some("popupsAvailable") {
             // Menus and popovers as their own surfaces need several views (`--multi-window`,
@@ -1563,6 +1581,7 @@ impl App {
             .map_or(1, |parent| parent.scale);
         let mut view = View::new(Shell::Popup(popup), spec.size, scale, false);
         view.popup_parent = Some(spec.parent);
+        view.popup_spec = Some(spec.clone());
         view.surface.commit();
         if let Err(err) = self.attach_view(id, &view) {
             return self.refuse_open(reply, &err);
@@ -1574,6 +1593,50 @@ impl App {
             spec.size, spec.anchor_rect
         );
         self.views.insert(id, view);
+    }
+
+    /// `resizePopup`: popup `id` takes a new size, kept where it hangs from its anchor
+    /// (`xdg_popup.reposition`, xdg-shell 3): a popover whose content grew (Show All…) is not
+    /// cut (silica-desktop#238). Ossido answers with a configure, which resizes the view.
+    fn resize_popup(&mut self, id: i64, size: (u32, u32)) -> bool {
+        let Some(xdg_shell) = &self.xdg_shell else {
+            return false;
+        };
+        let Some(View {
+            surface: Shell::Popup(popup),
+            popup_spec: Some(spec),
+            removing: false,
+            ..
+        }) = self.views.get_mut(&id)
+        else {
+            return false;
+        };
+        if spec.size == size {
+            return true;
+        }
+        if wayland_client::Proxy::version(popup.xdg_popup()) < 3 {
+            return false;
+        }
+        let positioner = match XdgPositioner::new(xdg_shell) {
+            Ok(positioner) => positioner,
+            Err(err) => {
+                warn!("popup {id} resize: {err}");
+                return false;
+            }
+        };
+        spec.size = size;
+        let (x, y, w, h) = spec.anchor_rect;
+        positioner.set_size(size.0 as i32, size.1 as i32);
+        positioner.set_anchor_rect(x, y, w, h);
+        positioner.set_anchor(popup_anchor(spec.anchor));
+        positioner.set_gravity(popup_gravity(spec.gravity));
+        positioner.set_constraint_adjustment(
+            xdg_positioner::ConstraintAdjustment::from_bits_truncate(spec.adjust),
+        );
+        self.popup_token = self.popup_token.wrapping_add(1);
+        popup.xdg_popup().reposition(&positioner, self.popup_token);
+        info!("popup {id} resized: {size:?}");
+        true
     }
 
     /// The shell layers of this engine, for `silica/layer` `views`: `[{viewId, namespace}]`,
