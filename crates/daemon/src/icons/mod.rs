@@ -7,8 +7,8 @@
 //! look at the same size is one file and nothing needs invalidating.
 //!
 //! A file has no symbol of its own type: its glyph is the icon of the app that opens it (or that
-//! app's document foreground for the type), else the file is an unknown extension and shows
-//! the sheet with the extension label alone. The previews of the apps' thumbnailers are
+//! app's document foreground for the type), else the system type's foreground, else the
+//! `unknown` glyph (a circled question mark), always with the extension label when it has one. The previews of the apps' thumbnailers are
 //! [`Icons::thumbnailer_preview`].
 
 pub mod appicon;
@@ -17,7 +17,6 @@ pub mod compose;
 pub mod folder;
 pub mod mime;
 pub mod rules;
-mod svgfix;
 pub mod thumbnailer;
 
 use std::collections::HashMap;
@@ -198,7 +197,7 @@ impl Icons {
     /// The look of the file at `path`. The glyph is, in order of precedence (after a real
     /// preview or a thumbnailer, which are not icons): the full icon the default app ships for
     /// its type, the document foreground of that app, the icon of that app, the foreground of
-    /// the system type (executable, archive...), or none (an unknown extension).
+    /// the system type (executable, archive...), or the `unknown` glyph.
     pub fn file_look(&self, path: &Path, _pt: f32) -> FileLook {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let extension = mime::extension_of(name);
@@ -221,6 +220,10 @@ impl Icons {
             .or_else(|| {
                 let name = self.file_rules.system_type(extension.as_deref(), &chain)?;
                 compose::system_svg(&self.assets, name).map(|_| Glyph::System(name.to_owned()))
+            })
+            .or_else(|| {
+                compose::system_svg(&self.assets, "unknown")
+                    .map(|_| Glyph::System("unknown".to_owned()))
             })
             .unwrap_or(Glyph::None);
         FileLook { glyph, extension }

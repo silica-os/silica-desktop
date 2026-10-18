@@ -66,6 +66,15 @@ pub fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), CompileError> {
     Ok((info.width, info.height, rgba))
 }
 
+/// Straight (non-premultiplied) RGBA8 pixels of a `side` square image.
+pub fn image_from_straight(side: u32, rgba: &[u8]) -> Image {
+    let mut rgba = rgba.to_vec();
+    for px in rgba.chunks_exact_mut(4) {
+        premultiply(px);
+    }
+    Image { side, rgba }
+}
+
 /// A rendered PNG at the canvas size.
 pub fn image_from_png(bytes: &[u8]) -> Result<Image, CompileError> {
     let (w, h, rgba) = decode_png(bytes)?;
