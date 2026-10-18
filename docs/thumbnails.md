@@ -195,8 +195,8 @@ an app from its `icon/icon.assets` (docs/assets-format.md, "App icon file"), the
 
 - `app`: a desktop id (`dev.frascella.Clock`, with or without `.desktop`; its entry's
   `X-Silica-Icon=` folder) or an absolute icon folder.
-- `appearance`: 0 light, 1 clear, 2 tinted; add 4 for the dark form (4 dark, 6 tinted dark;
-  clear exists only in light, so 5 is composed as clear). Any other value gives "".
+- `appearance`: 0 light, 1 clear, 2 tinted; add 4 for the dark form (4 dark, 5 clear dark,
+  6 tinted dark). Any other value gives "".
 - `accent_rgb`: 0xRRGGBB, used by the tinted looks only (0 is `Accent/Amalfi`, `#0e77e6`).
 - Result: the path of a PNG of exactly `size_px` (at most 2048) pixels, `scale` giving the side
   in points for `min_size`; "" when the app has no `icon.assets`, it is damaged or the request

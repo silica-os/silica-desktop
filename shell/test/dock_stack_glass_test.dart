@@ -167,7 +167,7 @@ void main() {
       for (final r in GlassRegistry.instance.regions)
         (r['group'] as int?) ?? 0: r,
     };
-    // Four files and "Open folder", from the bottom: 1.6° then 1.22° more per item.
+    // Four files and "Open folder", from the bottom: 1.63° then 1.23° more per item.
     for (var i = 0; i < 5; i++) {
       final region = byGroup[DockGlass.fanLabel(i)];
       expect(region, isNotNull, reason: 'label $i');
@@ -495,7 +495,7 @@ void main() {
   );
 
   testWidgets(
-    'close button: pressed it darkens, released the stack closes in ~300 ms',
+    'close button: pressed it darkens, released the stack closes in 187 ms',
     (tester) async {
       await openStack(tester, 3);
       final button = find.byType(StackCloseButton);
@@ -505,10 +505,10 @@ void main() {
       expect(tester.widget<StackCloseButton>(button).pressed, isTrue);
       await gesture.up();
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 200));
-      // Still closing at 200 ms (Esc would be done by 210 ms on the fan).
-      expect(find.byType(FanStack), findsOneWidget);
       await tester.pump(const Duration(milliseconds: 150));
+      // Still closing at 150 ms (187 ms from the release).
+      expect(find.byType(FanStack), findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 60));
       await tester.pump();
       expect(find.byType(FanStack), findsNothing);
     },
