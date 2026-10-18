@@ -206,7 +206,10 @@ impl State {
 
     /// The window in front for the menus, as `identifier_of` finds it.
     fn front_window_for(&self, focus: Option<&WlSurface>) -> Option<Window> {
-        let focus = focus?;
+        // An open popup (a popover with the keyboard) belongs to the window it hangs from: the
+        // bar keeps showing that app's menus (silica-desktop#238).
+        let root = self.focus_root(focus?);
+        let focus = &root;
         if let Some(window) = self
             .space
             .elements()

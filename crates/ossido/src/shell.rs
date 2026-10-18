@@ -194,6 +194,10 @@ impl State {
         let Some(focus) = focus else {
             return String::new();
         };
+        // An open popup (a popover with the keyboard) belongs to the window it hangs from: the
+        // app stays the one in front (silica-desktop#238).
+        let root = self.focus_root(focus);
+        let focus = &root;
         let window = self
             .space
             .elements()

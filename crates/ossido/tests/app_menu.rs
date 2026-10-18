@@ -253,6 +253,38 @@ fn the_menus_are_commands_too() {
     assert_eq!(calc.menu_activations(), [CHOSEN]);
 }
 
+/// A popover of the app (an xdg_popup with a grab, which takes the keyboard) leaves the app in
+/// front: the bar keeps its menus (silica-desktop#238, the bar switched to "Silica").
+#[test]
+fn an_open_popup_keeps_its_app_in_front() {
+    let ossido = Headless::start("app-menu-popup");
+    APP_ID.with(|id| *id.borrow_mut() = "org.silica.Calc".to_owned());
+    let mut calc = TestWindow::open(&ossido.wayland, "calc");
+    APP_ID.with(|id| id.borrow_mut().clear());
+    calc.set_menu_model(&model("Basic"));
+    let mut c = ossido.client();
+    assert_eq!(
+        c.call(APP_MENU, Value::Null).unwrap()["app_id"],
+        "org.silica.Calc"
+    );
+    // A press in the window gives the popup's grab a serial, then the popup opens.
+    let list: Vec<silica_control::commands::WindowInfo> = serde_json::from_value(
+        c.call(silica_control::commands::WINDOW_LIST, Value::Null)
+            .unwrap(),
+    )
+    .unwrap();
+    let w = &list[0];
+    c.call(
+        silica_control::commands::INPUT_CLICK,
+        json!({"x": w.x + w.width / 2, "y": w.y + w.height / 2, "button": "right"}),
+    )
+    .unwrap();
+    calc.open_grabbing_popup((5, 5), (40, 30));
+    let state = c.call(APP_MENU, Value::Null).unwrap();
+    assert_eq!(state["app_id"], "org.silica.Calc");
+    assert_ne!(state["serial"], 0);
+}
+
 #[test]
 fn a_bad_model_disconnects_only_its_app() {
     let ossido = Headless::start("app-menu-bad");
