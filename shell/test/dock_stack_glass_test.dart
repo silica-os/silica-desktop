@@ -322,7 +322,9 @@ void main() {
         }
         // The menu is painted after the stack, and the stack's content is cut where the menu
         // lies (its glass alone cannot cover the stack's icons).
-        final cut = tester.widget<StackUnderMenu>(find.byType(StackUnderMenu));
+        final cut = tester.widget<StackUnderMenu>(
+          find.byType(StackUnderMenu).last,
+        );
         final panel = tester.getRect(find.byKey(dockMenuSurface));
         expect(cut.menu, isNotEmpty);
         final clip = MenuHoleClipper(cut.menu).getClip(const Size(2560, 1440));
@@ -339,7 +341,7 @@ void main() {
           findsOneWidget,
         );
         expect(
-          tester.widget<StackUnderMenu>(find.byType(StackUnderMenu)).menu,
+          tester.widget<StackUnderMenu>(find.byType(StackUnderMenu).last).menu,
           isEmpty,
         );
         // A second Escape closes the stack.

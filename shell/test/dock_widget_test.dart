@@ -168,13 +168,15 @@ void main() {
     await tester.tapAt(icon);
     await tester.pump(const Duration(milliseconds: 50));
     expect(log, ['attiva Terminal']);
-    // Right click: the menu above the icon, the tip of its 6 pt arrow 12 pt over the shelf.
+    // Right click: the menu above the icon, the tip of its 6 pt arrow where the label's is
+    // (anchored to the icon, #248).
     await tester.tapAt(icon, buttons: kSecondaryButton);
     await tester.pump();
     expect(find.text('Apri Terminal'), findsOneWidget);
     final body = tester.getRect(find.byKey(dockMenuSurface));
-    final shelfTop = 300 - bottomGap - backgroundHeight;
-    expect(body.bottom, closeTo(shelfTop - menuAboveShelf - 6, 0.5));
+    final m = DockMetrics(defaultCanvas);
+    final (_, iconTop, side) = iconRect(rest, 0, 300);
+    expect(body.bottom, closeTo(iconTop - m.labelGapFor(side) - 6, 0.5));
     // Centred on the item unless the screen's edge is in the way (8 pt margin).
     expect(
       body.left,
@@ -198,6 +200,51 @@ void main() {
     await tester.pump(const Duration(milliseconds: 150));
     expect(log, ['attiva Terminal', 'menu Note']);
   });
+
+  testWidgets(
+    'the menu is anchored to the magnified icon and freezes the magnification',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 300);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      const items = [
+        Item.app('Terminal', command: 'term'),
+        Item.app('Note', command: 'note'),
+        Item.app('Mail', command: 'mail'),
+      ];
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: Dock(
+            items: items,
+            magnified: 100,
+            menuFor: (item) => [MenuAction('Open')],
+          ),
+        ),
+      );
+      final rest = layout(items, width: 1280, height: 300);
+      final y = 300 - bottomGap - backgroundHeight / 2;
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset(rest.center(0), y));
+      addTearDown(mouse.removePointer);
+      await mouse.moveTo(Offset(rest.center(0), y));
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.tapAt(Offset(rest.center(0), y), buttons: kSecondaryButton);
+      await tester.pump(const Duration(milliseconds: 100));
+      final body = tester.getRect(find.byKey(dockMenuSurface));
+      final restTip = iconRect(rest, 0, 300).$2 - 6;
+      // The magnified icon is bigger and higher: the menu sits above the resting position.
+      expect(body.bottom, lessThan(restTip - 6));
+      // Moving over the other icons while the menu is open changes nothing.
+      await mouse.moveTo(Offset(rest.center(2), y));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(tester.getRect(find.byKey(dockMenuSurface)), body);
+    },
+  );
 
   group('the label and the menu of an icon', () {
     late TestGesture mouse;

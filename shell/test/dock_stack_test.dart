@@ -347,28 +347,31 @@ void main() {
     );
   });
 
-  test('pile geometry: 50 pt canvases at x 7, y 17 / 15 / 13, 4 % smaller per layer', () {
-    // c = 60 (k = 1): the exact frames of the design session.
-    expect(PileIcon.frames(60, 3), const [
-      Rect.fromLTWH(7, 17, 50, 50),
-      Rect.fromLTWH(8, 15, 48, 48),
-      Rect.fromLTWH(9, 13, 46, 46),
-    ]);
-    // At most three, front first.
-    expect(PileIcon.frames(60, 5), hasLength(3));
-    expect(PileIcon.frames(60, 1), const [Rect.fromLTWH(7, 17, 50, 50)]);
-    // c = 16 (k = 4/15) and c = 128 (k = 32/15): every number scaled, whole points.
-    expect(PileIcon.frames(16, 3), const [
-      Rect.fromLTWH(2, 5, 13, 13),
-      Rect.fromLTWH(2, 4, 13, 13),
-      Rect.fromLTWH(2, 3, 12, 12),
-    ]);
-    expect(PileIcon.frames(128, 3), const [
-      Rect.fromLTWH(15, 36, 107, 107),
-      Rect.fromLTWH(17, 32, 102, 102),
-      Rect.fromLTWH(19, 28, 98, 98),
-    ]);
-  });
+  test(
+    'pile geometry: 50 pt canvases at x 7, y 17 / 15 / 13, 4 % smaller per layer',
+    () {
+      // c = 60 (k = 1): the exact frames of the design session.
+      expect(PileIcon.frames(60, 3), const [
+        Rect.fromLTWH(7, 17, 50, 50),
+        Rect.fromLTWH(8, 15, 48, 48),
+        Rect.fromLTWH(9, 13, 46, 46),
+      ]);
+      // At most three, front first.
+      expect(PileIcon.frames(60, 5), hasLength(3));
+      expect(PileIcon.frames(60, 1), const [Rect.fromLTWH(7, 17, 50, 50)]);
+      // c = 16 (k = 4/15) and c = 128 (k = 32/15): every number scaled, whole points.
+      expect(PileIcon.frames(16, 3), const [
+        Rect.fromLTWH(2, 5, 13, 13),
+        Rect.fromLTWH(2, 4, 13, 13),
+        Rect.fromLTWH(2, 3, 12, 12),
+      ]);
+      expect(PileIcon.frames(128, 3), const [
+        Rect.fromLTWH(15, 36, 107, 107),
+        Rect.fromLTWH(17, 32, 102, 102),
+        Rect.fromLTWH(19, 28, 98, 98),
+      ]);
+    },
+  );
 
   for (final canvas in [16.0, 60.0, 128.0]) {
     testWidgets(

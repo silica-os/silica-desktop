@@ -1915,8 +1915,17 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     return false;
   }
 
+  /// The pointer left the Dock while its menu was open: the exit is applied on closing.
+  bool _exitedUnderMenu = false;
+
   void _closeMenu() {
     if (!mounted) return;
+    if (_exitedUnderMenu) {
+      _exitedUnderMenu = false;
+      _setInside(false);
+      _showLabel(null);
+      _hideDock();
+    }
     setState(() {
       _menuIndex = null;
       _menuEntries = const [];
@@ -2394,6 +2403,9 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
   }
 
   void _hover(Offset position, Size size) {
+    // With a menu open the magnification is frozen at the state it had when the menu
+    // opened (#248): the pointer moving over other icons changes nothing.
+    if (_menuIndex != null) return;
     if (widget.autohide) {
       final bottomRow = position.dy >= size.height - 1;
       final hidden =
@@ -2508,7 +2520,7 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
         final menuIndex = _menuIndex;
         final menuAnchor = menuIndex == null || menuIndex >= l.cells.length
             ? null
-            : Offset(l.center(menuIndex), by - _m.labelOffset);
+            : Offset(l.center(menuIndex), _tipYOf(l, menuIndex, size.height));
         final menuRect = menuAnchor == null
             ? null
             : _menuRects.isNotEmpty
@@ -2649,6 +2661,10 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
             onEnter: (event) => _hover(event.localPosition, size),
             onHover: (event) => _hover(event.localPosition, size),
             onExit: (_) {
+              if (_menuIndex != null) {
+                _exitedUnderMenu = true;
+                return;
+              }
               if (_overSeparator) setState(() => _overSeparator = false);
               _setInside(false);
               _showLabel(null);
@@ -2662,119 +2678,139 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
               ),
               child: Stack(
                 children: [
-                  // The plate follows the icons: when they slide (drag, drop) it slides with
-                  // them, with the same duration and curve, instead of jumping to the final
-                  // width (#235).
-                  AnimatedPositioned(
-                    duration: _slideDuration(sliding),
-                    curve: _slideCurve,
-                    left: bx,
-                    top: by,
-                    width: bw,
-                    height: bh,
-                    child: ProfiledGlass(
-                      profile: ShellGlassProfile.dock,
-                      radius: _m.radius,
-                      material: GlassMaterial.regular,
-                      // The lowest: the stack, the labels and the menus sit on it.
-                      group: DockGlass.dock,
-                      child: SizedBox.expand(),
-                    ),
-                  ),
-                  Positioned.fill(
-                    child: CustomPaint(
-                      painter: _DockPainter(
-                        items,
-                        l,
-                        size.height,
-                        DockColors.of(context),
-                        indicators: widget.indicators,
-                        launcher: widget.launcher,
-                        opacities: [
-                          for (final item in items) _live[item]?.opacity ?? 1,
-                        ],
-                        dots: [for (final item in items) _live[item]?.dot ?? 1],
-                      ),
-                    ),
-                  ),
-                  for (var i = 0; i < items.length; i++)
-                    if (items[i].minimizedWindow != null)
-                      _windowCell(
-                        l,
-                        i,
-                        iconRect(l, i, size.height).$1,
-                        iconRect(l, i, size.height).$2,
-                        iconRect(l, i, size.height).$3,
-                        items[i].icon,
-                        items[i],
-                      )
-                    else if (items[i].icon != null || i == _stackIndex)
-                      _icon(
-                        l,
-                        i,
-                        size.height,
-                        items[i].icon,
-                        items[i],
-                        sliding,
-                      ),
-                  if (widget.launcher.values.any((s) => s.badge != null))
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: CustomPaint(
-                          painter: _BadgePainter(
-                            items,
-                            l,
-                            size.height,
-                            widget.launcher,
-                            [for (final item in items) _bounceOf(item)],
+                  // Ossido draws the glass under all of the surface's content: the icons, the
+                  // labels and the stack are cut out where the menu lies, so its glass covers
+                  // them (#248).
+                  StackUnderMenu(
+                    menu: menuRect == null ? const [] : [menuRect],
+                    child: Stack(
+                      fit: StackFit.expand,
+                      clipBehavior: Clip.none,
+                      children: [
+                        // The plate follows the icons: when they slide (drag, drop) it slides with
+                        // them, with the same duration and curve, instead of jumping to the final
+                        // width (#235).
+                        AnimatedPositioned(
+                          duration: _slideDuration(sliding),
+                          curve: _slideCurve,
+                          left: bx,
+                          top: by,
+                          width: bw,
+                          height: bh,
+                          child: ProfiledGlass(
+                            profile: ShellGlassProfile.dock,
+                            radius: _m.radius,
+                            material: GlassMaterial.regular,
+                            // The lowest: the stack, the labels and the menus sit on it.
+                            group: DockGlass.dock,
+                            child: SizedBox.expand(),
                           ),
                         ),
-                      ),
-                    ),
-                  if (_drag case final drag?)
-                    ..._dragged(drag, l, items, size.height),
-                  if (_ghost case final ghost?) _faded(ghost),
-                  if (hovered != null && _menuIndex == null)
-                    _label(
-                      l,
-                      hovered,
-                      size.height,
-                      _labelAnim.value.clamp(0.0, 1.0),
-                    ),
-                  // Once the surface has grown for it: Ossido may keep it below the menu bar's
-                  // exclusive zone (770 of 800), so "as tall as the screen" never came and the
-                  // open stack stayed invisible.
-                  if (stackWidget != null && _surfaceGrown(size.height))
-                    Positioned.fill(
-                      child: Focus(
-                        focusNode: _stackFocus,
-                        onKeyEvent: (node, event) {
-                          if (event is KeyDownEvent &&
-                              event.logicalKey == LogicalKeyboardKey.escape) {
-                            // A menu open over the stack closes first, like every menu.
-                            if (_menuIndex != null) {
-                              _menuKey.currentState?.close();
-                            } else {
-                              _closeStack();
-                            }
-                            return KeyEventResult.handled;
-                          }
-                          return KeyEventResult.ignored;
-                        },
-                        // The stack repaints on its own layer while it opens and closes.
-                        child: RepaintBoundary(
-                          child: StackUnderMenu(
-                            menu: menuRect == null ? const [] : [menuRect],
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              children: [stackWidget],
+                        Positioned.fill(
+                          child: CustomPaint(
+                            painter: _DockPainter(
+                              items,
+                              l,
+                              size.height,
+                              DockColors.of(context),
+                              indicators: widget.indicators,
+                              launcher: widget.launcher,
+                              opacities: [
+                                for (final item in items)
+                                  _live[item]?.opacity ?? 1,
+                              ],
+                              dots: [
+                                for (final item in items) _live[item]?.dot ?? 1,
+                              ],
                             ),
                           ),
                         ),
-                      ),
+                        for (var i = 0; i < items.length; i++)
+                          if (items[i].minimizedWindow != null)
+                            _windowCell(
+                              l,
+                              i,
+                              iconRect(l, i, size.height).$1,
+                              iconRect(l, i, size.height).$2,
+                              iconRect(l, i, size.height).$3,
+                              items[i].icon,
+                              items[i],
+                            )
+                          else if (items[i].icon != null || i == _stackIndex)
+                            _icon(
+                              l,
+                              i,
+                              size.height,
+                              items[i].icon,
+                              items[i],
+                              sliding,
+                            ),
+                        if (widget.launcher.values.any((s) => s.badge != null))
+                          Positioned.fill(
+                            child: IgnorePointer(
+                              child: CustomPaint(
+                                painter: _BadgePainter(
+                                  items,
+                                  l,
+                                  size.height,
+                                  widget.launcher,
+                                  [for (final item in items) _bounceOf(item)],
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (_drag case final drag?)
+                          ..._dragged(drag, l, items, size.height),
+                        if (_ghost case final ghost?) _faded(ghost),
+                        if (hovered != null && _menuIndex == null)
+                          _label(
+                            l,
+                            hovered,
+                            size.height,
+                            _labelAnim.value.clamp(0.0, 1.0),
+                          ),
+                        // Once the surface has grown for it: Ossido may keep it below the menu bar's
+                        // exclusive zone (770 of 800), so "as tall as the screen" never came and the
+                        // open stack stayed invisible.
+                        if (stackWidget != null && _surfaceGrown(size.height))
+                          Positioned.fill(
+                            child: Focus(
+                              focusNode: _stackFocus,
+                              onKeyEvent: (node, event) {
+                                if (event is KeyDownEvent &&
+                                    event.logicalKey ==
+                                        LogicalKeyboardKey.escape) {
+                                  // A menu open over the stack closes first, like every menu.
+                                  if (_menuIndex != null) {
+                                    _menuKey.currentState?.close();
+                                  } else {
+                                    _closeStack();
+                                  }
+                                  return KeyEventResult.handled;
+                                }
+                                return KeyEventResult.ignored;
+                              },
+                              // The stack repaints on its own layer while it opens and closes.
+                              child: RepaintBoundary(
+                                child: StackUnderMenu(
+                                  menu: menuRect == null
+                                      ? const []
+                                      : [menuRect],
+                                  child: Stack(
+                                    clipBehavior: Clip.none,
+                                    children: [stackWidget],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (alertRect != null &&
+                            alert != null &&
+                            alertRect.top >= 0)
+                          Positioned.fromRect(rect: alertRect, child: alert),
+                      ],
                     ),
-                  if (alertRect != null && alert != null && alertRect.top >= 0)
-                    Positioned.fromRect(rect: alertRect, child: alert),
+                  ),
                   if (menuAnchor != null)
                     Positioned.fill(
                       child: DockMenuHost(
@@ -3057,11 +3093,16 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     );
   }
 
-  Widget _label(Layout l, int index, double height, double opacity) {
+  /// The tip of the label or of the menu's arrow over the icon `index`: it follows the
+  /// (magnified, bouncing) icon.
+  double _tipYOf(Layout l, int index, double height) {
     final (_, iconTop, side) = iconRect(l, index, height);
     // During the bounce the label rises with the icon.
-    final iconTopY = iconTop - _bounce(index);
-    final tipY = iconTopY - _m.labelGapFor(side);
+    return iconTop - _bounce(index) - _m.labelGapFor(side);
+  }
+
+  Widget _label(Layout l, int index, double height, double opacity) {
+    final tipY = _tipYOf(l, index, height);
     final style = dockLabelStyle(context);
     final width = dockLabelWidth(_items[index].label, style);
     return Positioned(
