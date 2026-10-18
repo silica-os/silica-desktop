@@ -51,6 +51,9 @@ pub const PALETTE: i64 = 0x0100_0000;
 const PROMPT_MARK: char = '\u{10FF01}';
 const OUTPUT_MARK: char = '\u{10FF02}';
 
+/// The narrowest terminal: a wide character needs two cells, and the engine fails on one.
+const MIN_COLUMNS: u16 = 2;
+
 /// The most matches a search returns.
 const MAX_MATCHES: usize = 10_000;
 /// The longest OSC payload kept (OSC 7, OSC 133).
@@ -83,6 +86,32 @@ pub struct Options {
     /// The cursor of programs that do not choose one.
     pub cursor: CursorShape,
     pub cursor_blink: bool,
+    /// The colours programs can ask for (OSC 4, 10, 11, 12): the profile's.
+    pub theme: Theme,
+}
+
+/// The colours of the profile in use, 0xRRGGBB, for the programs that ask (vim and others
+/// look at the background to pick a light or a dark scheme).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Theme {
+    pub foreground: u32,
+    pub background: u32,
+    pub cursor: u32,
+    pub ansi: [u32; 16],
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            foreground: 0x000000,
+            background: 0xffffff,
+            cursor: 0x9d9d9d,
+            ansi: [
+                0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd, 0xe5e5e5,
+                0x7f7f7f, 0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff,
+            ],
+        }
+    }
 }
 
 impl Default for Options {
@@ -93,6 +122,7 @@ impl Default for Options {
             clipboard_read: false,
             cursor: CursorShape::Block,
             cursor_blink: false,
+            theme: Theme::default(),
         }
     }
 }
@@ -147,7 +177,16 @@ impl GridWorker {
                             std::thread::yield_now();
                         }
                         if let Ok(mut grid) = shared.lock() {
-                            grid.advance(slice);
+                            // The engine must not take the terminal down with a panic of its
+                            // own (it has some, on odd sizes and input): start the screen over.
+                            let parsed =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    grid.advance(slice)
+                                }));
+                            if parsed.is_err() {
+                                tracing::error!("the terminal engine panicked: screen reset");
+                                grid.recover();
+                            }
                         }
                     }
                     count.fetch_sub(chunk.len(), Ordering::Relaxed);
@@ -211,15 +250,17 @@ enum Scan {
     #[default]
     Ground,
     Esc,
-    Csi(Vec<u8>),
+    /// A CSI with its parameter and intermediate bytes so far (at most 16).
+    Csi([u8; 16], u8),
     Osc(Vec<u8>),
     OscEsc(Vec<u8>),
 }
 
 /// A sequence the grid reads itself.
 enum Seq {
-    X10(bool),
     Osc(Vec<u8>),
+    /// A CSI the engine gets wrong or does not know: parameters, final byte.
+    Csi(Vec<u8>, u8),
 }
 
 /// Formats the clipboard's text as the OSC 52 answer.
@@ -248,6 +289,8 @@ pub struct TermGrid {
     /// A cell in pixels, for the window size reports.
     cell_size: (u16, u16),
     scan: Scan,
+    /// The start of a CSI cut off by the end of a read.
+    held: Vec<u8>,
     /// Bytes the terminal answers to the program (device attributes, cursor position…).
     replies: Vec<u8>,
     title: Option<String>,
@@ -272,6 +315,9 @@ pub struct TermGrid {
     command_changed: bool,
     last_exit: Option<i32>,
     sub: Option<SubView>,
+    /// Makes the next read panic (tests of the recovery).
+    #[cfg(test)]
+    fail_next: bool,
 }
 
 impl TermGrid {
@@ -283,7 +329,7 @@ impl TermGrid {
     pub fn with_options(cols: u16, rows: u16, options: Options) -> Self {
         let listener = Listener::default();
         let events = listener.events.clone();
-        let size = TermSize::new(usize::from(cols.max(1)), usize::from(rows.max(1)));
+        let size = TermSize::new(usize::from(cols.max(MIN_COLUMNS)), usize::from(rows.max(1)));
         Self {
             term: Term::new(options.config(), &size, listener),
             parser: Processor::new(),
@@ -291,6 +337,7 @@ impl TermGrid {
             options,
             cell_size: (8, 16),
             scan: Scan::Ground,
+            held: Vec::new(),
             replies: Vec::new(),
             title: None,
             full: true,
@@ -311,35 +358,89 @@ impl TermGrid {
             command_changed: false,
             last_exit: None,
             sub: None,
+            #[cfg(test)]
+            fail_next: false,
         }
     }
 
     /// Feeds program output to the emulator. Sequences the grid handles itself (OSC 7, OSC
-    /// 133, DEC mode 9) split the stream, so that the cursor is where the program put it
-    /// when they are read.
+    /// 133) split the stream, so that the cursor is where the program put it when they are
+    /// read; the few CSI sequences the engine gets wrong (see `csi`) are changed or added to.
+    /// A CSI cut off by the end of a read waits for the rest, so that none is seen in halves.
     pub fn advance(&mut self, bytes: &[u8]) {
+        if self.held.is_empty() {
+            self.advance_whole(bytes);
+        } else {
+            let mut joined = std::mem::take(&mut self.held);
+            joined.extend_from_slice(bytes);
+            self.advance_whole(&joined);
+        }
+    }
+
+    /// Starts the screen over after the engine failed, keeping the size and the options.
+    pub fn recover(&mut self) {
+        let cols = self.term.columns().min(usize::from(u16::MAX)) as u16;
+        let rows = self.term.screen_lines().min(usize::from(u16::MAX)) as u16;
+        let fresh = Self::with_options(cols, rows, self.options);
+        let cell_size = self.cell_size;
+        *self = fresh;
+        self.cell_size = cell_size;
+    }
+
+    fn advance_whole(&mut self, bytes: &[u8]) {
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next) {
+            #[allow(clippy::panic)]
+            {
+                panic!("a failure of the engine, for the test");
+            }
+        }
         let mut start = 0;
         let mut i = 0;
+        // Where the escape sequence being read began.
+        let mut begin = 0;
         while let Some(&byte) = bytes.get(i) {
             let scan = std::mem::take(&mut self.scan);
             let (next, done) = Self::step(scan, byte);
             self.scan = next;
+            if byte == 0x1b && matches!(self.scan, Scan::Esc) {
+                begin = i;
+            }
             i += 1;
-            if let Some(done) = done {
-                // Everything up to and including the terminator first.
-                self.parser
-                    .advance(&mut self.term, bytes.get(start..i).unwrap_or(&[]));
-                start = i;
-                self.drain_events();
-                self.sequence(done);
-            } else if matches!(self.scan, Scan::Ground) {
-                // Nothing in progress: skip to the next ESC.
-                let rest = bytes.get(i..).unwrap_or(&[]);
-                i += rest.iter().position(|&b| b == 0x1b).unwrap_or(rest.len());
+            match done {
+                Some(Seq::Osc(payload)) => {
+                    // Everything up to and including the terminator first.
+                    self.parser
+                        .advance(&mut self.term, bytes.get(start..i).unwrap_or(&[]));
+                    start = i;
+                    self.drain_events();
+                    self.osc(&payload);
+                }
+                Some(Seq::Csi(params, last)) => {
+                    self.parser
+                        .advance(&mut self.term, bytes.get(start..begin).unwrap_or(&[]));
+                    start = i;
+                    self.drain_events();
+                    self.csi(bytes.get(begin..i).unwrap_or(&[]), &params, last);
+                }
+                None if matches!(self.scan, Scan::Ground) => {
+                    // Nothing in progress: skip to the next ESC.
+                    let rest = bytes.get(i..).unwrap_or(&[]);
+                    i += rest.iter().position(|&b| b == 0x1b).unwrap_or(rest.len());
+                }
+                None => {}
             }
         }
-        self.parser
-            .advance(&mut self.term, bytes.get(start..).unwrap_or(&[]));
+        // A CSI (or the ESC before one) cut off by the end: keep it for the next read.
+        if matches!(self.scan, Scan::Esc | Scan::Csi(..)) && begin >= start {
+            self.parser
+                .advance(&mut self.term, bytes.get(start..begin).unwrap_or(&[]));
+            self.held = bytes.get(begin..).unwrap_or(&[]).to_vec();
+            self.scan = Scan::Ground;
+        } else {
+            self.parser
+                .advance(&mut self.term, bytes.get(start..).unwrap_or(&[]));
+        }
         self.drain_events();
     }
 
@@ -356,22 +457,22 @@ impl TermGrid {
             ),
             Scan::Esc => match byte {
                 b']' => (Scan::Osc(Vec::new()), None),
-                b'[' => (Scan::Csi(Vec::new()), None),
+                b'[' => (Scan::Csi([0; 16], 0), None),
                 0x1b => (Scan::Esc, None),
                 _ => (Scan::Ground, None),
             },
-            Scan::Csi(mut params) => match byte {
+            Scan::Csi(mut buf, len) => match byte {
                 0x40..=0x7e => {
-                    let seq = match (params.as_slice(), byte) {
-                        (b"?9", b'h') => Some(Seq::X10(true)),
-                        (b"?9", b'l') => Some(Seq::X10(false)),
-                        _ => None,
-                    };
+                    let params = buf.get(..usize::from(len)).unwrap_or(&[]);
+                    let seq =
+                        Self::wants_csi(params, byte).then(|| Seq::Csi(params.to_vec(), byte));
                     (Scan::Ground, seq)
                 }
-                0x20..=0x3f if params.len() < 16 => {
-                    params.push(byte);
-                    (Scan::Csi(params), None)
+                0x20..=0x3f if len < 16 => {
+                    if let Some(slot) = buf.get_mut(usize::from(len)) {
+                        *slot = byte;
+                    }
+                    (Scan::Csi(buf, len + 1), None)
                 }
                 0x1b => (Scan::Esc, None),
                 _ => (Scan::Ground, None),
@@ -396,11 +497,81 @@ impl TermGrid {
         }
     }
 
-    fn sequence(&mut self, seq: Seq) {
-        match seq {
-            Seq::X10(on) => self.x10_mouse = on,
-            Seq::Osc(payload) => self.osc(&payload),
+    /// The CSI sequences `csi` takes over or completes.
+    fn wants_csi(params: &[u8], last: u8) -> bool {
+        match last {
+            // DCH, ED, DECSTR, window operations; modes 9, 6, 47 and 1047.
+            b'P' | b'J' | b'p' | b't' => true,
+            b'h' | b'l' => matches!(params, b"?9" | b"?6" | b"?47" | b"?1047"),
+            _ => false,
         }
+    }
+
+    /// A CSI the engine gets wrong or does not know (found by the conformance suite,
+    /// `termgrid/conformance.rs`): `original` is the sequence as it came.
+    fn csi(&mut self, original: &[u8], params: &[u8], last: u8) {
+        let number = |p: &[u8]| -> Option<usize> {
+            std::str::from_utf8(p).ok().and_then(|t| t.parse().ok())
+        };
+        match (params, last) {
+            // DX mode 9: X10 mouse reports, which the engine does not know.
+            (b"?9", b'h' | b'l') => {
+                self.x10_mouse = last == b'h';
+                self.feed_raw(original);
+            }
+            // DCH deletes the cells it is asked for, up to the end of the line: the engine
+            // erases cells before the cursor when it is asked for more than there are.
+            (p, b'P') if p.iter().all(u8::is_ascii_digit) => {
+                let want = if p.is_empty() { Some(1) } else { number(p) };
+                let room = self
+                    .term
+                    .columns()
+                    .saturating_sub(self.term.grid().cursor.point.column.0);
+                let count = want.map_or(room, |n| n.max(1).min(room));
+                self.feed_raw(format!("\x1b[{count}P").as_bytes());
+            }
+            // ED 1 erases from the start of the screen to the cursor: the engine leaves the
+            // first row alone when the cursor is on the second.
+            (b"1", b'J') => {
+                self.feed_raw(original);
+                if self.term.grid().cursor.point.line.0 == 1 {
+                    let template = self.term.grid().cursor.template.clone();
+                    self.term.grid_mut()[Line(0)].reset(&template);
+                }
+            }
+            // Origin mode homes the cursor when it is turned off too.
+            (b"?6", b'l') => {
+                self.feed_raw(original);
+                self.feed_raw(b"\x1b[H");
+            }
+            // 47 and 1047 are the alternate screen: handled as 1049 (with the cursor).
+            (b"?47" | b"?1047", b'h') => self.feed_raw(b"\x1b[?1049h"),
+            (b"?47" | b"?1047", b'l') => self.feed_raw(b"\x1b[?1049l"),
+            // DECSTR: the modes, the rendition, the margins and the character sets back to
+            // their defaults; the screen and the cursor stay.
+            (b"!", b'p') => {
+                let point = self.term.grid().cursor.point;
+                self.feed_raw(
+                    b"\x1b[?1l\x1b>\x1b[4l\x1b[?6l\x1b[?7h\x1b[?25h\x1b[m\x1b(B\x1b)B\x0f\x1b[0 q\x1b[r",
+                );
+                self.feed_raw(
+                    format!("\x1b[{};{}H", point.line.0.max(0) + 1, point.column.0 + 1).as_bytes(),
+                );
+            }
+            // The size of a cell in pixels, which the engine does not answer.
+            (b"16", b't') => {
+                let (w, h) = self.cell_size;
+                self.replies
+                    .extend_from_slice(format!("\x1b[6;{h};{w}t").as_bytes());
+            }
+            _ => self.feed_raw(original),
+        }
+    }
+
+    /// Bytes for the parser, as they are.
+    fn feed_raw(&mut self, bytes: &[u8]) {
+        self.parser.advance(&mut self.term, bytes);
+        self.drain_events();
     }
 
     fn osc(&mut self, payload: &[u8]) {
@@ -518,7 +689,7 @@ impl TermGrid {
                     let rgb = (index < 269)
                         .then(|| colors[index])
                         .flatten()
-                        .unwrap_or_else(|| default_rgb(index));
+                        .unwrap_or_else(|| default_rgb(index, &self.options.theme));
                     self.replies.extend_from_slice(format(rgb).as_bytes());
                 }
                 Event::TextAreaSizeRequest(format) => {
@@ -549,7 +720,7 @@ impl TermGrid {
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16) {
-        let size = TermSize::new(usize::from(cols.max(1)), usize::from(rows.max(1)));
+        let size = TermSize::new(usize::from(cols.max(MIN_COLUMNS)), usize::from(rows.max(1)));
         self.term.resize(size);
         self.full = true;
     }
@@ -559,6 +730,39 @@ impl TermGrid {
         self.options = options;
         self.term.set_options(options.config());
         self.full = true;
+    }
+
+    /// The visible rows as text, trailing blanks trimmed (tests).
+    #[cfg(test)]
+    pub(crate) fn screen(&self) -> Vec<String> {
+        let grid = self.term.grid();
+        (0..self.term.screen_lines())
+            .map(|y| {
+                let row = &grid[Line(y as i32)];
+                let mut text = String::new();
+                for x in 0..self.term.columns() {
+                    let cell = &row[Column(x)];
+                    if cell
+                        .flags
+                        .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+                    {
+                        continue;
+                    }
+                    text.push(if cell.c == '\0' { ' ' } else { cell.c });
+                    if let Some(zw) = cell.zerowidth() {
+                        text.extend(zw.iter().filter(|&&c| c != PROMPT_MARK && c != OUTPUT_MARK));
+                    }
+                }
+                text.trim_end().to_owned()
+            })
+            .collect()
+    }
+
+    /// The cursor as (column, row), zero-based (tests).
+    #[cfg(test)]
+    pub(crate) fn cursor_cell(&self) -> (usize, usize) {
+        let point = self.term.grid().cursor.point;
+        (point.column.0, point.line.0.max(0) as usize)
     }
 
     pub fn options(&self) -> Options {
@@ -1472,16 +1676,10 @@ fn palette(index: Option<usize>, colors: &Colors) -> i64 {
     PALETTE + index as i64
 }
 
-/// The colour of palette entry `index` when a program asks for it (OSC 4/10/11 queries).
-fn default_rgb(index: usize) -> Rgb {
+/// The colour of palette entry `index` when a program asks for it (OSC 4/10/11/12 queries).
+fn default_rgb(index: usize, theme: &Theme) -> Rgb {
     let value = match index {
-        0..=15 => {
-            const BASE: [u32; 16] = [
-                0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd, 0xe5e5e5,
-                0x7f7f7f, 0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff,
-            ];
-            BASE.get(index).copied().unwrap_or(0)
-        }
+        0..=15 => theme.ansi.get(index).copied().unwrap_or(0),
         16..=231 => {
             let i = index as u32 - 16;
             let level = |v: u32| if v == 0 { 0 } else { 55 + v * 40 };
@@ -1491,10 +1689,9 @@ fn default_rgb(index: usize) -> Rgb {
             let v = 8 + (index as u32 - 232) * 10;
             (v << 16) | (v << 8) | v
         }
-        // Foreground.
-        256 => 0x000000,
-        // Background.
-        257 => 0xffffff,
+        256 => theme.foreground,
+        257 => theme.background,
+        258 => theme.cursor,
         _ => 0x808080,
     };
     Rgb {
@@ -1503,6 +1700,9 @@ fn default_rgb(index: usize) -> Rgb {
         b: value as u8,
     }
 }
+
+#[cfg(test)]
+mod conformance;
 
 #[cfg(test)]
 mod tests {
@@ -2055,11 +2255,74 @@ mod tests {
     }
 
     #[test]
+    fn a_panic_of_the_engine_starts_the_screen_over_instead_of_ending_the_terminal() {
+        let worker = GridWorker::with_options(10, 3, Options::default()).unwrap();
+        worker.feed(b"before".to_vec());
+        while worker.queued() > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        worker.with(|g| g.fail_next = true);
+        worker.feed(b"lost".to_vec());
+        while worker.queued() > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        // The screen is blank but alive, and keeps its size.
+        let (frames, _) = worker.frames(1);
+        assert!(
+            frames
+                .iter()
+                .all(|f| !f["lines"].to_string().contains("before"))
+        );
+        worker.feed(b"after".to_vec());
+        while worker.queued() > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let (frames, _) = worker.frames(1);
+        let frame = frames.first().unwrap();
+        assert_eq!(frame["cols"], 10);
+        assert!(frame["lines"].to_string().contains("after"));
+    }
+
+    #[test]
     fn indexed_colours_are_not_baked_in() {
         let colors = Colors::default();
         assert_eq!(palette(Some(1), &colors), PALETTE + 1);
         assert_eq!(palette(None, &colors), -1);
-        assert_eq!(default_rgb(196), Rgb { r: 255, g: 0, b: 0 });
+        assert_eq!(
+            default_rgb(196, &Theme::default()),
+            Rgb { r: 255, g: 0, b: 0 }
+        );
+    }
+
+    #[test]
+    fn programs_asking_for_colours_hear_the_profile() {
+        let theme = Theme {
+            foreground: 0xe6e6e6,
+            background: 0x262c38,
+            cursor: 0x123456,
+            ansi: {
+                let mut a = Theme::default().ansi;
+                a[1] = 0xb45647;
+                a
+            },
+        };
+        let mut grid = TermGrid::with_options(
+            10,
+            2,
+            Options {
+                theme,
+                ..Options::default()
+            },
+        );
+        grid.advance(b"\x1b]10;?\x07\x1b]11;?\x07\x1b]12;?\x1b\\\x1b]4;1;?\x07");
+        let reply = String::from_utf8_lossy(&grid.take_replies()).into_owned();
+        assert!(reply.contains("]10;rgb:e6e6/e6e6/e6e6"), "{reply}");
+        assert!(reply.contains("]11;rgb:2626/2c2c/3838"), "{reply}");
+        assert!(reply.contains("]12;rgb:1212/3434/5656"), "{reply}");
+        assert!(reply.contains("]4;1;rgb:b4b4/5656/4747"), "{reply}");
+        // A program that sets a colour is heard as well.
+        grid.advance(b"\x1b]11;rgb:00/00/ff\x07\x1b]11;?\x07");
+        assert!(String::from_utf8_lossy(&grid.take_replies()).contains("]11;rgb:0000/0000/ffff"));
     }
 
     /// A flood of output through the real worker, as the embedder runs it: the parser thread
@@ -2084,7 +2347,8 @@ mod tests {
             .flat_map(|i| format!("{i}\r\n").into_bytes())
             .collect();
         let yes: Vec<u8> = b"y\r\n".repeat(5_000_000);
-        let line = "The quick brown fox jumps over the lazy dog, and then some more words follow it.";
+        let line =
+            "The quick brown fox jumps over the lazy dog, and then some more words follow it.";
         let cat: Vec<u8> = (0..1_000_000u32)
             .flat_map(|i| format!("{i:07} {line}\r\n").into_bytes())
             .collect();

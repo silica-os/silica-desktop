@@ -341,7 +341,7 @@ controlling terminal between fork and exec, is in `ffi/pty.rs`). JSONMethodCodec
   per pty; `exit {id, code?, signal?}` after the last output.
 - **Grid sessions** (`spawn {grid: true, scrollback?: 0–1000000 (default 10000),
   clipboardWrite?: true, clipboardRead?: false, cursor?: block|underline|beam, cursorBlink?:
-  false}`): the embedder emulates the terminal
+  false, theme?: {foreground, background, cursor, ansi: [16]}}`): the embedder emulates the terminal
   (alacritty_terminal on a thread of its own, `termgrid.rs`) and the app receives no `output`.
   Once per frame, if anything changed, it gets `grid {id, cols, rows, full, lines: [{y, runs:
   [[text, fg, bg, flags, cells, link?], …]}], cursor: {x, y, visible, shape}, modes, …}`: only
@@ -368,7 +368,8 @@ controlling terminal between fork and exec, is in `ffi/pty.rs`). JSONMethodCodec
   caseSensitive?}` → matches in order, each a list of `[row, x0, x1]` pieces (rows from the top
   of the buffer, more than one piece when the match crosses a soft wrap), at most 10000;
   `mark {id, op?: add|remove}` → bool; `clear {id, what: scrollback|toStart|toMark|screen}` →
-  bool; `reset {id, hard?}`; `configure {id, scrollback?, clipboardWrite?, clipboardRead?, cursor?, cursorBlink?}`;
+  bool; `reset {id, hard?}`; `configure {id, scrollback?, clipboardWrite?, clipboardRead?, cursor?, cursorBlink?, theme?}`
+  (`theme` colours, 0xRRGGBB, are what programs hear when they ask with OSC 4, 10, 11 and 12);
   `clipboard {id, text}` (answers an OSC 52 read; one answer per question); `cwd {id}` → the
   directory of OSC 7, else the shell's from `/proc`, on any pty.
 - **Split view**: `split {id, op: open|resize|close, rows}` adds a second view of the same

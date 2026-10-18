@@ -39,7 +39,7 @@ use rustix::pty::OpenptFlags;
 use rustix::termios::Winsize;
 use serde_json::{Value, json};
 
-use crate::termgrid::{MAX_SCROLLBACK, Options, ScrollBy};
+use crate::termgrid::{MAX_SCROLLBACK, Options, ScrollBy, Theme};
 
 pub const CHANNEL: &str = "silica/pty";
 
@@ -253,6 +253,9 @@ fn options_of(args: &Value, base: Options) -> Result<Options, String> {
             .ok_or("scrollback must be 0 to 1000000 lines")?;
         options.scrollback = lines;
     }
+    if let Some(value) = field(args, "theme") {
+        options.theme = theme_of(value, options.theme)?;
+    }
     if let Some(value) = field(args, "cursor") {
         options.cursor = match value.as_str() {
             Some("block") => CursorShape::Block,
@@ -273,6 +276,40 @@ fn options_of(args: &Value, base: Options) -> Result<Options, String> {
         }
     }
     Ok(options)
+}
+
+/// The colours of the profile: `{foreground, background, cursor, ansi: [16 × 0xRRGGBB]}`.
+fn theme_of(value: &Value, base: Theme) -> Result<Theme, String> {
+    let colour = |key: &str, fallback: u32| -> Result<u32, String> {
+        match field(value, key) {
+            None => Ok(fallback),
+            Some(v) => v
+                .as_u64()
+                .and_then(|c| u32::try_from(c).ok())
+                .filter(|&c| c <= 0xff_ffff)
+                .ok_or_else(|| format!("theme {key} must be a colour 0xRRGGBB")),
+        }
+    };
+    let mut theme = Theme {
+        foreground: colour("foreground", base.foreground)?,
+        background: colour("background", base.background)?,
+        cursor: colour("cursor", base.cursor)?,
+        ansi: base.ansi,
+    };
+    if let Some(list) = field(value, "ansi") {
+        let list = list
+            .as_array()
+            .filter(|l| l.len() == 16)
+            .ok_or("theme ansi needs 16 colours")?;
+        for (slot, v) in theme.ansi.iter_mut().zip(list) {
+            *slot = v
+                .as_u64()
+                .and_then(|c| u32::try_from(c).ok())
+                .filter(|&c| c <= 0xff_ffff)
+                .ok_or("theme ansi colours must be 0xRRGGBB")?;
+        }
+    }
+    Ok(theme)
 }
 
 fn view_of(args: &Value) -> Result<u8, String> {
@@ -1446,6 +1483,22 @@ mod tests {
         assert!(parse("clear", json!({"id": 1, "what": "everything"})).is_err());
         assert!(parse("configure", json!({"id": 1, "scrollback": 2_000_000})).is_err());
         assert!(parse("configure", json!({"id": 1, "clipboardRead": "yes"})).is_err());
+        let Call::Grid {
+            op: GridOp::Configure(args),
+            ..
+        } = parse(
+            "configure",
+            json!({"id": 1, "theme": {"foreground": 255, "ansi": vec![0; 16]}}),
+        )
+        .unwrap()
+        else {
+            panic!("not a configure");
+        };
+        let theme = options_of(&args, Options::default()).unwrap().theme;
+        assert_eq!((theme.foreground, theme.background), (255, 0xffffff));
+        assert!(parse("configure", json!({"id": 1, "theme": {"background": -1}})).is_err());
+        assert!(parse("configure", json!({"id": 1, "theme": {"ansi": [1, 2]}})).is_err());
+        assert!(parse("configure", json!({"id": 1, "theme": {"cursor": 16777216}})).is_err());
         assert!(
             parse("scroll", json!({"lines": 1})).is_err(),
             "an id is needed"
