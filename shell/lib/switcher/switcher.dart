@@ -522,7 +522,7 @@ class SwitcherPanel extends StatelessWidget {
         width: side,
         height: side,
         child: switch (app.icon) {
-          final source? => SilicaIcon(source, side: side, dark: false),
+          final source? => SilicaIcon(source, side: side),
           null => DecoratedBox(
             decoration: AmalfiShapeDecoration(
               color: theme.colors.surfaceControl,
