@@ -41,6 +41,7 @@ import 'launcher_entry.dart';
 import 'options.dart';
 import 'recent_documents.dart';
 import 'icons.dart';
+import 'pending_icon.dart';
 import 'stack.dart';
 import 'stack_settings.dart';
 import 'trash_alert.dart';
@@ -1248,6 +1249,9 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
       _items,
       width: size.width,
       height: size.height,
+      pointerX: _pointerX,
+      amount: _amount,
+      magnified: _magnified,
     );
     final x = local.dx, y = local.dy, height = size.height;
     final separator = _items.indexWhere((i) => i.kind == ItemKind.separator);
@@ -1334,7 +1338,9 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
         final target =
             index != null &&
                 _items[index].acceptsFiles &&
-                (_items[index].folder == null ||
+                // A folder and the Trash are targets in the middle only; the edges between
+                // cells are insertion points for a folder dragged in (dock-stacks.md).
+                ((_items[index].folder == null && !_items[index].trash) ||
                     (local.dx - current.center(index)).abs() <=
                         current.cells[index].$2 / 4)
             ? index
@@ -1524,6 +1530,15 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
         _slotTicker.start();
       }
     }
+  }
+
+  /// The plain glyph of a folder, shown under its icon until the composed one is drawn (#234).
+  IconSource? _glyphOf(Item item) {
+    if (item.folder == null) return null;
+    if (item.layered != null) return LayeredSource(item.layered!);
+    if (item.iconPath != null) return FlatSource(item.iconPath!);
+    final plain = findSilicaIcon('folder-generic');
+    return plain == null ? null : LayeredSource(plain);
   }
 
   void _publishSlots() {
@@ -2947,7 +2962,11 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     // With the stack open the folder icon becomes the button that closes it (D-06).
     final closing = _stackIndex == index;
     final pile = closing ? null : _pileOf(item);
-    final icon = closing
+    // A folder shown by its own icon (no pile): the glyph stands until that icon is drawn.
+    final glyph = closing || (pile != null && pile.isNotEmpty)
+        ? null
+        : _glyphOf(item);
+    Widget iconFor(VoidCallback? composed) => closing
         // The silica-icons "Stack Close" badge on the folder's canvas (dock-stacks.md,
         // "The icon in the Dock").
         ? StackCloseButton(
@@ -2966,9 +2985,24 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
         : source == null
         ? const SizedBox.shrink()
         : _drawn(
-            (body) => SilicaIcon(source, side: body, besideApps: !item.isPlace),
+            (body) => SilicaIcon(
+              source,
+              side: body,
+              besideApps: !item.isPlace,
+              onComposed: composed,
+            ),
             side,
             place: item.isPlace,
+          );
+    final shown = glyph == null
+        ? iconFor(null)
+        : PendingIcon(
+            placeholder: _drawn(
+              (body) => SilicaIcon(glyph, side: body),
+              side,
+              place: true,
+            ),
+            builder: iconFor,
           );
     final live = _live[item];
     // The launch hop: 17 pt (about 18 with the magnification) in the same animation.
@@ -2991,9 +3025,9 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
                   pressedShade,
                   BlendMode.srcATop,
                 ),
-                child: icon,
+                child: shown,
               )
-            : icon,
+            : shown,
       ),
     );
   }

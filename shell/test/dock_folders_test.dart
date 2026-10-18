@@ -1,10 +1,16 @@
-// Dock folders and plate (#235): folders reorder among themselves, the Trash removes what is
-// dropped on it, and the plate slides with the icons.
+// Dock folders (#235, #234): they reorder among themselves, the Trash removes what is dropped
+// on it, the plate slides with the icons, and a new folder never leaves an empty slot.
 
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:silica_shell/dock/dock.dart';
 import 'package:silica_shell/dock/model.dart';
+import 'package:silica_ui/silica_ui.dart';
 
 const _items = [
   Item.app('Uno', command: 'uno', pinned: true),
@@ -142,5 +148,138 @@ void main() {
     expect(plate(tester), closeTo(full - cellPitch, 0.5));
     await g.up();
     await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('a folder dragged in gets a gap at the Trash edge too', (
+    tester,
+  ) async {
+    await pump(tester);
+    final rest = layout(_items, width: 1280, height: height);
+    Future<void> send(String method, [Object? args]) async {
+      await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+        SilicaDrag.channel.name,
+        const JSONMethodCodec().encodeMethodCall(MethodCall(method, args)),
+        (_) {},
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+
+    final before = plate(tester);
+    final x = rest.center(6) - rest.cells[6].$2 / 2 + 3;
+    await send('enter', {'x': x, 'y': y});
+    await send('motion', {'x': x, 'y': y});
+    expect(plate(tester), greaterThan(before + 20));
+    await send('leave');
+    expect(plate(tester), closeTo(before, 0.5));
+  });
+
+  group('the glyph of a folder stands until its icon is drawn', () {
+    // A 1 x 1 PNG.
+    final png = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==',
+    );
+    bool glyph(Widget w) => w is SilicaIcon && w.source is FlatSource;
+    bool drawn(WidgetTester tester) => find
+        .byType(RawImage)
+        .evaluate()
+        .any((e) => (e.widget as RawImage).image != null);
+
+    testWidgets('an icon that never arrives keeps the glyph', (tester) async {
+      final dir = Directory.systemTemp.createTempSync('glyph');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final icon = '${dir.path}/folder.svg';
+      File(icon).writeAsStringSync(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8"/></svg>',
+      );
+      final never = Completer<List<Object?>>();
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SilicaThumbnails.channel,
+        (_) => never.future,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SilicaThumbnails.channel,
+          null,
+        ),
+      );
+      await pump(
+        tester,
+        items: [
+          ..._items.take(3),
+          Item.app(
+            'New',
+            command: 'x',
+            folder: '${dir.path}/new',
+            iconPath: icon,
+          ),
+          ..._items.skip(6),
+        ],
+      );
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(seconds: 1));
+      }
+      expect(find.byWidgetPredicate(glyph), findsOneWidget);
+      // Nothing polls: no frame is scheduled and no timer is left pending.
+      expect(tester.binding.transientCallbackCount, 0);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(tester.hasRunningAnimations, isFalse);
+    });
+
+    testWidgets('it swaps to the image once drawn, with no blank frame', (
+      tester,
+    ) async {
+      final dir = Directory.systemTemp.createTempSync('glyph');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final icon = '${dir.path}/folder.svg';
+      File(icon).writeAsStringSync(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8"/></svg>',
+      );
+      final composed = '${dir.path}/composed.png';
+      File(composed).writeAsBytesSync(png);
+      final reply = Completer<List<Object?>>();
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SilicaThumbnails.channel,
+        (_) => reply.future,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SilicaThumbnails.channel,
+          null,
+        ),
+      );
+      await pump(
+        tester,
+        items: [
+          ..._items.take(3),
+          Item.app(
+            'New',
+            command: 'x',
+            folder: '${dir.path}/new',
+            iconPath: icon,
+          ),
+          ..._items.skip(6),
+        ],
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.byWidgetPredicate(glyph), findsOneWidget);
+      expect(drawn(tester), isFalse);
+      reply.complete([composed, false]);
+      await tester.runAsync(() async {
+        for (var i = 0; i < 200 && !drawn(tester); i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 25));
+          await tester.pump(const Duration(milliseconds: 25));
+          // Never a frame with neither the glyph nor the composed image.
+          expect(
+            find.byWidgetPredicate(glyph).evaluate().isNotEmpty ||
+                drawn(tester),
+            isTrue,
+          );
+        }
+      });
+      await tester.pump();
+      expect(drawn(tester), isTrue);
+      expect(find.byWidgetPredicate(glyph), findsNothing);
+    });
   });
 }
