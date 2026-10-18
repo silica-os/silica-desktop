@@ -10,7 +10,7 @@ Terminal › Settings… (⌘,) in Amalfi. Behaviour and content come from the T
 
 | Item | Amalfi value |
 |---|---|
-| Size | **800 × 680**, fixed (not resizable). The reference measured 671 × 628; Amalfi widens it so the six profile sub-tabs (6 × 80) and the longest option ("Only if there are processes other than the login shell", 321 pt at Body 13) fit without truncation, and adds 52 for the Settings Tabs bar under the title bar |
+| Size | **800 × 680**, fixed (not resizable). The reference measured 671 × 628; Amalfi widens it so the six profile sub-tabs (6 × 80) and the longest option ("Only if there are processes other than the login shell", 321 pt at Body 13) fit without truncation, and adds 52 for the icon + label segmented control under the title bar |
 | Chrome | window corner 18, smooth 0.6, `Surface/Window`, rim `Line/Border`, shadow `#0000002E` 0/12/32; `Titlebars/Piece/Controls/Active` at 0,0 (96 × 52); no title text, as the other settings windows of the kit |
 | Title bar | 52 tall, window controls only |
 | Pane tabs | `Segments/Control/One 4 Icon + Label` (see [`components.md`](components.md) › Segmented Control, Icon + Label), 456 × 52 at x 172, y 52 (centred under the title bar): four panes of 112 ("Window Groups", 84 pt at Caption 11, + 24 rounded up to 8): General (`gear`), Profiles (`terminal`), Window Groups (`window-stack`), Encodings (`globe`). The chosen pane swaps to `Segments/Icon + Label Item/Selected` (control surface, accent glyph) |
