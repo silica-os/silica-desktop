@@ -4,11 +4,10 @@
 //! - 90 pt tall thumbnails (160 × 90 on the 16:9 reference screen: the width follows the
 //!   screen's aspect, as the wallpaper must fill it; the kit draws 160 × 92, which is no screen's
 //!   aspect), 32 pt apart, centered around y 98 (the middle of the kit's 52–144, ring 48–148).
-//! - The row is centered when the bar expands, not at each addition: a new space enters the
-//!   free position to the right of the last one, born at the right edge of the screen (right
-//!   edge 16 pt from it) and sliding there on a critically damped spring (ω 0.0160 rad/ms).
-//! - Removing the last space moves nothing; removing another one recenters the row (spring
-//!   ω 0.0165 rad/ms, ω 0.0247 when the thumbnails also change size).
+//! - A new space is born at the right edge of the screen (right edge 16 pt from it) and slides
+//!   to its slot on a critically damped spring (ω 0.0160 rad/ms). User decision (issue #246,
+//!   diverging from the measurement): the row recenters at once after an addition and after any
+//!   removal (spring ω 0.0165 rad/ms, ω 0.0247 when the thumbnails also change size).
 //! - When they do not fit (more than 12 on the reference screen) they all shrink together
 //!   with ~76 pt left on each side (16 spaces: ~126 × 71, pitch ~152).
 
@@ -144,42 +143,25 @@ impl Row {
         })
     }
 
-    /// A space added at the end: it is born at the right edge and slides to the free
-    /// position after the last one; if that does not fit, the whole row recenters (and
-    /// shrinks).
+    /// A space added at the end: it is born at the right edge and slides to its slot while
+    /// the whole row recenters at once (user decision, issue #246: the measured behaviour left
+    /// the row where it was until Panorama was reopened).
     pub fn add(&mut self, output: Size<f64, Logical>, now: Instant, speed: f64) {
         let current = self.rects(now, speed);
-        let count = self.slots.len() + 1;
-        let next = self.slots.last().map(|slot| {
-            let pitch = slot.to.size.w + THUMB_GAP * slot.to.size.h / THUMB_HEIGHT;
-            Rectangle::new((slot.to.loc.x + pitch, slot.to.loc.y).into(), slot.to.size)
-        });
-        let fits = next.is_some_and(|rect| {
-            full_size(rect) && rect.loc.x + rect.size.w <= output.w - ROW_MARGIN + 0.5
-        });
-        let targets = match next {
-            Some(next) if fits => {
-                let mut targets = self.targets();
-                targets.push(next);
-                targets
-            }
-            _ => centered(count, output),
-        };
-        let resized = !fits;
-        let mut slots = Vec::with_capacity(count);
+        let targets = centered(self.slots.len() + 1, output);
+        let mut slots = Vec::with_capacity(targets.len());
         for (index, to) in targets.into_iter().enumerate() {
             let slot = match current.get(index) {
-                Some(from) if resized => Slot {
+                Some(from) => Slot {
                     from: *from,
                     to,
                     start: now,
-                    omega: RESIZE_OMEGA,
+                    omega: if (from.size.w - to.size.w).abs() > 0.5 {
+                        RESIZE_OMEGA
+                    } else {
+                        ADD_OMEGA
+                    },
                 },
-                Some(_) => self
-                    .slots
-                    .get(index)
-                    .cloned()
-                    .unwrap_or(Slot::still(to, now)),
                 None => {
                     let born = Rectangle::new(
                         (output.w - BORN_RIGHT - to.size.w, to.loc.y).into(),
@@ -199,16 +181,15 @@ impl Row {
     }
 
     /// The space at `index` removed: it disappears at once; the others close the gap
-    /// recentering, unless it was the last one.
+    /// recentering (also when it was the last one: user decision, issue #246).
     pub fn remove(&mut self, index: usize, output: Size<f64, Logical>, now: Instant, speed: f64) {
         if index >= self.slots.len() {
             return;
         }
         let mut current = self.rects(now, speed);
         current.remove(index);
-        let last = index + 1 == self.slots.len();
         self.slots.remove(index);
-        if last || self.slots.is_empty() {
+        if self.slots.is_empty() {
             return;
         }
         let targets = centered(self.slots.len(), output);
@@ -269,31 +250,34 @@ mod tests {
     }
 
     #[test]
-    fn a_new_space_slides_in_from_the_right_and_the_others_stay() {
+    fn a_new_space_slides_in_from_the_right_and_the_row_recenters() {
         let output = Size::from(REFERENCE);
         let start = Instant::now();
         let mut row = Row::centered(2, output, start);
         row.add(output, start, 1.0);
-        // The first two do not move; the new one is born at the right edge (2384–2543)...
+        // At the start nothing has moved; the new one is born at the right edge (2384–2543)...
         let now = row.rects(start, 1.0);
         assert_eq!(xs(&now), [1104.0, 1296.0, 2384.0]);
-        // ...and arrives after the second (pitch 192) with the measured spring: 50 % at ~104 ms.
-        assert_eq!(row.targets()[2].loc.x, 1488.0);
+        // ...and the three end centered (1008, 1200, 1392), with the measured spring.
+        assert_eq!(xs(&row.targets()), [1008.0, 1200.0, 1392.0]);
         let half = row.rects(start + Duration::from_millis(104), 1.0)[2].loc.x;
-        assert!((half - (2384.0 + 1488.0) / 2.0).abs() < 40.0, "{half}");
+        assert!((half - (2384.0 + 1392.0) / 2.0).abs() < 40.0, "{half}");
         let end = row.rects(start + Duration::from_millis(800), 1.0);
-        assert!((end[2].loc.x - 1488.0).abs() < 1.0);
-        assert_eq!(xs(&end)[..2], [1104.0, 1296.0]);
+        assert!((end[2].loc.x - 1392.0).abs() < 1.0);
+        assert!((end[0].loc.x - 1008.0).abs() < 1.0);
         assert!(!row.moving(start + Duration::from_millis(900), 1.0));
     }
 
     #[test]
-    fn removing_the_last_space_moves_nothing_removing_another_recenters() {
+    fn removing_a_space_recenters_the_row_even_the_last() {
         let output = Size::from(REFERENCE);
         let start = Instant::now();
         let mut row = Row::centered(3, output, start);
         row.remove(2, output, start, 1.0);
         assert_eq!(xs(&row.rects(start, 1.0)), [1008.0, 1200.0]);
+        assert_eq!(xs(&row.targets()), [1104.0, 1296.0]);
+        let end = row.rects(start + Duration::from_secs(2), 1.0);
+        assert!((end[0].loc.x - 1104.0).abs() < 0.5);
 
         // 8 → 7, the fifth removed: the others close the gap ±96 and recenter (624 + 192 i).
         let mut row = Row::centered(8, output, start);

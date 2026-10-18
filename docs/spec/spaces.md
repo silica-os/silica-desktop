@@ -44,11 +44,12 @@ In the expanded spaces bar a "+" sits at the right end.
 | Press on "+" | ghost darkens to about 68 % brightness; on release it vanishes in one frame |
 | New thumbnail | appears ~27 ms after release at the right edge (right side aligned with the "+"), then slides left into the next free slot |
 | Slide curve | spring ω ≈ 16 s⁻¹: 50 % at ~105 ms, 90 % at ~240 ms, 99 % at ~410 ms, no overshoot |
-| Other thumbnails | do not move |
+| Other thumbnails | do not move in the reference; **user decision (#246):** they slide to the recentred row |
 
 Thumbnail layout: 160 × 90 pt, pitch 192 pt (gap 32), top at y 52. The row is centred when the
-bar expands; adding or removing a space later does not recentre it (consistent with every
-observation, not verified directly). Labels "Desktop N" are centred under each thumbnail. The
+bar expands. The reference did not recentre it when a space was added or removed later;
+**user decision (issue #246):** Silica recentres it at once, animated, after adding and after
+removing a space. Labels "Desktop N" are centred under each thumbnail. The
 current space has a 3 pt accent ring (sRGB `#3b99fd`); new thumbnails have none.
 
 Do not reproduce: the new thumbnail shows black for one frame before its content is drawn.
@@ -61,7 +62,7 @@ Do not reproduce: the new thumbnail shows black for one frame before its content
 | Glyph | dark × of two 2 pt strokes, ~8 × 9 pt, gray `#606060`–`#878787` |
 | Button shadow | soft, ~4–5 pt blur, ~1–2 pt down (estimated) |
 | Hover on the thumbnail | nothing else changes (no ring, no tint) |
-| Show delay | ~1.03 s (see [panorama.md](panorama.md)) |
+| Show delay | ~1.03 s measured; **user decision (#246): 0.5 s** (see [panorama.md](panorama.md)) |
 | Press | disc darkens to about `#e3e3e3` |
 | Removal | thumbnail, label and button vanish in a single frame; the remaining thumbnails stay in place |
 | Windows of the removed space | move to the previous space (not observed here) |

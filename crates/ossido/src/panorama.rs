@@ -84,14 +84,15 @@ const THUMB_LABEL_SIZE: f32 = 12.0;
 /// Close button of a space (spaces.md › close button; missioncontrol.md › PA-14): white disc
 /// ~22 pt centered on the thumbnail's top-left corner, gray `#878787` cross of two 2 pt
 /// strokes ~8–9 pt across, soft shadow ~4 pt a little below; `#e3e3e3` while pressed.
-/// It appears after ~1.03 s on the thumbnail, at once on a neighbor while one is showing,
-/// on all of them with ⌥.
+/// It appears after 0.5 s on the thumbnail (user decision; ~1.03 s measured), at once on a
+/// neighbor while one is showing, on all of them with ⌥.
 const CLOSE_RADIUS: f64 = 11.0;
 const CLOSE_CROSS: f64 = 4.25;
 const CLOSE_FILL: [u8; 4] = [0xff, 0xff, 0xff, 0xff];
 const CLOSE_PRESSED: [u8; 4] = [0xe3, 0xe3, 0xe3, 0xff];
 const CLOSE_CROSS_COLOR: [u8; 4] = [0x87, 0x87, 0x87, 0xff];
-const CLOSE_DELAY_MS: f64 = 1030.0;
+/// User decision (issue #246): 0.5 s, diverging from the measured ~1.03 s on purpose.
+const CLOSE_DELAY_MS: f64 = 500.0;
 /// Crossing the gap to a neighbor keeps the button showing for this long (not measured).
 const CLOSE_REARM_MS: f64 = 300.0;
 const THUMB_LABEL_BASELINE: f64 = 18.0;
@@ -2119,6 +2120,11 @@ pub fn bar_region(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_close_button_shows_after_half_a_second_by_user_decision() {
+        assert_eq!(super::CLOSE_DELAY_MS, 500.0);
+    }
+
     use super::{lerp_rect, return_fraction};
     use smithay::utils::{Logical, Rectangle};
     use std::time::Duration;

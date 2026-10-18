@@ -44,7 +44,8 @@ Expanded bar:
 - Up to 12 spaces fit at pitch 192, centred. With 16 spaces (the maximum) the "+" disappears and
   thumbnails shrink to ~126 × 71 (pitch ~152, y 63–133) without names. With 15 the "+" returns
   and the row may overflow to the left.
-- Reopening Panorama recentres the row.
+- Reopening Panorama recentres the row. **User decision (issue #246):** the row also recentres
+  at once, animated (same springs), after adding and after removing a space.
 
 Behaviour:
 
@@ -53,7 +54,8 @@ Behaviour:
 - Expansion: ~440 ms, strong ease-out (25 % at the first frame, 80 % at ~105 ms, 90 % at
   ~170 ms); fits a critically damped spring ω ≈ 16.2 s⁻¹. Thumbnails appear during the expansion.
 - Close button on a space thumbnail: shown only with the pointer on the thumbnail, after
-  ~1.03 s of dwell, in a single frame; moving to a neighbour moves it immediately; leaving into a
+  ~1.03 s of dwell (**user decision, issue #246: 0.5 s**, diverging from the measurement on
+  purpose), in a single frame; moving to a neighbour moves it immediately; leaving into a
   gap hides it immediately. Holding ⌥ shows it on every thumbnail. Look: see
   [spaces.md](spaces.md) (white ~22 pt disc on the top-left corner, gray `#878787` ×, same in
   dark).

@@ -595,13 +595,12 @@ fn the_row_recenters_on_expansion_with_its_labels_inside_the_bar_and_the_border_
     assert!(ink(&shot, 146..166) > 20, "no label under the thumbnail");
     assert_eq!(ink(&shot, 166..190), 0, "the label spills out of the bar");
 
-    // A space added: the first stays, the new one goes to its right (no recentering)...
+    // A space added: the row recenters at once (user decision, issue #246)...
     c.call(SPACE_ADD, Value::Null).unwrap();
     let t = state(&ossido).thumbnails;
     assert_eq!(t.len(), 2);
-    assert_eq!(t[0].x, 568.0);
-    assert_eq!(t[1].x, 568.0 + 144.0 + 32.0);
-    // ...until the bar expands again: then the row is centered.
+    assert_eq!((t[0].x, t[1].x), (480.0, 656.0));
+    // ...and it stays centered when the bar expands again.
     c.call(PANORAMA_SPACES_BAR, json!({"enabled": false}))
         .unwrap();
     c.call(PANORAMA_SPACES_BAR, json!({"enabled": true}))
