@@ -100,6 +100,11 @@ fn assets_with(root: &Path, archive: Option<&str>) -> Assets {
         svg(&rect(34, 293, 956, 599, "#82c4fd")),
     );
 
+    // The glyph of a file nobody opens.
+    write(
+        &icons.join("files/system/unknown.svg"),
+        svg(&rect(0, 0, 1024, 1024, "#0000c8")),
+    );
     // The artwork of one system type; the others (executable...) are missing on purpose.
     write(
         &icons.join("files/system/archive.svg"),
@@ -383,8 +388,6 @@ fn the_shipped_rules_have_the_bigger_label_the_grey_and_the_bigger_folder_symbol
         label.color[0], label.color[1], label.color[2]
     );
     assert_eq!(secondary, hex);
-    let alone = s.icons.file_rules.label_alone.as_ref().unwrap();
-    assert_eq!(alone.color, label.color);
     // The folder symbol box: 12 % bigger around the same center (512, 592).
     let b = s.icons.folder_rules.symbol_box;
     assert!((b[2] / 316.0 - 1.12).abs() < 0.001 && (b[3] / 316.0 - 1.12).abs() < 0.001);
@@ -393,23 +396,23 @@ fn the_shipped_rules_have_the_bigger_label_the_grey_and_the_bigger_folder_symbol
 }
 
 #[test]
-fn a_file_without_an_app_is_an_unknown_extension_with_the_label_alone() {
-    let s = setup("alone");
-    // A known type (PDF) and an unknown one: no handler, so no symbol of any kind.
+fn a_file_without_an_app_is_the_unknown_glyph_with_the_extension_label() {
+    let s = setup("unknown");
+    // A known type (PDF) and an unknown one: no handler, so the question mark and the label.
     for name in ["a.pdf", "scene.blend", "x.zzz"] {
         let file = s.root.join(name);
         fs::write(&file, "x").unwrap();
         let look = s.icons.file_look(&file, 256.0);
-        assert_eq!(look.glyph, Glyph::None, "{name}");
+        assert_eq!(look.glyph, Glyph::System("unknown".to_owned()), "{name}");
         let out = s.icons.icon(&file, 512, 256.0).unwrap();
-        // The sheet, with the glyph box (here its center) empty.
+        // The sheet around, the glyph (here a blue square) in the glyph box.
         assert!(near(pixel(&out, 100, 300), SHEET, 1), "{name}");
-        assert!(near(pixel(&out, 256, 480), SHEET, 1), "{name}");
+        assert!(near(pixel(&out, 256, 256), [0, 0, 200, 255], 2), "{name}");
         if Path::new(DEJAVU).is_file() {
-            // The label alone: the one grey, in the middle of the sheet.
-            let (n, rows) = count_color(&out, 150..330, GREY, 8);
+            // The label with a glyph: the one grey, under the glyph box.
+            let (n, rows) = count_color(&out, 360..470, GREY, 8);
             assert!(n > 200, "{name}: {n}");
-            assert!(rows.is_some_and(|(a, b)| a > 170 && b < 300), "{rows:?}");
+            assert!(rows.is_some_and(|(a, b)| a > 370 && b < 460), "{rows:?}");
         }
     }
     // Same look, same file: a second PDF shares the cache entry with the first.
@@ -417,16 +420,20 @@ fn a_file_without_an_app_is_an_unknown_extension_with_the_label_alone() {
     let again = s.root.join("b.pdf");
     fs::write(&again, "y").unwrap();
     assert_eq!(s.icons.icon(&again, 512, 256.0), Some(first));
-    // No extension, or one that is too long: the bare sheet, no question mark.
+    // No extension, or one that is too long: the glyph and no label.
     let bare = s.root.join("README");
     let long = s.root.join("data.sqlite3x");
     for file in [&bare, &long] {
         fs::write(file, "x").unwrap();
+        assert_eq!(
+            s.icons.file_look(file, 256.0).glyph,
+            Glyph::System("unknown".to_owned())
+        );
         let out = s.icons.icon(file, 512, 256.0).unwrap();
-        assert!(near(pixel(&out, 256, 256), SHEET, 1));
+        assert!(near(pixel(&out, 256, 256), [0, 0, 200, 255], 2));
         assert_eq!(count_color(&out, 0..512, GREY, 8).0, 0);
     }
-    // Below 32 pt the label is gone.
+    // Below 32 pt the label is gone, the glyph stays.
     if Path::new(DEJAVU).is_file() {
         let small = s.icons.icon(&s.root.join("a.pdf"), 48, 24.0).unwrap();
         assert_eq!(count_color(&small, 0..48, GREY, 8).0, 0);
@@ -568,7 +575,10 @@ fn a_handler_without_a_usable_icon_leaves_the_file_unknown() {
     let icons = reload(&s, "again");
     let txt = s.root.join("note.txt");
     fs::write(&txt, "x").unwrap();
-    assert_eq!(icons.file_look(&txt, 256.0).glyph, Glyph::None);
+    assert_eq!(
+        icons.file_look(&txt, 256.0).glyph,
+        Glyph::System("unknown".to_owned())
+    );
     let out = icons.icon(&txt, 512, 256.0).unwrap();
     assert!(near(pixel(&out, 256, 480), SHEET, 1));
     let _ = fs::remove_dir_all(&s.root);
@@ -607,7 +617,10 @@ fn a_document_foreground_replaces_the_app_icon_in_the_glyph_box() {
         assert!(near(pixel(&out, 385, 385), SHEET, 1));
     }
     // A type the app does not list keeps the app icon (c); a missing document file as well.
-    assert!(matches!(icons.file_look(&md, 256.0).glyph, Glyph::None));
+    assert!(matches!(
+        icons.file_look(&md, 256.0).glyph,
+        Glyph::System(_)
+    ));
     let _ = fs::remove_dir_all(&s.root);
 }
 
@@ -771,16 +784,17 @@ fn the_glyph_follows_the_precedence_from_the_full_icon_down_to_the_unknown_exten
         fs::write(file, "x").unwrap();
     }
     let look = |icons: &Icons, file: &Path| icons.file_look(file, 256.0).glyph;
-    // Nobody handles the types: the system type if its artwork exists, else the unknown sheet.
-    assert_eq!(look(&s.icons, &txt), Glyph::None);
+    // Nobody handles the types: the system type if its artwork exists, else the unknown glyph.
+    let unknown = || Glyph::System("unknown".to_owned());
+    assert_eq!(look(&s.icons, &txt), unknown());
     assert_eq!(look(&s.icons, &zip), Glyph::System("archive".to_owned()));
-    // The executable type is listed but its artwork is missing: skipped silently.
-    assert_eq!(look(&s.icons, &run), Glyph::None);
+    // The executable type is listed but its artwork is missing: the unknown glyph.
+    assert_eq!(look(&s.icons, &run), unknown());
     let out = s.icons.icon(&zip, 512, 256.0).unwrap();
     assert!(near(pixel(&out, 256, 256), [200, 0, 0, 255], 2));
     assert!(near(pixel(&out, 120, 120), SHEET, 1));
     let out = s.icons.icon(&run, 512, 256.0).unwrap();
-    assert!(near(pixel(&out, 256, 256), SHEET, 1));
+    assert!(near(pixel(&out, 256, 256), [0, 0, 200, 255], 2));
 
     // The app icon beats the system type.
     let app = editor_for(&s, "text/plain;application/zip;", "");

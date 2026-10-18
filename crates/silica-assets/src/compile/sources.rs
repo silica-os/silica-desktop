@@ -1066,9 +1066,6 @@ fn generic_file(
     if let Some(label) = dynamic.get("label") {
         label_slot(ctx, entry, SlotKind::FileLabel, label, "label")?;
     }
-    if let Some(label) = dynamic.get("label_alone") {
-        label_slot(ctx, entry, SlotKind::FileLabelAlone, label, "label_alone")?;
-    }
     system_types(ctx, dir, dynamic, entry)
 }
 

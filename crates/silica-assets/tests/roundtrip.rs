@@ -441,9 +441,6 @@ fn blobs_slots_and_dynamic_layers() {
     assert_eq!(label.rect, [219.08, 744.5, 585.84, 170.05]);
     assert_eq!(label.max_width, 585.84);
     assert_eq!(label.color, [0x5F636BFF, 0x5F636BFF]);
-    let alone = of_kind(SlotKind::FileLabelAlone);
-    assert_eq!((alone.weight, alone.size), (900, 11234));
-    assert_eq!(alone.color, [0x5F636BFF, 0x5F636BFF]);
     // No per-type symbols: the glyph is the icon of the app that opens the file.
     for gone in [
         SlotKind::SymbolBand,

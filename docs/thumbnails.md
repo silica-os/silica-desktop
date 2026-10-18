@@ -40,21 +40,20 @@ Colors are the same in every theme (no dark layers).
 | Glyph (document foreground) | 262, 262, 500, 500 | an SVG of the app, fitted (aspect kept) and centered |
 | App icon | body on 303.67, 303.67, 416.67, 416.67 | scale 0.50566: the 1024 app canvas becomes 517.8 at (253.10, 253.10); composed, not recolored |
 | Label with a glyph | 219.08, 744.5, 585.84, 170.05 | Inter 500, size 139.59 (25 % over the former 111.67) |
-| Label alone | 219.08, 362.8, 585.84, 212.83 | Inter 900, size 175.53 |
 
 - **Choice**, in order: (1) a **real preview** (image, PDF) from the built-in generators; (2) the
   **preview an app's thumbnailer draws** ("Thumbnailers" below); (3) the glyph of the **default
   app**: its **document foreground** for the file's type if it declares one ("Document icons"
   below), else its **app icon**; (4) with no handler, or a handler without a usable icon (a
-  third-party app), the **unknown extension**: the generic sheet and the extension label alone.
-  A file with no extension, or one of more than 5 characters, is the bare sheet.
+  third-party app), the **unknown glyph** (`files/system/unknown.svg`, a circled question mark) on the
+  generic sheet, with the extension label when it has one of 1 to 5 characters. A file with no
+  extension, or one of more than 5 characters, has the glyph and no label.
 - **Label**: the extension without the dot, uppercase, at most 5 characters (a `.tar.gz` is
   `GZ`), never truncated; wider than the box it shrinks proportionally (`XHTML`, `QCOW2` fit
   at full size); centered horizontally, baseline at `y + h/2 - 0.605 size + 0.96875 size`
-  (880.30 with a glyph, 533.06 alone); not drawn below 32 pt. The box sits under the glyph box
+  (880.30); not drawn below 32 pt. The box sits under the glyph box
   (which ends at 762) and inside the sheet. **One colour for every file**: `Text/Secondary`
-  (light) of `docs/design/amalfi/tokens.json`, `#5f636b` (`[file.label].color` and
-  `[file.label_alone].color` of `compose.toml`; files have no dark variant).
+  (light) of `docs/design/amalfi/tokens.json`, `#5f636b` (`[file.label].color` of `compose.toml`; files have no dark variant).
 - **Default app**: for the file's type and then its parents (shared-mime-info `subclasses`), the
   first desktop id of `[Default Applications]` in the `mimeapps.list` files (XDG order), else
   `[Added Associations]`, else the first desktop entry by file name whose `MimeType=` lists it.
@@ -72,7 +71,7 @@ Colors are the same in every theme (no dark layers).
   names (`.ts`) are not disambiguated by content.
 - **Fonts**: Inter from `silica.assets` (`Inter-Regular|Medium|SemiBold|Bold|Black`); the face
   closest to the asked weight is used. silica-ui ships `Inter-Black.ttf` since the composed-icons change
-  (until that silica_ui is in the image the label alone is Bold).
+  (until that silica_ui is in the image the label is Medium).
 
 ### Thumbnailers
 
@@ -155,7 +154,8 @@ What the service answers for a file, first match wins:
 4. the document foreground of the default app (`documents/<name>.svg`, `<name>/foreground.svg`);
 5. the app icon on the generic sheet, with the label;
 6. the system type foreground on the generic sheet, with the label;
-7. the generic sheet with the extension label alone (unknown extension).
+7. the generic sheet with the `unknown` glyph and the extension label (unknown extension; no label
+   without an extension or with more than 5 characters).
 
 ## Folders
 

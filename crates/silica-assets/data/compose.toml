@@ -28,19 +28,6 @@ max_width = 585.84
 overflow = "shrink"
 min_size = 32
 
-[file.label_alone]
-font = "Inter"
-size = 175.53
-weight = 900
-tracking = 0
-color = "#5f636b"
-box = [219.08, 362.8, 585.84, 212.83]
-case = "upper"
-max_chars = 5
-max_width = 585.84
-overflow = "shrink"
-min_size = 32
-
 [folder]
 layers = [{ role = "back", tint = true }, { role = "middle", when = "not-empty" }, { role = "front", tint = true }]
 tint_symbol = true
@@ -96,3 +83,5 @@ disk-image = { mime = ["application/x-iso9660-image", "application/x-raw-disk-im
 link = { mime = ["application/x-desktop", "inode/symlink", "application/x-shortcut"], ext = ["desktop", "lnk"] }
 package = { mime = ["application/x-rpm", "application/vnd.debian.binary-package", "application/vnd.flatpak", "application/vnd.flatpak.ref", "application/vnd.snap"], ext = ["rpm", "deb", "flatpak", "snap"] }
 data = { mime = ["application/octet-stream"], ext = ["bin", "dat"] }
+# The glyph of a file nobody opens (unknown extension, or none): chosen by the service, no patterns.
+unknown = { mime = [], ext = [] }

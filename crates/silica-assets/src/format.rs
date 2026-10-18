@@ -189,7 +189,8 @@ byte_enum! {
         /// icon side in pt, `rect` box, `font` family, `size` in 1/64 of a canvas unit,
         /// `weight`, `format` the case, `tracking`, `max_width`, `color[0]` the text colour.
         FileLabel = 13,
-        /// The extension label alone (no glyph): same fields as [`SlotKind::FileLabel`].
+        /// Reserved, no longer written (was the extension label alone; an unknown extension now
+        /// shows the `unknown` system glyph with [`SlotKind::FileLabel`]).
         FileLabelAlone = 14,
         /// Reserved, no longer written (was the symbol and color of a kind of file).
         KindStyle = 15,

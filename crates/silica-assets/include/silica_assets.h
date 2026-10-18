@@ -135,7 +135,7 @@ enum {
   SILICA_SLOT_APP_ICON_BODY = 12, /* rect */
   SILICA_SLOT_FILE_LABEL = 13,    /* unit max chars, min_size pt, rect box, font, size in 1/64
                                      unit, weight, format case, tracking, max_width */
-  SILICA_SLOT_FILE_LABEL_ALONE = 14,
+  SILICA_SLOT_FILE_LABEL_ALONE = 14, /* reserved, no longer written */
   SILICA_SLOT_KIND_STYLE = 15,    /* reserved, no longer written (file kinds were removed) */
   SILICA_SLOT_FALLBACK_KIND = 16, /* reserved, no longer written */
   SILICA_SLOT_FOLDER_EFFECT = 17, /* color[0] engraving, color[1] highlight (0xRRGGBB00),

@@ -219,9 +219,8 @@ What the compiler writes:
   role, `weight` flags: 1 tint reaches the step, 2 only when the folder has items; the folder
   ends with the `symbol` step, the file's stack lists `glyph` and the label follows it);
   `GlyphBox`, `AppIconBody`, (folder only) `SymbolBand` (from `min_size` pt: weight name, scale, highlight),
-  `FileLabel` and `FileLabelAlone` (`size` in 1/64 of a canvas unit, since the box metrics are
-  fractional; `color` the one grey of the extension label, `[file.label].color` and
-  `[file.label_alone].color`, required); for the folder `FolderEmblem` (the symbol box), `FolderEffect`,
+  `FileLabel` (kind 14, the label alone, is reserved: an unknown extension now has the `unknown` glyph; `size` in 1/64 of a canvas unit, since the box metrics are
+  fractional; `color` the one grey of the extension label, `[file.label].color`, required); for the folder `FolderEmblem` (the symbol box), `FolderEffect`,
   `FolderTint`, `TintLabel`, `SpecialFolder` (key to symbol name); for the file `SystemType` (21: `format` a pattern, a MIME type, `major/*` or `.ext`, `font` the system type name;
   the artwork, when the build had `files/system/<name>.svg`, is the entry `file.system.<name>` of `Role` with one `Foreground` SVG variant).
 - No kind, category or type map: the slots `SymbolBand` (on the file), `FallbackKind` (16), `KindStyle` (15)

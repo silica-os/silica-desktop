@@ -65,7 +65,6 @@ pub struct FileRules {
     pub glyph_box: [f32; 4],
     pub app_body: Option<[f32; 4]>,
     pub label: Option<LabelSpec>,
-    pub label_alone: Option<LabelSpec>,
     /// Structural types with a system foreground: (pattern, name). A pattern is a MIME type,
     /// `major/*` or `.ext`.
     pub system: Vec<(String, String)>,
@@ -157,7 +156,6 @@ impl FileRules {
                 SlotKind::GlyphBox => rules.glyph_box = slot.rect,
                 SlotKind::AppIconBody => rules.app_body = Some(slot.rect),
                 SlotKind::FileLabel => rules.label = Some(label_of(&slot)),
-                SlotKind::FileLabelAlone => rules.label_alone = Some(label_of(&slot)),
                 SlotKind::SystemType => {
                     if let (Some(pattern), Some(name)) = (slot.format, slot.font) {
                         rules.system.push((pattern.to_owned(), name.to_owned()));
@@ -531,29 +529,28 @@ pub fn plan_file(
     let mut document = None;
     let mut full = Vec::new();
     let mut show_label = true;
-    let has_glyph = match &look.glyph {
-        Glyph::App(source) => rules.app_body.is_some_and(|body| {
-            let [x, y, s] = app_canvas(body);
-            let k = side_f / CANVAS;
-            app = Some(AppDraw {
-                source: source.clone(),
-                rect: [x * k, y * k, s * k],
-            });
-            true
-        }),
+    match &look.glyph {
+        Glyph::App(source) => {
+            if let Some(body) = rules.app_body {
+                let [x, y, s] = app_canvas(body);
+                let k = side_f / CANVAS;
+                app = Some(AppDraw {
+                    source: source.clone(),
+                    rect: [x * k, y * k, s * k],
+                });
+            }
+        }
         Glyph::Document(source) => {
             document = Some(DocDraw {
                 source: source.clone(),
                 rect: to_px(rules.glyph_box, side_f),
             });
-            true
         }
         Glyph::System(name) => {
             document = Some(DocDraw {
                 source: format!("system:{name}"),
                 rect: to_px(rules.glyph_box, side_f),
             });
-            true
         }
         Glyph::Full { sources, label } => {
             layers.clear();
@@ -566,25 +563,23 @@ pub fn plan_file(
                 })
                 .collect();
             show_label = *label;
-            true
         }
-        Glyph::None => false,
-    };
+        Glyph::None => {}
+    }
     let text = look.extension.as_deref().unwrap_or("");
-    let spec = if has_glyph {
-        rules.label.as_ref()
-    } else {
-        rules.label_alone.as_ref()
-    };
-    let label = spec.filter(|_| show_label).and_then(|spec| {
-        let text = label_text(spec, text, pt)?;
-        let weight = spec.weight;
-        let plan = place_label(spec, text, |t, size| advance(t, size, weight));
-        Some(LabelDraw {
-            plan,
-            color: spec.color,
-        })
-    });
+    let label = rules
+        .label
+        .as_ref()
+        .filter(|_| show_label)
+        .and_then(|spec| {
+            let text = label_text(spec, text, pt)?;
+            let weight = spec.weight;
+            let plan = place_label(spec, text, |t, size| advance(t, size, weight));
+            Some(LabelDraw {
+                plan,
+                color: spec.color,
+            })
+        });
     Plan {
         side,
         layers,
@@ -622,16 +617,6 @@ mod tests {
         }
     }
 
-    fn alone() -> LabelSpec {
-        LabelSpec {
-            size: 175.53,
-            weight: 900,
-            rect: [219.08, 362.8, 585.84, 212.83],
-            max_width: 585.84,
-            ..label()
-        }
-    }
-
     fn file_rules() -> FileRules {
         FileRules {
             steps: [LayerRole::Back, LayerRole::Glyph, LayerRole::Front]
@@ -645,7 +630,6 @@ mod tests {
             glyph_box: [262.0, 262.0, 500.0, 500.0],
             app_body: Some([303.67, 303.67, 416.67, 416.67]),
             label: Some(label()),
-            label_alone: Some(alone()),
             system: Vec::new(),
         }
     }
@@ -714,9 +698,6 @@ mod tests {
         });
         assert!(close(p.size, 139.59 * 585.84 / (5.0 * 139.59)));
         assert!(close(5.0 * p.size, 585.84));
-        // The label alone: baseline 533.06.
-        let p = place_label(&alone(), "ABC".to_owned(), |t, s| advance(t, s, 900));
-        assert!(close(p.baseline, 533.06), "{}", p.baseline);
     }
 
     #[test]
@@ -805,18 +786,27 @@ mod tests {
     }
 
     #[test]
-    fn without_a_glyph_the_label_stands_alone() {
+    fn the_unknown_glyph_takes_the_label_with_a_glyph() {
         let rules = file_rules();
-        let p = plan_file(&rules, 512, 256.0, &look(Glyph::None, "blend"), advance);
+        let unknown = || Glyph::System("unknown".to_owned());
+        let p = plan_file(&rules, 512, 256.0, &look(unknown(), "blend"), advance);
         let label = p
             .label
             .as_ref()
             .map(|l| (l.plan.weight, l.plan.text.as_str()));
-        assert_eq!(label, Some((900, "BLEND")));
-        assert!(p.symbol.is_none() && p.app.is_none() && p.document.is_none());
-        // And hidden below 32 pt.
-        let p = plan_file(&rules, 48, 24.0, &look(Glyph::None, "blend"), advance);
-        assert!(p.label.is_none());
+        assert_eq!(label, Some((500, "BLEND")));
+        assert_eq!(
+            p.document.as_ref().map(|d| d.source.as_str()),
+            Some("system:unknown")
+        );
+        // Hidden below 32 pt; the glyph stays.
+        let p = plan_file(&rules, 48, 24.0, &look(unknown(), "blend"), advance);
+        assert!(p.label.is_none() && p.document.is_some());
+        // Longer than 5 characters, or none: the glyph without a label.
+        for ext in ["sqlite", ""] {
+            let p = plan_file(&rules, 512, 256.0, &look(unknown(), ext), advance);
+            assert!(p.label.is_none() && p.document.is_some(), "{ext:?}");
+        }
     }
 
     fn folder_rules() -> FolderRules {

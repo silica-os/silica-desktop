@@ -22,19 +22,6 @@ max_width = 585.84
 overflow = "shrink"
 min_size = 32
 
-[file.label_alone]
-font = "Inter"
-size = 175.53
-weight = 900
-tracking = 0
-color = "#5f636b"
-box = [219.08, 362.8, 585.84, 212.83]
-case = "upper"
-max_chars = 5
-max_width = 585.84
-overflow = "shrink"
-min_size = 32
-
 [folder]
 layers = [{ role = "back", tint = true }, { role = "middle", when = "not-empty" }, { role = "front", tint = true }]
 tint_symbol = true
