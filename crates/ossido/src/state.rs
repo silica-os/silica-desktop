@@ -116,6 +116,8 @@ pub struct State {
     /// Last id assigned to a window.
     pub next_window_id: u64,
     pub shortcuts: Vec<(Shortcut, &'static str)>,
+    /// Settings is recording a shortcut (`shortcuts.json` `capture`): see `handle_key`.
+    pub shortcuts_capture: bool,
     /// Keycodes for the synthetic keys (`input.key`, `input.type`).
     pub keys: crate::keys::KeyLookup,
     /// What `keys` was built for (the keyboard settings and the active input source): it is
@@ -421,6 +423,7 @@ impl State {
             mapped: 0,
             next_window_id: 0,
             shortcuts: crate::commands::shortcuts(),
+            shortcuts_capture: false,
             keys: crate::keys::KeyLookup::new()?,
             keys_for: None,
             config_dir: None,

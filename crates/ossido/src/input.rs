@@ -298,7 +298,14 @@ impl State {
             return;
         };
         let pressed = state == KeyState::Pressed;
-        let shortcuts = self.shortcuts.clone();
+        // Settings recording a new shortcut gets the keys, whatever they are bound to.
+        let capturing = self.shortcuts_capture
+            && self.front_app_id().as_deref() == Some(crate::config::SHORTCUT_CAPTURE_APP);
+        let shortcuts = if capturing {
+            Vec::new()
+        } else {
+            self.shortcuts.clone()
+        };
         // The input source shortcut belongs to the apps while there is only one source.
         let one_source = self.keyboard_config.layouts.len() < 2;
         // Esc closes the open view: its own command is run.

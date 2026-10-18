@@ -182,6 +182,21 @@ when the pointer arrives in that corner (it is armed again after the pointer lea
 nothing. Dragging or resizing a window into a corner does not trigger it. Watched like the other
 settings files.
 
+### shortcuts.json
+
+```json
+{"window.minimize": "Logo+N", "faro.toggle": null, "window.tile_fill": "Logo+Ctrl+F5"}
+```
+
+Settings › Keyboard › Keyboard Shortcuts. The keys are command ids of the catalog
+(`engine.commands`); the value is the shortcut in the catalog's format (`Logo`, `Ctrl`, `Alt`,
+`Shift` and an xkb keysym name, joined by `+`) or `null` to switch the command's shortcut off.
+A command left out keeps the catalog's default; any command can be given a shortcut, also one
+with no default. An unknown id, an invalid shortcut or any other value is ignored (the default
+stays). `"capture": true` (written by Settings while it records a new shortcut) makes Ossido
+let every key reach Settings, and only while Settings is the frontmost app. Two commands with the same keys: the first of the catalog runs (Settings refuses the
+duplicate). Applied at once when the file changes.
+
 ### theme.json
 
 Settings' Appearance choices. Ossido reads one key; the rest is the look the apps follow

@@ -324,6 +324,49 @@ impl HotCornersConfig {
     }
 }
 
+// --- shortcuts.json ------------------------------------------------------------------------
+
+pub const SHORTCUTS_FILE: &str = "shortcuts.json";
+
+/// `shortcuts.json` (Settings › Keyboard › Keyboard Shortcuts): per catalog command id, the
+/// shortcut in the `Logo+Shift+Q` format, or `null` for none. A command not listed keeps its
+/// default; an id that is not in the catalog is ignored.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ShortcutOverrides(Vec<(&'static str, Option<String>)>);
+
+/// The app that records a new shortcut (Settings): while `shortcuts.json` says `"capture":
+/// true` and this app is in front, the catalog shortcuts do not run and the keys reach it.
+pub const SHORTCUT_CAPTURE_APP: &str = "dev.frascella.Settings";
+
+impl ShortcutOverrides {
+    /// `None`: not changed; `Some(None)`: switched off; `Some(Some(text))`: the user's keys.
+    pub fn get(&self, id: &str) -> Option<Option<&str>> {
+        self.0
+            .iter()
+            .find(|(known, _)| *known == id)
+            .map(|(_, text)| text.as_deref())
+    }
+
+    pub fn parse(map: Option<&serde_json::Map<String, Value>>) -> Self {
+        let Some(map) = map else {
+            return Self::default();
+        };
+        let mut found = Vec::new();
+        for spec in silica_control::commands::CATALOG {
+            match map.get(spec.id) {
+                Some(Value::Null) => found.push((spec.id, None)),
+                Some(Value::String(text)) => {
+                    if silica_control::commands::Shortcut::parse(text).is_ok() {
+                        found.push((spec.id, Some(text.clone())));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Self(found)
+    }
+}
+
 // --- theme.json ----------------------------------------------------------------------------
 
 pub const THEME_FILE: &str = "theme.json";
@@ -403,6 +446,7 @@ impl State {
             POWER_FILE => self.apply_power_config(),
             THEME_FILE => self.apply_theme_config(),
             HOT_CORNERS_FILE => self.apply_hot_corners_config(),
+            SHORTCUTS_FILE => self.apply_shortcuts_config(),
             crate::displays::DISPLAYS_FILE => self.apply_displays_config(),
             _ => {}
         }
@@ -419,6 +463,20 @@ impl State {
             #[cfg(feature = "drm")]
             self.configure_input_devices();
         }
+    }
+
+    /// `shortcuts.json`: the catalog's shortcuts with the user's changes, at once.
+    pub fn apply_shortcuts_config(&mut self) {
+        let Some(dir) = self.config_dir.clone() else {
+            return;
+        };
+        let file = read_json(&dir, SHORTCUTS_FILE);
+        self.shortcuts_capture = file
+            .as_ref()
+            .and_then(|map| bool_of(map, "capture"))
+            .unwrap_or(false);
+        let overrides = ShortcutOverrides::parse(file.as_ref());
+        self.shortcuts = crate::commands::shortcuts_with(&overrides);
     }
 
     /// `hotcorners.json`: the actions of the four corners.
@@ -500,6 +558,7 @@ impl State {
         self.apply_power_config();
         self.apply_theme_config();
         self.apply_hot_corners_config();
+        self.apply_shortcuts_config();
         self.apply_displays_config();
     }
 
@@ -783,5 +842,29 @@ mod tests {
             defaults,
         );
         assert_eq!((config.repeat_delay, config.repeat_rate), (375, 0));
+    }
+
+    #[test]
+    fn shortcuts_file_changes_adds_and_removes() {
+        use silica_control::commands as c;
+        let id_of = |list: &[(silica_control::commands::Shortcut, &'static str)], id| {
+            list.iter().find(|(_, known)| *known == id).map(|(s, _)| s.clone())
+        };
+        let defaults = crate::commands::shortcuts_with(&ShortcutOverrides::default());
+        assert!(id_of(&defaults, c::WINDOW_MINIMIZE).is_some());
+        assert!(id_of(&defaults, c::WINDOW_TILE_FILL).is_none());
+
+        let overrides = ShortcutOverrides::parse(Some(&map(
+            r#"{"window.minimize": "Logo+N", "window.tile_fill": "Logo+Ctrl+F5",
+                "faro.toggle": null, "app.hide": "Hyper+H", "nonsense": "Logo+X"}"#,
+        )));
+        let list = crate::commands::shortcuts_with(&overrides);
+        let minimize = id_of(&list, c::WINDOW_MINIMIZE);
+        assert!(minimize.is_some_and(|s| s.matches(true, false, false, false, "n")));
+        assert!(id_of(&list, c::WINDOW_TILE_FILL).is_some());
+        // Off.
+        assert!(id_of(&list, c::FARO_TOGGLE).is_none());
+        // A bad value keeps the default.
+        assert!(id_of(&list, c::APP_HIDE).is_some_and(|s| s.matches(true, false, false, false, "h")));
     }
 }

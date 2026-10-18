@@ -66,15 +66,30 @@ pub struct WindowId(pub u64);
 
 /// The catalog shortcuts, already parsed.
 pub fn shortcuts() -> Vec<(Shortcut, &'static str)> {
+    shortcuts_with(&crate::config::ShortcutOverrides::default())
+}
+
+/// The catalog shortcuts with the user's changes (`shortcuts.json`): a command may get a
+/// shortcut of its own (even one with no default), or none at all.
+pub fn shortcuts_with(
+    overrides: &crate::config::ShortcutOverrides,
+) -> Vec<(Shortcut, &'static str)> {
     commands::CATALOG
         .iter()
         .filter_map(|spec| {
-            let text = spec.shortcut?;
+            let text = match overrides.get(spec.id) {
+                Some(Some(text)) => text,
+                Some(None) => return None,
+                None => spec.shortcut?,
+            };
             match Shortcut::parse(text) {
                 Ok(shortcut) => Some((shortcut, spec.id)),
                 Err(err) => {
                     warn!("shortcut of {} ignored: {err}", spec.id);
-                    None
+                    // A bad user value falls back to the default.
+                    spec.shortcut
+                        .and_then(|text| Shortcut::parse(text).ok())
+                        .map(|shortcut| (shortcut, spec.id))
                 }
             }
         })
