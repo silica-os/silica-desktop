@@ -22,6 +22,10 @@ pub const ACCENTS: &[&str] = &[
     "graphite",
 ];
 
+/// The range of the double click time, and its default (Flutter's own 300 ms).
+pub const DOUBLE_CLICK_RANGE_MS: std::ops::RangeInclusive<u32> = 150..=1000;
+pub const DOUBLE_CLICK_DEFAULT_MS: u32 = 300;
+
 const SIDEBAR_SIZES: &[&str] = &["small", "medium", "large"];
 const SCROLL_BARS: &[&str] = &["automatic", "whenScrolling", "always"];
 const SCROLL_CLICKS: &[&str] = &["page", "spot"];
@@ -42,6 +46,10 @@ pub struct Look {
     /// 0–1.
     pub glass: f64,
     pub window_tint: bool,
+    /// Tab reaches every control.
+    pub keyboard_navigation: bool,
+    /// The longest time between the two clicks of a double click, in milliseconds.
+    pub double_click_ms: u32,
 }
 
 impl Default for Look {
@@ -56,6 +64,8 @@ impl Default for Look {
             folder_colour: "automatic".to_owned(),
             glass: 0.5,
             window_tint: false,
+            keyboard_navigation: false,
+            double_click_ms: DOUBLE_CLICK_DEFAULT_MS,
         }
     }
 }
@@ -92,6 +102,13 @@ impl Look {
                     .filter(|g| g.is_finite() && (0.0..=1.0).contains(g))
                     .map(|g| next.glass = g),
                 "windowTint" => value.as_bool().map(|b| next.window_tint = b),
+                "keyboardNavigation" => value.as_bool().map(|b| next.keyboard_navigation = b),
+                "doubleClickMs" => value
+                    .as_f64()
+                    .filter(|n| n.fract() == 0.0 && n.is_finite())
+                    .and_then(|n| u32::try_from(n as i64).ok())
+                    .filter(|n| DOUBLE_CLICK_RANGE_MS.contains(n))
+                    .map(|n| next.double_click_ms = n),
                 // Unknown keys are ignored, as in every configuration file.
                 _ => Some(()),
             };
@@ -134,6 +151,11 @@ impl Look {
         put("look.folderColour", Value::from(self.folder_colour.clone()));
         put("look.glass", Value::F64(self.glass));
         put("look.windowTint", Value::Bool(self.window_tint));
+        put(
+            "look.keyboardNavigation",
+            Value::Bool(self.keyboard_navigation),
+        );
+        put("look.doubleClickMs", Value::U32(self.double_click_ms));
     }
 }
 
@@ -165,6 +187,11 @@ mod tests {
     fn merge_keeps_valid_keys_and_rejects_bad_ones() {
         let mut look = Look::default();
         assert!(look.merge(&json!({"accent": "green", "glass": 0.25, "x": 1})));
+        assert!(look.merge(&json!({"keyboardNavigation": true, "doubleClickMs": 500})));
+        assert!(look.keyboard_navigation && look.double_click_ms == 500);
+        assert!(!look.merge(&json!({"doubleClickMs": 50})));
+        assert!(!look.merge(&json!({"doubleClickMs": 400.5})));
+        assert_eq!(look.double_click_ms, 500);
         assert_eq!(look.accent, "green");
         assert_eq!(look.glass, 0.25);
         let before = look.clone();
