@@ -134,12 +134,14 @@ pub enum Call {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectOp {
     Start {
+        view: u8,
         kind: SelectionKind,
         x: usize,
         y: usize,
         right: bool,
     },
     Update {
+        view: u8,
         x: usize,
         y: usize,
         right: bool,
@@ -181,7 +183,10 @@ pub enum ClearOp {
 /// A call on the emulator of a `grid` session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GridOp {
-    Scroll(ScrollBy),
+    /// Moves view 0 (the screen) or view 1 (the other half of a split).
+    Scroll(ScrollBy, u8),
+    /// Opens, resizes (`rows`) or closes the second view of a split.
+    Split(Option<usize>),
     Select(SelectOp),
     /// → the selected text (null: none).
     SelectionText,
@@ -270,6 +275,14 @@ fn options_of(args: &Value, base: Options) -> Result<Options, String> {
     Ok(options)
 }
 
+fn view_of(args: &Value) -> Result<u8, String> {
+    match field(args, "view").and_then(Value::as_u64) {
+        None | Some(0) => Ok(0),
+        Some(1) => Ok(1),
+        Some(_) => Err("view must be 0 or 1".to_owned()),
+    }
+}
+
 fn cell_of(args: &Value, key: &str) -> usize {
     field(args, key)
         .and_then(Value::as_u64)
@@ -290,20 +303,24 @@ fn grid_call(method: &str, args: &Value) -> Result<Option<GridOp>, String> {
                     .and_then(Value::as_i64)
                     .map(|v| v.clamp(-1_000_000, 1_000_000) as i32)
             };
-            GridOp::Scroll(match (text("to"), lines("lines"), lines("page")) {
-                (Some("top"), _, _) => ScrollBy::Top,
-                (Some("bottom"), _, _) => ScrollBy::Bottom,
-                (Some("previousPrompt"), _, _) => ScrollBy::Prompt(true),
-                (Some("nextPrompt"), _, _) => ScrollBy::Prompt(false),
-                (Some("row"), _, _) => ScrollBy::Reveal(cell_of(args, "row")),
-                (Some(other), _, _) => return Err(format!("unknown scroll target {other:?}")),
-                (None, Some(n), _) => ScrollBy::Lines(n),
-                (None, None, Some(n)) => ScrollBy::Page(n > 0),
-                _ => return Err("scroll needs lines, page or to".to_owned()),
-            })
+            GridOp::Scroll(
+                match (text("to"), lines("lines"), lines("page")) {
+                    (Some("top"), _, _) => ScrollBy::Top,
+                    (Some("bottom"), _, _) => ScrollBy::Bottom,
+                    (Some("previousPrompt"), _, _) => ScrollBy::Prompt(true),
+                    (Some("nextPrompt"), _, _) => ScrollBy::Prompt(false),
+                    (Some("row"), _, _) => ScrollBy::Reveal(cell_of(args, "row")),
+                    (Some(other), _, _) => return Err(format!("unknown scroll target {other:?}")),
+                    (None, Some(n), _) => ScrollBy::Lines(n),
+                    (None, None, Some(n)) => ScrollBy::Page(n > 0),
+                    _ => return Err("scroll needs lines, page or to".to_owned()),
+                },
+                view_of(args)?,
+            )
         }
         "select" => GridOp::Select(match text("op") {
             Some("start") => SelectOp::Start {
+                view: view_of(args)?,
                 kind: match text("kind") {
                     None | Some("simple") => SelectionKind::Simple,
                     Some("semantic") => SelectionKind::Semantic,
@@ -316,6 +333,7 @@ fn grid_call(method: &str, args: &Value) -> Result<Option<GridOp>, String> {
                 right: flag("right"),
             },
             Some("update") => SelectOp::Update {
+                view: view_of(args)?,
                 x: cell_of(args, "x"),
                 y: cell_of(args, "y"),
                 right: flag("right"),
@@ -324,6 +342,11 @@ fn grid_call(method: &str, args: &Value) -> Result<Option<GridOp>, String> {
             Some("all") => SelectOp::All,
             Some("marks") => SelectOp::Marks,
             _ => return Err("select needs op: start, update, clear, all or marks".to_owned()),
+        }),
+        "split" => GridOp::Split(match text("op") {
+            Some("open" | "resize") => Some(cell_of(args, "rows").max(1)),
+            Some("close") => None,
+            _ => return Err("split needs op: open, resize or close".to_owned()),
         }),
         "selectionText" => GridOp::SelectionText,
         "text" => GridOp::Text,
@@ -961,14 +984,16 @@ impl PtyHost {
             let send = session.may_send(now);
             if let Some(grid) = &session.grid {
                 if send {
-                    let (frame, replies) = grid.frame(id);
+                    let (frames, replies) = grid.frames(id);
                     if !replies.is_empty() && session.writes.len() < MAX_WRITE_QUEUE {
                         session.writes.extend(replies);
                         flush_writes(session);
                     }
-                    if let Some(frame) = frame {
-                        tick.messages.push(message("grid", frame));
+                    if !frames.is_empty() {
                         session.last_sent = Some(now);
+                    }
+                    for frame in frames {
+                        tick.messages.push(message("grid", frame));
                     }
                 }
             } else if send && !session.pending.is_empty() {
@@ -1023,18 +1048,31 @@ fn run_grid_op(worker: &crate::termgrid::GridWorker, op: GridOp) -> (Value, Vec<
     let none = (Value::Null, Vec::new());
     worker
         .with(|grid| match op {
-            GridOp::Scroll(by) => {
-                grid.scroll(by);
+            GridOp::Scroll(by, view) => {
+                grid.scroll_view(view, by);
+                none.clone()
+            }
+            GridOp::Split(rows) => {
+                match rows {
+                    Some(rows) => grid.split_open(rows),
+                    None => grid.split_close(),
+                }
                 none.clone()
             }
             GridOp::Select(select) => {
                 let found = match select {
-                    SelectOp::Start { kind, x, y, right } => {
-                        grid.select_start(kind.alacritty(), x, y, right);
+                    SelectOp::Start {
+                        view,
+                        kind,
+                        x,
+                        y,
+                        right,
+                    } => {
+                        grid.select_start(view, kind.alacritty(), x, y, right);
                         true
                     }
-                    SelectOp::Update { x, y, right } => {
-                        grid.select_update(x, y, right);
+                    SelectOp::Update { view, x, y, right } => {
+                        grid.select_update(view, x, y, right);
                         true
                     }
                     SelectOp::Clear => {
@@ -1329,24 +1367,47 @@ mod tests {
             parse("scroll", json!({"id": 1, "lines": 3})).unwrap(),
             Call::Grid {
                 id: 1,
-                op: GridOp::Scroll(ScrollBy::Lines(3))
+                op: GridOp::Scroll(ScrollBy::Lines(3), 0)
             }
         );
         assert_eq!(
             parse("scroll", json!({"id": 1, "to": "previousPrompt"})).unwrap(),
             Call::Grid {
                 id: 1,
-                op: GridOp::Scroll(ScrollBy::Prompt(true))
+                op: GridOp::Scroll(ScrollBy::Prompt(true), 0)
             }
         );
         assert_eq!(
             parse("scroll", json!({"id": 1, "to": "row", "row": 12})).unwrap(),
             Call::Grid {
                 id: 1,
-                op: GridOp::Scroll(ScrollBy::Reveal(12))
+                op: GridOp::Scroll(ScrollBy::Reveal(12), 0)
             }
         );
         assert!(parse("scroll", json!({"id": 1})).is_err());
+        assert_eq!(
+            parse("scroll", json!({"id": 1, "view": 1, "page": -1})).unwrap(),
+            Call::Grid {
+                id: 1,
+                op: GridOp::Scroll(ScrollBy::Page(false), 1)
+            }
+        );
+        assert!(parse("scroll", json!({"id": 1, "view": 2, "lines": 1})).is_err());
+        assert_eq!(
+            parse("split", json!({"id": 1, "op": "open", "rows": 12})).unwrap(),
+            Call::Grid {
+                id: 1,
+                op: GridOp::Split(Some(12))
+            }
+        );
+        assert_eq!(
+            parse("split", json!({"id": 1, "op": "close"})).unwrap(),
+            Call::Grid {
+                id: 1,
+                op: GridOp::Split(None)
+            }
+        );
+        assert!(parse("split", json!({"id": 1})).is_err());
         assert!(parse("scroll", json!({"id": 1, "to": "sideways"})).is_err());
         assert_eq!(
             parse(
@@ -1357,6 +1418,7 @@ mod tests {
             Call::Grid {
                 id: 2,
                 op: GridOp::Select(SelectOp::Start {
+                    view: 0,
                     kind: SelectionKind::Block,
                     x: 3,
                     y: 4,
@@ -1422,7 +1484,13 @@ mod tests {
                 assert_ne!(v["method"], "exit", "reported again");
             }
         }
-        let text = host.handle(Call::Grid { id, op: GridOp::Text }).unwrap().value;
+        let text = host
+            .handle(Call::Grid {
+                id,
+                op: GridOp::Text,
+            })
+            .unwrap()
+            .value;
         assert_eq!(text, json!("kept text"));
         // Closing it removes it.
         host.handle(Call::Close { id }).unwrap();
@@ -1473,6 +1541,7 @@ mod tests {
         let mut ask = |op| host.handle(Call::Grid { id, op }).unwrap().value;
         assert_eq!(ask(GridOp::Text), json!("one two\nthree"));
         ask(GridOp::Select(SelectOp::Start {
+            view: 0,
             kind: SelectionKind::Semantic,
             x: 5,
             y: 0,
@@ -1655,8 +1724,10 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(5));
             // Parsed meanwhile: the frame shows it.
-            if let (Some(frame), _) = host.sessions[&id].grid.as_ref().unwrap().frame(id)
-                && frame["lines"].to_string().contains("hello")
+            if let (frames, _) = host.sessions[&id].grid.as_ref().unwrap().frames(id)
+                && frames
+                    .iter()
+                    .any(|frame| frame["lines"].to_string().contains("hello"))
             {
                 break;
             }

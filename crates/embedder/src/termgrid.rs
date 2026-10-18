@@ -35,9 +35,7 @@ use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::term::{
     ClipboardType, Config, Osc52, Term, TermDamage, TermMode, test::TermSize,
 };
-use alacritty_terminal::vte::ansi::{
-    Color, CursorShape, CursorStyle, NamedColor, Processor, Rgb,
-};
+use alacritty_terminal::vte::ansi::{Color, CursorShape, CursorStyle, NamedColor, Processor, Rgb};
 use serde_json::{Value, json};
 
 /// Lines kept above the screen by default.
@@ -192,11 +190,15 @@ impl GridWorker {
         });
     }
 
-    /// The frame message (if anything changed) and the replies for the program.
-    pub fn frame(&self, id: u32) -> (Option<Value>, Vec<u8>) {
+    /// The frame messages (the view of the screen, and the split view's, when something
+    /// changed) and the replies for the program.
+    pub fn frames(&self, id: u32) -> (Vec<Value>, Vec<u8>) {
         self.with(|grid| {
-            let frame = grid.frame(id);
-            (frame, grid.take_replies())
+            let frames: Vec<Value> = [grid.frame(id), grid.sub_frame(id)]
+                .into_iter()
+                .flatten()
+                .collect();
+            (frames, grid.take_replies())
         })
         .unwrap_or_default()
     }
@@ -225,6 +227,18 @@ type ClipboardFormat = Arc<dyn Fn(&str) -> String + Sync + Send + 'static>;
 
 /// A row counted from the top of the whole buffer (scrollback and screen).
 type Abs = usize;
+
+/// The second view of the split (`view 1`): `rows` rows that end at the bottom of the
+/// screen, scrolled back by `offset` lines, independently of the first view.
+struct SubView {
+    rows: usize,
+    offset: usize,
+    sent: Vec<Value>,
+    full: bool,
+    last_scroll: (usize, usize),
+    last_selection: Value,
+    cursor: Value,
+}
 
 pub struct TermGrid {
     term: Term<Listener>,
@@ -257,6 +271,7 @@ pub struct TermGrid {
     running: bool,
     command_changed: bool,
     last_exit: Option<i32>,
+    sub: Option<SubView>,
 }
 
 impl TermGrid {
@@ -295,6 +310,7 @@ impl TermGrid {
             running: false,
             command_changed: false,
             last_exit: None,
+            sub: None,
         }
     }
 
@@ -576,74 +592,217 @@ impl TermGrid {
 
     // ---- scrolling --------------------------------------------------------------------
 
-    /// Scrolls the view: lines, a page, to the top or the bottom, to a row or a prompt.
+    /// Scrolls the screen's view.
+    #[cfg(test)]
     pub fn scroll(&mut self, by: ScrollBy) {
-        let scroll = match by {
-            ScrollBy::Lines(n) => Scroll::Delta(n),
-            ScrollBy::Page(true) => Scroll::PageUp,
-            ScrollBy::Page(false) => Scroll::PageDown,
-            ScrollBy::Top => Scroll::Top,
-            ScrollBy::Bottom => Scroll::Bottom,
-            ScrollBy::Reveal(abs) => match self.reveal_delta(abs) {
-                Some(delta) => Scroll::Delta(delta),
-                None => return,
-            },
+        self.scroll_view(0, by);
+    }
+
+    /// The geometry of a view: its rows, the offset (lines back from the bottom) and the
+    /// largest offset. The row at the top is `max - offset` from the top of the buffer.
+    fn geometry(&self, view: u8) -> Option<(usize, usize, usize)> {
+        if view == 0 {
+            return Some((
+                self.term.screen_lines(),
+                self.display_offset(),
+                self.term.history_size(),
+            ));
+        }
+        let sub = self.sub.as_ref()?;
+        let max = self.term.history_size() + self.term.screen_lines().saturating_sub(sub.rows);
+        Some((sub.rows, sub.offset.min(max), max))
+    }
+
+    /// Scrolls view 0 (the screen) or view 1 (the split's other view).
+    pub fn scroll_view(&mut self, view: u8, by: ScrollBy) {
+        let Some((rows, offset, max)) = self.geometry(view) else {
+            return;
+        };
+        let top = max.saturating_sub(offset);
+        let target = match by {
+            ScrollBy::Lines(n) => (offset as i64 + i64::from(n)).clamp(0, max as i64) as usize,
+            ScrollBy::Page(up) => {
+                let page = rows.saturating_sub(1).max(1) as i64;
+                (offset as i64 + if up { page } else { -page }).clamp(0, max as i64) as usize
+            }
+            ScrollBy::Top => max,
+            ScrollBy::Bottom => 0,
+            ScrollBy::Reveal(abs) => {
+                if abs >= top && abs < top + rows {
+                    return;
+                }
+                max.saturating_sub(abs.saturating_sub(rows / 2))
+            }
             ScrollBy::Prompt(previous) => {
-                let top = self.top_abs();
                 let marks = self.mark_rows(PROMPT_MARK);
-                let target = if previous {
+                let found = if previous {
                     marks.iter().rev().find(|&&m| m < top).copied()
                 } else {
                     marks.iter().find(|&&m| m > top).copied()
                 };
-                match target {
-                    Some(abs) => {
-                        let offset = self.term.history_size().saturating_sub(abs);
-                        Scroll::Delta(offset as i32 - self.display_offset() as i32)
-                    }
+                match found {
+                    Some(abs) => max.saturating_sub(abs),
                     None if previous => return,
-                    None => Scroll::Bottom,
+                    None => 0,
                 }
             }
-        };
-        self.term.scroll_display(scroll);
-    }
-
-    /// The scroll delta that shows the row `abs` (centred when it is out of view).
-    fn reveal_delta(&self, abs: Abs) -> Option<i32> {
-        let top = self.top_abs();
-        let rows = self.term.screen_lines();
-        if abs >= top && abs < top + rows {
-            return None;
         }
-        let want_top = abs.saturating_sub(rows / 2);
-        let offset = self.term.history_size().saturating_sub(want_top);
-        Some(offset as i32 - self.display_offset() as i32)
+        .min(max);
+        if view == 0 {
+            self.term
+                .scroll_display(Scroll::Delta(target as i32 - offset as i32));
+        } else if let Some(sub) = &mut self.sub {
+            sub.offset = target;
+        }
     }
 
-    /// The row at the top of the view.
+    /// The row at the top of the first view.
+    #[cfg(test)]
     fn top_abs(&self) -> Abs {
         self.term
             .history_size()
             .saturating_sub(self.display_offset())
     }
 
-    // ---- selection --------------------------------------------------------------------
+    // ---- the split --------------------------------------------------------------------
 
-    fn viewport_point(&self, x: usize, y: usize) -> Point {
-        let x = x.min(self.term.columns().saturating_sub(1));
-        let y = y.min(self.term.screen_lines().saturating_sub(1));
-        Point::new(Line(y as i32 - self.display_offset() as i32), Column(x))
+    /// Opens the second view of the split with `rows` rows, or resizes it.
+    pub fn split_open(&mut self, rows: usize) {
+        let rows = rows.clamp(1, 1000);
+        match &mut self.sub {
+            Some(sub) => {
+                sub.rows = rows;
+                sub.full = true;
+            }
+            None => {
+                self.sub = Some(SubView {
+                    rows,
+                    offset: 0,
+                    sent: Vec::new(),
+                    full: true,
+                    last_scroll: (usize::MAX, usize::MAX),
+                    last_selection: Value::Null,
+                    cursor: Value::Null,
+                });
+            }
+        }
     }
 
-    pub fn select_start(&mut self, kind: SelectionType, x: usize, y: usize, right: bool) {
-        let point = self.viewport_point(x, y);
+    pub fn split_close(&mut self) {
+        self.sub = None;
+    }
+
+    /// The `grid` message of view 1 when something in it changed.
+    pub fn sub_frame(&mut self, id: u32) -> Option<Value> {
+        let (rows, offset, max) = self.geometry(1)?;
+        let cols = self.term.columns();
+        let screen = self.term.screen_lines();
+        let base = screen as i32 - rows as i32 - offset as i32;
+        let colors = *self.term.colors();
+        let selection = self.selection_spans(1);
+        let cursor_point = self.term.grid().cursor.point;
+        let cursor_row = cursor_point.line.0 - base;
+        let cursor_visible = self.term.renderable_content().cursor.shape != CursorShape::Hidden
+            && cursor_row >= 0
+            && (cursor_row as usize) < rows;
+        let cursor = json!({
+            "x": cursor_point.column.0,
+            "y": cursor_row.max(0),
+            "visible": cursor_visible,
+            "shape": "block",
+        });
+        let modes = self.modes();
+        let mut lines = Vec::new();
+        let full = {
+            let sub = self.sub.as_mut()?;
+            let full = std::mem::take(&mut sub.full);
+            if full {
+                sub.sent.clear();
+            }
+            sub.sent.resize(rows, Value::Null);
+            full
+        };
+        let history = self.term.history_size() as i32;
+        {
+            let grid = self.term.grid();
+            let sub = self.sub.as_mut()?;
+            for y in 0..rows {
+                let line = base + y as i32;
+                if line < -history || line >= screen as i32 {
+                    continue;
+                }
+                let row = &grid[Line(line)];
+                let runs = row_runs(row, cols, &colors);
+                if sub.sent.get(y) != Some(&runs) {
+                    lines.push(json!({ "y": y, "runs": runs.clone() }));
+                    if let Some(slot) = sub.sent.get_mut(y) {
+                        *slot = runs;
+                    }
+                }
+            }
+        }
+        let sub = self.sub.as_mut()?;
+        let scroll = (offset, max);
+        let mut message = serde_json::Map::new();
+        if scroll != sub.last_scroll || full {
+            message.insert(
+                "scroll".to_owned(),
+                json!({ "offset": offset, "history": max }),
+            );
+        }
+        if selection != sub.last_selection {
+            message.insert("selection".to_owned(), selection.clone());
+        }
+        let moved = sub.cursor != cursor;
+        if lines.is_empty() && message.is_empty() && !moved && !full {
+            return None;
+        }
+        sub.last_scroll = scroll;
+        sub.last_selection = selection;
+        sub.cursor = cursor.clone();
+        message.insert("id".to_owned(), json!(id));
+        message.insert("view".to_owned(), json!(1));
+        message.insert("cols".to_owned(), json!(cols));
+        message.insert("rows".to_owned(), json!(rows));
+        message.insert("full".to_owned(), json!(full));
+        message.insert("lines".to_owned(), Value::Array(lines));
+        message.insert("cursor".to_owned(), cursor);
+        message.insert("modes".to_owned(), json!(modes));
+        Some(Value::Object(message))
+    }
+
+    // ---- selection --------------------------------------------------------------------
+
+    /// The line of the first row of a view: row `y` shows line `base + y`.
+    fn view_base(&self, view: u8) -> (usize, i32) {
+        match (view, self.sub.as_ref()) {
+            (1, Some(sub)) => {
+                let screen = self.term.screen_lines();
+                let max = self.term.history_size() + screen.saturating_sub(sub.rows);
+                (
+                    sub.rows,
+                    screen as i32 - sub.rows as i32 - sub.offset.min(max) as i32,
+                )
+            }
+            _ => (self.term.screen_lines(), -(self.display_offset() as i32)),
+        }
+    }
+
+    fn viewport_point(&self, view: u8, x: usize, y: usize) -> Point {
+        let (rows, base) = self.view_base(view);
+        let x = x.min(self.term.columns().saturating_sub(1));
+        let y = y.min(rows.saturating_sub(1));
+        Point::new(Line(base + y as i32), Column(x))
+    }
+
+    pub fn select_start(&mut self, view: u8, kind: SelectionType, x: usize, y: usize, right: bool) {
+        let point = self.viewport_point(view, x, y);
         let side = if right { Side::Right } else { Side::Left };
         self.term.selection = Some(Selection::new(kind, point, side));
     }
 
-    pub fn select_update(&mut self, x: usize, y: usize, right: bool) {
-        let point = self.viewport_point(x, y);
+    pub fn select_update(&mut self, view: u8, x: usize, y: usize, right: bool) {
+        let point = self.viewport_point(view, x, y);
         let side = if right { Side::Right } else { Side::Left };
         if let Some(selection) = &mut self.term.selection {
             selection.update(point, side);
@@ -724,7 +883,7 @@ impl TermGrid {
     }
 
     /// The selection as spans of the visible rows: `[y, x0, x1]`.
-    fn selection_spans(&self) -> Value {
+    fn selection_spans(&self, view: u8) -> Value {
         let Some(range) = self
             .term
             .selection
@@ -733,12 +892,11 @@ impl TermGrid {
         else {
             return json!([]);
         };
-        let rows = self.term.screen_lines();
+        let (rows, base) = self.view_base(view);
         let last = self.term.columns().saturating_sub(1);
-        let offset = self.display_offset() as i32;
         let mut spans = Vec::new();
         for y in 0..rows {
-            let line = y as i32 - offset;
+            let line = base + y as i32;
             if line < range.start.line.0 || line > range.end.line.0 {
                 continue;
             }
@@ -1044,7 +1202,7 @@ impl TermGrid {
             "blink": self.term.cursor_style().blinking,
         });
         let modes = self.modes();
-        let selection = self.selection_spans();
+        let selection = self.selection_spans(0);
         let marks = self.visible_marks();
         let mut extra = serde_json::Map::new();
         if let Some(title) = self.title.take() {
@@ -1506,17 +1664,17 @@ mod tests {
         let mut grid = TermGrid::new(20, 4);
         grid.advance(b"hello world\r\nsecond line\r\nthird");
         grid.frame(1);
-        grid.select_start(SelectionType::Semantic, 7, 0, false);
+        grid.select_start(0, SelectionType::Semantic, 7, 0, false);
         let spans = grid.frame(1).unwrap()["selection"].clone();
         assert_eq!(spans, json!([[0, 6, 10]]));
         assert_eq!(grid.selection_text().as_deref(), Some("world"));
-        grid.select_start(SelectionType::Lines, 3, 1, false);
+        grid.select_start(0, SelectionType::Lines, 3, 1, false);
         assert_eq!(grid.selection_text().as_deref(), Some("second line\n"));
-        grid.select_start(SelectionType::Block, 1, 0, false);
-        grid.select_update(3, 1, true);
+        grid.select_start(0, SelectionType::Block, 1, 0, false);
+        grid.select_update(0, 3, 1, true);
         assert_eq!(grid.selection_text().as_deref(), Some("ell\neco"));
-        grid.select_start(SelectionType::Simple, 0, 0, false);
-        grid.select_update(4, 0, true);
+        grid.select_start(0, SelectionType::Simple, 0, 0, false);
+        grid.select_update(0, 4, 0, true);
         assert_eq!(grid.selection_text().as_deref(), Some("hello"));
         grid.select_clear();
         assert_eq!(grid.frame(1).unwrap()["selection"], json!([]));
@@ -1820,14 +1978,80 @@ mod tests {
         };
         let mut grid = TermGrid::with_options(10, 2, options);
         let cursor = grid.frame(1).unwrap()["cursor"].clone();
-        assert_eq!((cursor["shape"].as_str(), cursor["blink"].as_bool()), (Some("beam"), Some(true)));
+        assert_eq!(
+            (cursor["shape"].as_str(), cursor["blink"].as_bool()),
+            (Some("beam"), Some(true))
+        );
         // The program picks a steady underline, then asks for the default again.
         grid.advance(b"\x1b[4 q");
         let cursor = grid.frame(1).unwrap()["cursor"].clone();
-        assert_eq!((cursor["shape"].as_str(), cursor["blink"].as_bool()), (Some("underline"), Some(false)));
+        assert_eq!(
+            (cursor["shape"].as_str(), cursor["blink"].as_bool()),
+            (Some("underline"), Some(false))
+        );
         grid.advance(b"\x1b[0 q");
         let cursor = grid.frame(1).unwrap()["cursor"].clone();
         assert_eq!(cursor["shape"], "beam");
+    }
+
+    #[test]
+    fn the_split_view_scrolls_on_its_own_and_ends_at_the_bottom_of_the_screen() {
+        let mut grid = TermGrid::new(20, 6);
+        fill(&mut grid, 30);
+        grid.frame(1);
+        assert!(grid.sub_frame(1).is_none(), "no split, no second view");
+        grid.split_open(3);
+        let first = grid.sub_frame(1).unwrap();
+        assert_eq!(first["view"], 1);
+        assert_eq!(first["rows"], 3);
+        assert_eq!(first["full"], true);
+        // The last three rows of the screen: lines 28, 29 and the empty one.
+        assert_eq!(runs(&first, 0)[0][0], "line 28");
+        assert_eq!(runs(&first, 1)[0][0], "line 29");
+        assert_eq!(
+            first["scroll"],
+            json!({"offset": 0, "history": grid.history_size() + 3})
+        );
+        assert!(grid.sub_frame(1).is_none(), "nothing changed");
+        // Scrolling the split does not move the first view.
+        grid.scroll_view(1, ScrollBy::Lines(10));
+        let moved = grid.sub_frame(1).unwrap();
+        assert_eq!(runs(&moved, 0)[0][0], "line 18");
+        assert_eq!(grid.display_offset(), 0);
+        assert!(grid.frame(1).is_none_or(|f| f["scroll"].is_null()));
+        grid.scroll_view(1, ScrollBy::Top);
+        assert_eq!(runs(&grid.sub_frame(1).unwrap(), 0)[0][0], "line 0");
+        grid.scroll_view(1, ScrollBy::Bottom);
+        grid.sub_frame(1);
+        grid.scroll_view(1, ScrollBy::Reveal(5));
+        let shown = grid.sub_frame(1).unwrap();
+        let first_row = runs(&shown, 0)[0][0].as_str().unwrap_or("").to_owned();
+        assert!(first_row.starts_with("line "), "{first_row}");
+        // And the first view scrolls without the split.
+        grid.scroll(ScrollBy::Lines(2));
+        assert!(grid.sub_frame(1).is_none());
+        // A selection made in the split is the session's.
+        grid.scroll_view(1, ScrollBy::Bottom);
+        grid.sub_frame(1);
+        grid.select_start(1, SelectionType::Lines, 2, 0, false);
+        assert_eq!(grid.selection_text().as_deref(), Some("line 28\n"));
+        let selected = grid.sub_frame(1).unwrap();
+        assert_eq!(selected["selection"], json!([[0, 0, 19]]));
+        grid.split_close();
+        assert!(grid.sub_frame(1).is_none());
+    }
+
+    #[test]
+    fn the_split_view_shows_the_cursor_only_where_it_is() {
+        let mut grid = TermGrid::new(20, 6);
+        grid.advance(b"top\r\nsecond");
+        grid.split_open(3);
+        // The screen's rows 3–5: the cursor (row 1) is above them.
+        let frame = grid.sub_frame(1).unwrap();
+        assert_eq!(frame["cursor"]["visible"], false);
+        grid.advance(b"\r\n\r\n\r\n\r\nx");
+        let frame = grid.sub_frame(1).unwrap();
+        assert_eq!(frame["cursor"]["visible"], true);
     }
 
     #[test]

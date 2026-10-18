@@ -371,6 +371,12 @@ controlling terminal between fork and exec, is in `ffi/pty.rs`). JSONMethodCodec
   bool; `reset {id, hard?}`; `configure {id, scrollback?, clipboardWrite?, clipboardRead?, cursor?, cursorBlink?}`;
   `clipboard {id, text}` (answers an OSC 52 read; one answer per question); `cwd {id}` → the
   directory of OSC 7, else the shell's from `/proc`, on any pty.
+- **Split view**: `split {id, op: open|resize|close, rows}` adds a second view of the same
+  emulator with `rows` rows (the same columns), which ends at the bottom of the screen and
+  scrolls on its own. Its frames are `grid {id, view: 1, cols, rows, full, lines, cursor,
+  modes, scroll {offset, history}, selection?}` where `history` is how far it can scroll back;
+  `scroll` and `select` take `view: 1` for it (cells are of that view). The selection and the
+  program's keyboard input are the session's.
 - A grid session stays after its process ends, so that the text can still be scrolled,
   selected and copied: `exit` is sent once, then only `close` (or the window) removes it.
 - The grid also reads OSC 7 and OSC 133 itself (A prompt start, B prompt end, C output start,
