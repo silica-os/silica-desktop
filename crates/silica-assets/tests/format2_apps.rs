@@ -196,8 +196,20 @@ fn all_the_apps_of_silica_icons_compile_in_both_files() {
     let tmp = tempfile::tempdir().unwrap();
     let types = tmp.path().join("types.toml");
     fs::write(&types, "[app]\n").unwrap();
+    // Only the apps, the generic file and folder and the system glyphs: the file, badge and symbol artwork is not under test
+    // here (and debug builds of resvg assert on some of its filters).
+    let only = tmp.path().join("icons");
+    fs::create_dir_all(only.join("files")).unwrap();
+    for dir in ["badges", "symbols"] {
+        fs::create_dir_all(only.join(dir)).unwrap();
+    }
+    std::os::unix::fs::symlink(icons.join("apps"), only.join("apps")).unwrap();
+    for dir in ["system", "file-generic", "folder-generic"] {
+        std::os::unix::fs::symlink(icons.join("files").join(dir), only.join("files").join(dir))
+            .unwrap();
+    }
     let options = Options {
-        icons: icons.clone(),
+        icons: only,
         types: Some(types),
         ..Options::default()
     };
