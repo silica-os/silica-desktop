@@ -349,14 +349,18 @@ fn transform(
     for p in &mut img.px {
         let lum = oklab([p[0], p[1], p[2]])[0].clamp(0.0, 1.0);
         let rgb: Rgb = if ap.look == Look::Clear {
-            let (lo, hi) = if mode == Mode::Light {
-                (200.0, 255.0)
+            // Light form: grey 50..255 through L^1.6 (contrast on the white glass); dark form:
+            // linear 150..255. A layer's `clear.luma` replaces the ends, not the curve.
+            let (lo, hi, l) = if mode == Mode::Light {
+                (200.0, 255.0, lum)
             } else {
-                luma.map_or(if dark { (150.0, 255.0) } else { (105.0, 255.0) }, |l| {
-                    (l[0], l[1])
-                })
+                let (lo, hi) = luma
+                    .map_or(if dark { (150.0, 255.0) } else { (50.0, 255.0) }, |l| {
+                        (l[0], l[1])
+                    });
+                (lo, hi, if dark { lum } else { lum.powf(1.6) })
             };
-            [(lo + (hi - lo) * lum) / 255.0; 3]
+            [(lo + (hi - lo) * l) / 255.0; 3]
         } else if mode == Mode::Accent {
             map.get(lum)
         } else if mode == Mode::Light {
