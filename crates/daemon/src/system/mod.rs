@@ -12,6 +12,7 @@ mod details;
 pub mod display;
 pub mod focus;
 pub mod look;
+pub mod replacements;
 pub mod unlock;
 
 pub use details::{Network, Output, parse_outputs};
@@ -51,6 +52,8 @@ pub struct SystemConfig {
     pub nightlight_file: Option<PathBuf>,
     /// The Focus modes (`focus.json`).
     pub focus_file: Option<PathBuf>,
+    /// The text replacements (`text-replacements.json`); `None`: only in memory.
+    pub replacements_file: Option<PathBuf>,
     /// Settings › Energy (`power.json`): `preventSleep` holds logind's idle inhibitor.
     pub power_file: Option<PathBuf>,
     /// Ossido's actions socket; `None`: the one of `WAYLAND_DISPLAY`.
@@ -117,6 +120,7 @@ impl Default for SystemConfig {
             nightlight_file: display::config_file("nightlight.json"),
             power_file: display::config_file("power.json"),
             focus_file: display::config_file("focus.json"),
+            replacements_file: display::config_file("text-replacements.json"),
             actions_socket: None,
             place: crate::sun::local_place(),
             utc_offset: None,
@@ -215,6 +219,8 @@ pub struct SystemState {
     pub appearance_mode: String,
     /// The Appearance choices apps follow live (accent, scroll bars, icon style…).
     pub look: look::Look,
+    /// The text replacements apps apply as the user types.
+    pub replacements: replacements::Replacements,
     /// The apps recording now or recently, the ones in use first (the privacy pill).
     pub privacy: Vec<PrivacyUse>,
     /// The keyboard backlight, 0–1; `None` without a backlit keyboard.
@@ -276,6 +282,7 @@ impl SystemState {
         put("appearance.dark", Value::Bool(self.dark));
         put("appearance.mode", Value::from(self.appearance_mode.clone()));
         self.look.put(&mut put);
+        put("text.replacements", Value::new(self.replacements.clone()));
         // "app<US>kind<US>1|0" per app: a flat list the shell splits.
         let privacy: Vec<String> = self
             .privacy
@@ -365,6 +372,11 @@ impl SystemService {
                     .theme_file
                     .as_deref()
                     .map_or_else(look::Look::default, look::Look::read),
+                replacements: config
+                    .replacements_file
+                    .as_deref()
+                    .map(replacements::read)
+                    .unwrap_or_default(),
                 ..SystemState::default()
             })),
             changed: Arc::new(Event::new()),
@@ -716,6 +728,24 @@ impl System {
             ));
         }
         self.shared.update(|state| state.look = next);
+        Ok(())
+    }
+
+    /// The text replacements apps apply while typing: a list of (shortcut, phrase). Shortcuts
+    /// have no spaces and are not repeated; at most 500 entries. Saved in
+    /// `text-replacements.json`.
+    fn set_text_replacements(&self, list: Vec<(String, String)>) -> zbus::fdo::Result<()> {
+        if !replacements::valid(&list) {
+            return Err(zbus::fdo::Error::InvalidArgs(
+                "text replacements: at most 500, shortcuts of 1-40 characters without spaces and \
+                 not repeated, phrases of 1-1000 characters"
+                    .into(),
+            ));
+        }
+        if let Some(file) = &self.shared.config.replacements_file {
+            replacements::write(file, &list).map_err(failed)?;
+        }
+        self.shared.update(|state| state.replacements = list);
         Ok(())
     }
 

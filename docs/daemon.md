@@ -151,6 +151,15 @@ handled yet.
   does not suspend either; a sleep the user asks for still happens. State keys
   `power.preventSleep` and `power.inhibited` (the inhibitor is held).
 
+### Text replacements
+
+- `SetTextReplacements(a(ss))`: the list of (shortcut, phrase) the text fields of every app apply
+  while the user types (`omw` → `On my way!`, after a space or punctuation). At most 500 entries;
+  shortcuts of 1–40 characters without spaces and not repeated, phrases of 1–1000 characters;
+  otherwise `InvalidArgs` and nothing changes. Saved in `$XDG_CONFIG_HOME/silica/text-replacements.json`
+  (the daemon's own file, `{"replacements": [{"shortcut", "phrase"}]}`).
+- State key `text.replacements` (`a(ss)`). silica_ui's `SilicaSystemLook` reads it (typed).
+
 ### Unlocking the session
 
 - `Unlock(s password) → b`: checks the password of the user the daemon runs as with
