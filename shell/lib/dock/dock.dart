@@ -2643,6 +2643,10 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
             cursor: _resize != null || _overSeparator
                 ? SystemMouseCursors.resizeUpDown
                 : MouseCursor.defer,
+            // The pointer coming onto the surface counts as a hover: a pointer that lands on
+            // the bottom row and stays still (warped there, pushed against the edge) gets an
+            // enter and no motion after it, and must still reveal the hidden Dock (#242).
+            onEnter: (event) => _hover(event.localPosition, size),
             onHover: (event) => _hover(event.localPosition, size),
             onExit: (_) {
               if (_overSeparator) setState(() => _overSeparator = false);

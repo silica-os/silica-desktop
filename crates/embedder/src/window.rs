@@ -281,6 +281,9 @@ struct View {
     removing: bool,
     /// A shell layer's namespace (`menubar`, `dock`…): Dart picks what to draw by it.
     namespace: Option<String>,
+    /// The shell asked for input on part of the surface (an explicit, non-empty input region):
+    /// such a layer is mapped even while its scene is empty (silica-desktop#242).
+    input_wanted: bool,
     /// For a popup, the view it hangs from.
     popup_parent: Option<i64>,
     /// For a popup, where Ossido put it: x, y relative to its parent, width, height.
@@ -311,6 +314,7 @@ impl View {
             export: None,
             removing: false,
             namespace: None,
+            input_wanted: false,
             popup_parent: None,
             popup_placed: None,
         }
@@ -2749,6 +2753,7 @@ impl App {
         let Some(View { surface, .. }) = self.views.get(&target) else {
             return text_input::success(serde_json::json!(false));
         };
+        let mut input_wanted = None;
         let done = match call.get("method").and_then(serde_json::Value::as_str) {
             Some("setKeyboardInteractivity") => {
                 let mode = match args.get("mode").and_then(serde_json::Value::as_str) {
@@ -2811,6 +2816,7 @@ impl App {
             {
                 None => {
                     surface.wl_surface().set_input_region(None);
+                    input_wanted = Some(false);
                     true
                 }
                 Some(rects) => match self.region_from(rects) {
@@ -2818,6 +2824,7 @@ impl App {
                         surface
                             .wl_surface()
                             .set_input_region(Some(region.wl_region()));
+                        input_wanted = Some(!rects.is_empty());
                         true
                     }
                     None => false,
@@ -2915,7 +2922,30 @@ impl App {
         if done {
             surface.commit();
         }
+        if let Some(wanted) = input_wanted
+            && let Some(view) = self.views.get_mut(&target)
+        {
+            view.input_wanted = wanted;
+            self.map_if_input_wanted(target);
+        }
         text_input::success(serde_json::json!(done))
+    }
+
+    /// A layer that asks for input somewhere but has drawn nothing yet (the Dock hidden by
+    /// auto-hide from session start: its scene is empty, so the engine presents no frame) gets a
+    /// transparent frame at its size: an unmapped surface has no input region, and nothing at the
+    /// screen edge could reveal it (silica-desktop#242). Other layers with nothing to show (a
+    /// closed Faro) stay unmapped, without a full-screen surface to composite.
+    fn map_if_input_wanted(&self, id: i64) {
+        let (Some(engine), Some(view)) = (&self.engine, self.views.get(&id)) else {
+            return;
+        };
+        if !view.input_wanted || !view.added {
+            return;
+        }
+        if let Some(vulkan) = engine.vulkan() {
+            vulkan.map_empty(id);
+        }
     }
 
     /// A region from `[[x, y, w, h], …]` in surface points (empty rectangles skipped).
@@ -3093,9 +3123,13 @@ impl App {
         if id == MAIN_VIEW && !engine.gl_presented() {
             engine.resize_surface(w, h);
         }
+        if let Some(vulkan) = engine.vulkan() {
+            vulkan.set_view_size(id, (w, h));
+        }
         if let Err(err) = engine.send_window_metrics(id, w, h, f64::from(view.scale.max(1))) {
             warn!("{err}");
         }
+        self.map_if_input_wanted(id);
     }
 
     fn send_pointer(&self, phase: PointerPhase, position: (f64, f64), scroll: Option<(f64, f64)>) {

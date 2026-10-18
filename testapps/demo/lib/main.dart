@@ -6,6 +6,8 @@
 // - Esc clears taps and text (key events, through HardwareKeyboard).
 // - The square at the top left tells the devicePixelRatio: [hiDpi] from 2 up,
 //   otherwise [loDpi].
+// - The square at the bottom left turns [hovered] once the pointer was over the main view: it
+//   entered (a Wayland enter with no motion after it) or hovered (silica-desktop#242).
 // - At the top right a glass area ([glassSize], silica-glass-v1): the opaque background
 //   covers it, it is for the tests that read `glass.list`.
 // - F2 opens a second window ([secondTitle], [secondSize], silica-desktop#146) drawn in its
@@ -24,6 +26,8 @@
 //   `draw` does the same without `closeAsking`, drawing [typed] meanwhile (a confirmation
 //   from silica_ui before 0.38).
 //   Without it the app closes the main window itself at once.
+// - `--empty` (a Dart argument) draws nothing at all in the main view: its scene is empty from
+//   the first frame, as the hidden Dock's at session start (silica-desktop#242).
 import 'dart:async';
 import 'dart:ui' show FlutterView;
 
@@ -43,6 +47,7 @@ const Color second = Color(0xFF8833AA);
 const String secondTitle = 'Second';
 const Size secondSize = Size(200, 120);
 const Color popup = Color(0xFFEE2288);
+const Color hovered = Color(0xFFFFCC00);
 const Size popupSize = Size(120, 80);
 
 /// The `silica/window` channel of the embedder (several windows).
@@ -54,12 +59,16 @@ const MethodChannel windowChannel = MethodChannel(
 /// How the main window's close request is answered (`--close=MODE`).
 String closeMode = '';
 
+/// The main view draws nothing at all (`--empty`): an empty scene from the first frame.
+bool empty = false;
+
 void main(List<String> args) {
   for (final arg in args) {
     if (arg.startsWith('--close='))
       closeMode = arg.substring('--close='.length);
+    if (arg == '--empty') empty = true;
   }
-  runApp(const DemoApp());
+  runApp(empty ? const SizedBox.shrink() : const DemoApp());
 }
 
 class DemoApp extends StatefulWidget {
@@ -71,6 +80,14 @@ class DemoApp extends StatefulWidget {
 
 class _DemoAppState extends State<DemoApp> {
   int taps = 0;
+
+  /// Whether the pointer was seen over the main view (it entered or hovered).
+  bool hoverSeen = false;
+
+  void _sawPointer() {
+    if (!hoverSeen) setState(() => hoverSeen = true);
+  }
+
   final TextEditingController text = TextEditingController();
   final FocusNode textFocus = FocusNode();
 
@@ -248,60 +265,71 @@ class _DemoAppState extends State<DemoApp> {
     const white = Color(0xFFFFFFFF);
     return Directionality(
       textDirection: TextDirection.ltr,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () {
-          final answer = asking;
-          if (answer != null) {
-            setState(() => asking = null);
-            answer.complete();
-            return;
-          }
-          setState(() => taps++);
-        },
-        child: ColoredBox(
-          color: background,
-          child: Stack(
-            children: [
-              Positioned(
-                left: 0,
-                top: 0,
-                width: probeSize,
-                height: probeSize,
-                child: ColoredBox(
-                  color: MediaQuery.devicePixelRatioOf(context) >= 2
-                      ? hiDpi
-                      : loDpi,
+      child: MouseRegion(
+        onEnter: (_) => _sawPointer(),
+        onHover: (_) => _sawPointer(),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            final answer = asking;
+            if (answer != null) {
+              setState(() => asking = null);
+              answer.complete();
+              return;
+            }
+            setState(() => taps++);
+          },
+          child: ColoredBox(
+            color: background,
+            child: Stack(
+              children: [
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  width: probeSize,
+                  height: probeSize,
+                  child: ColoredBox(
+                    color: MediaQuery.devicePixelRatioOf(context) >= 2
+                        ? hiDpi
+                        : loDpi,
+                  ),
                 ),
-              ),
-              Positioned(
-                right: 0,
-                top: 0,
-                width: glassSize.width,
-                height: glassSize.height,
-                child: const Glass(radius: 6, child: SizedBox.expand()),
-              ),
-              Center(
-                child: Text(
-                  'Silica · $taps',
-                  style: const TextStyle(fontSize: 32, color: white),
+                Positioned(
+                  left: 0,
+                  bottom: 0,
+                  width: probeSize,
+                  height: probeSize,
+                  child: ColoredBox(color: hoverSeen ? hovered : background),
                 ),
-              ),
-              Positioned(
-                left: 24,
-                right: 24,
-                bottom: 16,
-                child: EditableText(
-                  controller: text,
-                  focusNode: textFocus,
-                  autofocus: true,
-                  onTapOutside: (_) {},
-                  style: const TextStyle(fontSize: 20, color: white),
-                  cursorColor: white,
-                  backgroundCursorColor: const Color(0xFF000000),
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  width: glassSize.width,
+                  height: glassSize.height,
+                  child: const Glass(radius: 6, child: SizedBox.expand()),
                 ),
-              ),
-            ],
+                Center(
+                  child: Text(
+                    'Silica · $taps',
+                    style: const TextStyle(fontSize: 32, color: white),
+                  ),
+                ),
+                Positioned(
+                  left: 24,
+                  right: 24,
+                  bottom: 16,
+                  child: EditableText(
+                    controller: text,
+                    focusNode: textFocus,
+                    autofocus: true,
+                    onTapOutside: (_) {},
+                    style: const TextStyle(fontSize: 20, color: white),
+                    cursorColor: white,
+                    backgroundCursorColor: const Color(0xFF000000),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

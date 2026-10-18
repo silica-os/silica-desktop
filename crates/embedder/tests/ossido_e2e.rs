@@ -18,8 +18,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use silica_control::commands::{
-    INPUT_CLICK, INPUT_KEY, INPUT_TYPE, LAYER_LIST, LayerInfo, WINDOW_CLOSE, WINDOW_FOCUS,
-    WINDOW_LIST, WindowInfo,
+    INPUT_CLICK, INPUT_KEY, INPUT_POINTER_MOVE, INPUT_TYPE, LAYER_LIST, LayerInfo, WINDOW_CLOSE,
+    WINDOW_FOCUS, WINDOW_LIST, WindowInfo,
 };
 use silica_control::{Client, ScreenshotParams};
 
@@ -29,6 +29,7 @@ const TYPED: [u8; 4] = [0x33, 0xCC, 0x66, 0xFF];
 const LO_DPI: [u8; 4] = [0xFF, 0x00, 0xFF, 0xFF];
 const HI_DPI: [u8; 4] = [0x00, 0xFF, 0x00, 0xFF];
 const POPUP: [u8; 4] = [0xEE, 0x22, 0x88, 0xFF];
+const HOVERED: [u8; 4] = [0xFF, 0xCC, 0x00, 0xFF];
 const APP_ID: &str = "dev.frascella.silica.Flutter";
 const CHILD_ENV: &str = "SILICA_E2E_OSSIDO";
 const TIMEOUT: Duration = Duration::from_secs(20);
@@ -599,6 +600,82 @@ fn layer_bar_reserves_space_takes_keyboard_and_clicks() {
         .unwrap();
     session.expect_pixel(600, 40, TAPPED);
     session.expect_pixel(wx + 100, wy + 90, IDLE);
+}
+
+/// The pointer warped onto a layer at the screen edge (`input.pointer_move` in one step) is
+/// seen by the app where it entered, although no motion follows the enter: Flutter gets the
+/// pointer added there (`MouseRegion.onEnter`), which the hidden Dock and menu bar use to reveal
+/// themselves from their 1 px strip (silica-desktop#242).
+#[test]
+fn a_pointer_entering_a_layer_is_seen_where_it_entered() {
+    let dock_args: Vec<String> = [
+        "--layer",
+        "top",
+        "--anchor",
+        "left,right,bottom",
+        "--size",
+        "640x48",
+        "--keyboard",
+        "none",
+        "--namespace",
+        "edge",
+    ]
+    .iter()
+    .map(|s| (*s).to_owned())
+    .collect();
+    let session = Session::start_with("edge", (640, 480), 1, &dock_args);
+    let edge = session.layer("edge");
+    assert_eq!((edge.y, edge.height), (432, 48));
+    session.expect_pixel(8, 472, IDLE);
+    let mut client = session.client();
+    client
+        .call(INPUT_POINTER_MOVE, json!({"x": 320, "y": 100}))
+        .unwrap();
+    // One step onto the last row of the screen: an enter, and no motion after it.
+    client
+        .call(INPUT_POINTER_MOVE, json!({"x": 320, "y": 479}))
+        .unwrap();
+    session.expect_pixel(8, 472, HOVERED);
+}
+
+/// A shell layer whose first scene is empty (the Dock hidden by auto-hide at session start) is
+/// mapped all the same, with a transparent frame at its size: unmapped, it would have no input
+/// region and nothing at the screen edge could reveal it (silica-desktop#242).
+fn an_empty_layer_is_mapped(name: &str, renderer: &str) {
+    let args: Vec<String> = [
+        "--layer",
+        "top",
+        "--anchor",
+        "left,right,bottom",
+        "--size",
+        "640x48",
+        "--keyboard",
+        "none",
+        "--namespace",
+        "empty",
+        "--renderer",
+        renderer,
+        "--dart-arg",
+        "--empty",
+    ]
+    .iter()
+    .map(|s| (*s).to_owned())
+    .collect();
+    let session = Session::start_with(name, (640, 480), 1, &args);
+    let layer = session.layer("empty");
+    assert_eq!((layer.y, layer.width, layer.height), (432, 640, 48));
+}
+
+// (The Vulkan renderer, where the fix lives, has no surface on headless Ossido: it is checked in
+// the VM. These keep the other renderers mapping an empty first scene.)
+#[test]
+fn an_empty_layer_is_mapped_in_software() {
+    an_empty_layer_is_mapped("empty-software", "software");
+}
+
+#[test]
+fn an_empty_layer_is_mapped_with_gl() {
+    an_empty_layer_is_mapped("empty-gl", "gl");
 }
 
 #[test]

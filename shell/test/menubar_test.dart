@@ -214,6 +214,20 @@ void main() {
       await settle(tester);
       expect(top(tester), -barHeight);
     });
+
+    testWidgets(
+      'always: a pointer that arrives on the top row and stays still brings it back (#242)',
+      (tester) async {
+        await pumpBar(tester, MenubarAutohide.always);
+        expect(top(tester), -barHeight);
+        // The compositor's enter on the 1 px strip, with no motion after it.
+        final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+        addTearDown(mouse.removePointer);
+        await mouse.addPointer(location: const Offset(400, 0));
+        await settle(tester);
+        expect(top(tester), 0);
+      },
+    );
   });
 
   testWidgets('the bar background is drawn only when Settings turns it on', (

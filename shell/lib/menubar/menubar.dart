@@ -1065,6 +1065,13 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
       builder: (context, constraints) {
         _width = constraints.maxWidth.isFinite ? constraints.maxWidth : _width;
         return MouseRegion(
+          // Coming onto the surface counts as moving there: a pointer that lands on the top
+          // row and stays still gets an enter and no motion after it, and must still bring
+          // the hidden bar back (#242).
+          onEnter: (e) {
+            _edgeMoved(e.localPosition);
+            _pointerMoved(e.localPosition);
+          },
           onExit: (_) => _pointerLeft(),
           child: Listener(
             key: _rootKey,
