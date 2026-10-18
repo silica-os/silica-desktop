@@ -31,6 +31,7 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use alacritty_terminal::selection::SelectionType;
+use alacritty_terminal::vte::ansi::CursorShape;
 use rustix::fs::{Mode, OFlags};
 use rustix::io::Errno;
 use rustix::process::{Pid, Signal};
@@ -235,7 +236,8 @@ fn bounded_string(value: &Value) -> Option<String> {
 }
 
 /// The options of a `grid` session from `spawn` or `configure`: `scrollback` (lines),
-/// `clipboardWrite` and `clipboardRead` (OSC 52).
+/// `clipboardWrite` and `clipboardRead` (OSC 52), `cursor` and `cursorBlink` (the default
+/// cursor).
 fn options_of(args: &Value, base: Options) -> Result<Options, String> {
     let mut options = base;
     if let Some(value) = field(args, "scrollback") {
@@ -246,7 +248,16 @@ fn options_of(args: &Value, base: Options) -> Result<Options, String> {
             .ok_or("scrollback must be 0 to 1000000 lines")?;
         options.scrollback = lines;
     }
+    if let Some(value) = field(args, "cursor") {
+        options.cursor = match value.as_str() {
+            Some("block") => CursorShape::Block,
+            Some("underline") => CursorShape::Underline,
+            Some("beam") => CursorShape::Beam,
+            _ => return Err("cursor must be block, underline or beam".to_owned()),
+        };
+    }
     for (key, slot) in [
+        ("cursorBlink", &mut options.cursor_blink),
         ("clipboardWrite", &mut options.clipboard_write),
         ("clipboardRead", &mut options.clipboard_read),
     ] {
@@ -513,6 +524,8 @@ pub enum Read {
 pub struct Pty {
     master: OwnedFd,
     child: Child,
+    /// The child has been waited for: its pid is no longer ours to signal.
+    reaped: bool,
 }
 
 impl Pty {
@@ -569,7 +582,11 @@ impl Pty {
         crate::ffi::pty::controlling_terminal(&mut command);
         let child = command.spawn()?;
         rustix::io::ioctl_fionbio(&master, true)?;
-        Ok(Self { master, child })
+        Ok(Self {
+            master,
+            child,
+            reaped: false,
+        })
     }
 
     pub fn master(&self) -> BorrowedFd<'_> {
@@ -615,21 +632,28 @@ impl Pty {
     }
 
     pub fn signal(&self, signal: Signal) {
+        // A reaped pid may belong to another process by now.
+        if self.reaped {
+            return;
+        }
         if let Err(err) = rustix::process::kill_process(Pid::from_child(&self.child), signal) {
             tracing::debug!("pty signal: {err}");
         }
     }
 
-    /// Whether a process other than the shell is in the foreground of the terminal: its
-    /// foreground process group is not the child's (a session leader, so its pid is its
-    /// process group). False on error.
     /// The working directory of the child process, from /proc.
     pub fn process_cwd(&self) -> Option<String> {
+        if self.reaped {
+            return None;
+        }
         std::fs::read_link(format!("/proc/{}/cwd", self.child.id()))
             .ok()
             .and_then(|p| p.to_str().map(str::to_owned))
     }
 
+    /// Whether a process other than the shell is in the foreground of the terminal: its
+    /// foreground process group is not the child's (a session leader, so its pid is its
+    /// process group). False on error.
     pub fn busy(&self) -> bool {
         match rustix::termios::tcgetpgrp(&self.master) {
             Ok(foreground) => foreground != Pid::from_child(&self.child),
@@ -642,7 +666,9 @@ impl Pty {
 
     /// The exit status if the child has exited (it is then reaped).
     pub fn try_exit(&mut self) -> Option<ExitStatus> {
-        self.child.try_wait().ok().flatten()
+        let status = self.child.try_wait().ok().flatten();
+        self.reaped |= status.is_some();
+        status
     }
 }
 
@@ -668,6 +694,9 @@ struct Session {
     paused: bool,
     /// Closed by the app: not reported, killed if it ignores SIGHUP.
     closing: Option<Instant>,
+    /// The child has ended and the app was told. A grid session stays (its text can still be
+    /// scrolled, selected and copied) until the app closes it.
+    exited: bool,
     last_exit_poll: Instant,
     /// The emulator, for `grid` sessions.
     grid: Option<crate::termgrid::GridWorker>,
@@ -777,6 +806,7 @@ impl PtyHost {
                         eof: false,
                         paused: false,
                         closing: None,
+                        exited: false,
                         last_exit_poll: Instant::now(),
                         grid,
                         last_sent: None,
@@ -954,6 +984,9 @@ impl PtyHost {
                 session.paused = false;
                 tick.resume.push(id);
             }
+            if session.exited {
+                continue;
+            }
             // Exit: at once after the end of the output, otherwise now and then (a
             // background job may keep the terminal open after the shell is gone).
             let poll =
@@ -967,7 +1000,12 @@ impl PtyHost {
                         continue;
                     }
                     tick.messages.push(message("exit", exit_args(id, status)));
-                    finished.push(id);
+                    if session.grid.is_some() {
+                        session.exited = true;
+                        tick.gone.push(id);
+                    } else {
+                        finished.push(id);
+                    }
                 }
             }
         }
@@ -975,7 +1013,7 @@ impl PtyHost {
             self.sessions.remove(&id);
             tick.gone.push(id);
         }
-        tick.idle = self.sessions.is_empty();
+        tick.idle = self.sessions.values().all(|s| s.exited);
         tick
     }
 }
@@ -1360,6 +1398,40 @@ mod tests {
         assert_eq!(args.options.scrollback, 50);
         assert!(args.options.clipboard_read && args.options.clipboard_write);
         assert!(parse("spawn", json!({"rows": 2, "cols": 2, "scrollback": -1})).is_err());
+    }
+
+    #[test]
+    fn a_grid_session_keeps_its_text_after_the_process_ends() {
+        let mut host = PtyHost::default();
+        let id = spawn(&mut host, "printf 'kept text'", true);
+        let start = Instant::now();
+        let mut exits = 0;
+        while start.elapsed() < Duration::from_secs(5) && exits == 0 {
+            let _ = host.readable(id);
+            for m in host.tick(Instant::now()).messages {
+                let v: Value = serde_json::from_slice(&m).unwrap();
+                exits += usize::from(v["method"] == "exit");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(exits, 1);
+        // The exit is reported once, and the text can still be read and searched.
+        for _ in 0..30 {
+            for m in host.tick(Instant::now() + Duration::from_secs(1)).messages {
+                let v: Value = serde_json::from_slice(&m).unwrap();
+                assert_ne!(v["method"], "exit", "reported again");
+            }
+        }
+        let text = host.handle(Call::Grid { id, op: GridOp::Text }).unwrap().value;
+        assert_eq!(text, json!("kept text"));
+        // Closing it removes it.
+        host.handle(Call::Close { id }).unwrap();
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(5) && !host.sessions.is_empty() {
+            host.tick(Instant::now());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(host.sessions.is_empty());
     }
 
     #[test]

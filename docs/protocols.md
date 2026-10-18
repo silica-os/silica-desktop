@@ -340,7 +340,8 @@ controlling terminal between fork and exec, is in `ffi/pty.rs`). JSONMethodCodec
 - To the app: `output {id, data: base64}`, coalesced, at most 64 KiB and one message per frame
   per pty; `exit {id, code?, signal?}` after the last output.
 - **Grid sessions** (`spawn {grid: true, scrollback?: 0–1000000 (default 10000),
-  clipboardWrite?: true, clipboardRead?: false}`): the embedder emulates the terminal
+  clipboardWrite?: true, clipboardRead?: false, cursor?: block|underline|beam, cursorBlink?:
+  false}`): the embedder emulates the terminal
   (alacritty_terminal on a thread of its own, `termgrid.rs`) and the app receives no `output`.
   Once per frame, if anything changed, it gets `grid {id, cols, rows, full, lines: [{y, runs:
   [[text, fg, bg, flags, cells, link?], …]}], cursor: {x, y, visible, shape}, modes, …}`: only
@@ -367,9 +368,11 @@ controlling terminal between fork and exec, is in `ffi/pty.rs`). JSONMethodCodec
   caseSensitive?}` → matches in order, each a list of `[row, x0, x1]` pieces (rows from the top
   of the buffer, more than one piece when the match crosses a soft wrap), at most 10000;
   `mark {id, op?: add|remove}` → bool; `clear {id, what: scrollback|toStart|toMark|screen}` →
-  bool; `reset {id, hard?}`; `configure {id, scrollback?, clipboardWrite?, clipboardRead?}`;
+  bool; `reset {id, hard?}`; `configure {id, scrollback?, clipboardWrite?, clipboardRead?, cursor?, cursorBlink?}`;
   `clipboard {id, text}` (answers an OSC 52 read; one answer per question); `cwd {id}` → the
   directory of OSC 7, else the shell's from `/proc`, on any pty.
+- A grid session stays after its process ends, so that the text can still be scrolled,
+  selected and copied: `exit` is sent once, then only `close` (or the window) removes it.
 - The grid also reads OSC 7 and OSC 133 itself (A prompt start, B prompt end, C output start,
   D finished): prompts are marked on their rows, so marks follow the text through scrolling,
   reflow and the scrollback; DEC mode 9 (X10 mouse) is read too. A synchronized update (mode

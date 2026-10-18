@@ -35,7 +35,9 @@ use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::term::{
     ClipboardType, Config, Osc52, Term, TermDamage, TermMode, test::TermSize,
 };
-use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor, Rgb};
+use alacritty_terminal::vte::ansi::{
+    Color, CursorShape, CursorStyle, NamedColor, Processor, Rgb,
+};
 use serde_json::{Value, json};
 
 /// Lines kept above the screen by default.
@@ -80,6 +82,9 @@ pub struct Options {
     /// OSC 52: whether programs may write to (and read from) the clipboard.
     pub clipboard_write: bool,
     pub clipboard_read: bool,
+    /// The cursor of programs that do not choose one.
+    pub cursor: CursorShape,
+    pub cursor_blink: bool,
 }
 
 impl Default for Options {
@@ -88,6 +93,8 @@ impl Default for Options {
             scrollback: SCROLLBACK,
             clipboard_write: true,
             clipboard_read: false,
+            cursor: CursorShape::Block,
+            cursor_blink: false,
         }
     }
 }
@@ -105,6 +112,10 @@ impl Options {
                 (true, false) => Osc52::OnlyCopy,
                 (false, true) => Osc52::OnlyPaste,
                 (true, true) => Osc52::CopyPaste,
+            },
+            default_cursor_style: CursorStyle {
+                shape: self.cursor,
+                blinking: self.cursor_blink,
             },
             ..Config::default()
         }
@@ -1030,6 +1041,7 @@ impl TermGrid {
                 CursorShape::Underline => "underline",
                 _ => "block",
             },
+            "blink": self.term.cursor_style().blinking,
         });
         let modes = self.modes();
         let selection = self.selection_spans();
@@ -1797,6 +1809,25 @@ mod tests {
         assert_eq!(file_url_path("file:///x").as_deref(), Some("/x"));
         assert_eq!(file_url_path("http://h/x"), None);
         assert_eq!(file_url_path("file://nopath"), None);
+    }
+
+    #[test]
+    fn the_cursor_follows_the_options_and_the_program() {
+        let options = Options {
+            cursor: CursorShape::Beam,
+            cursor_blink: true,
+            ..Options::default()
+        };
+        let mut grid = TermGrid::with_options(10, 2, options);
+        let cursor = grid.frame(1).unwrap()["cursor"].clone();
+        assert_eq!((cursor["shape"].as_str(), cursor["blink"].as_bool()), (Some("beam"), Some(true)));
+        // The program picks a steady underline, then asks for the default again.
+        grid.advance(b"\x1b[4 q");
+        let cursor = grid.frame(1).unwrap()["cursor"].clone();
+        assert_eq!((cursor["shape"].as_str(), cursor["blink"].as_bool()), (Some("underline"), Some(false)));
+        grid.advance(b"\x1b[0 q");
+        let cursor = grid.frame(1).unwrap()["cursor"].clone();
+        assert_eq!(cursor["shape"], "beam");
     }
 
     #[test]
