@@ -19,7 +19,7 @@ which the shell (`shell/`), the compositor's glass (`crates/ossido`), `silica_ui
 1. The user's decisions (listed below).
 2. These four files.
 3. The Sketch UI kit `~/Library/Mobile Documents/com~apple~CloudDocs/Progetti/Silica/Silica 1.0 Amalfi UI Kit.sketch`
-   (document id `DEB2F9E8-966A-4E25-A6AF-6BAF189DD87E`, ~52 pages, 3015 symbols) for exact geometry of
+   (document id `DEB2F9E8-966A-4E25-A6AF-6BAF189DD87E`, ~52 pages, 3055 symbols) for exact geometry of
    every component and screen.
 4. `docs/spec/*.md` for **behaviour and timing** only (they are measurements of the reference; their sizes
    and colours are replaced by Amalfi's).
