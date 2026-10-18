@@ -271,8 +271,9 @@ pub(crate) fn desktop_component_args(embedder: &str, bundle: &str) -> Vec<String
 }
 
 /// The shell's layers, as the embedder's layer options: wallpaper, menu bar, Dock, Faro, app
-/// switcher, notifications, Control Center. The namespace names the component Dart draws.
-pub(crate) const SHELL_LAYERS: [&str; 7] = [
+/// switcher, notifications, Control Center, lock screen. The namespace names the component Dart
+/// draws; the lock screen comes last, above every other overlay.
+pub(crate) const SHELL_LAYERS: [&str; 8] = [
     "--layer background --anchor top,bottom,left,right --size 1280x800 --exclusive-zone -1 --namespace wallpaper",
     "--layer top --anchor top,left,right --size 1280x32 --exclusive-zone 32 --namespace menubar",
     "--layer top --anchor left,right,bottom --size 1280x200 --exclusive-zone 84 --namespace dock",
@@ -280,6 +281,7 @@ pub(crate) const SHELL_LAYERS: [&str; 7] = [
     "--layer overlay --anchor top,bottom,left,right --size 1280x800 --exclusive-zone -1 --keyboard none --namespace switcher",
     "--layer overlay --anchor top,bottom,left,right --size 1280x800 --exclusive-zone -1 --keyboard none --namespace notifications",
     "--layer overlay --anchor top,bottom,left,right --size 1280x800 --exclusive-zone -1 --keyboard none --namespace controlcenter",
+    "--layer overlay --anchor top,bottom,left,right --size 1280x800 --exclusive-zone -1 --keyboard none --namespace lock",
 ];
 
 /// Ossido's arguments for the shell: one embedder process (#201) that draws every layer of

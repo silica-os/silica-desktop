@@ -2161,6 +2161,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'now'**
   String get notificationsNow;
+
+  /// No description provided for @lockPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter password'**
+  String get lockPassword;
+
+  /// No description provided for @lockIncorrect.
+  ///
+  /// In en, this message translates to:
+  /// **'Incorrect password.'**
+  String get lockIncorrect;
+
+  /// No description provided for @lockUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'The password could not be checked.'**
+  String get lockUnavailable;
 }
 
 class _AppLocalizationsDelegate

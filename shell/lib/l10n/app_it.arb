@@ -343,5 +343,8 @@
   "notificationsToday": "Oggi",
   "notificationsEarlier": "Prima",
   "notificationsClearAll": "Cancella tutto",
-  "notificationsNow": "ora"
+  "notificationsNow": "ora",
+  "lockPassword": "Inserisci la password",
+  "lockIncorrect": "Password errata.",
+  "lockUnavailable": "Non è stato possibile verificare la password."
 }

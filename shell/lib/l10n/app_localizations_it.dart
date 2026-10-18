@@ -1129,4 +1129,13 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get notificationsNow => 'ora';
+
+  @override
+  String get lockPassword => 'Inserisci la password';
+
+  @override
+  String get lockIncorrect => 'Password errata.';
+
+  @override
+  String get lockUnavailable => 'Non è stato possibile verificare la password.';
 }

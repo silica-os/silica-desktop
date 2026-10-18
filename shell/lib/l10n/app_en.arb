@@ -1536,5 +1536,8 @@
   "notificationsNow": "now",
   "@notificationsNow": {
     "description": "Notification time label for a notification that arrived less than a minute ago"
-  }
+  },
+  "lockPassword": "Enter password",
+  "lockIncorrect": "Incorrect password.",
+  "lockUnavailable": "The password could not be checked."
 }

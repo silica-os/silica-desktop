@@ -18,6 +18,7 @@ import 'l10n/l10n.dart';
 import 'dock/dock.dart';
 import 'dock/model.dart';
 import 'faro/faro.dart';
+import 'lock/lock_screen.dart';
 import 'menubar/menubar.dart';
 import 'notifications/notifications.dart';
 import 'notifications/service.dart';
@@ -103,6 +104,8 @@ class ShellComponent extends StatelessWidget {
         system: DBusSystem(),
       ),
       'controlcenter' => ControlCenter(system: DBusSystem()),
+      // The lock screen and the screen saver: nothing until Ossido locks or the idle time is up.
+      'lock' => LockLayer(source: DBusLock()),
       // The app switcher never takes input: the same layer hosts the screenshots.
       'switcher' => _followsEntries(
         () => Stack(
