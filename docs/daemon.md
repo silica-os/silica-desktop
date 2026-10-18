@@ -151,6 +151,15 @@ handled yet.
   does not suspend either; a sleep the user asks for still happens. State keys
   `power.preventSleep` and `power.inhibited` (the inhibitor is held).
 
+### Unlocking the session
+
+- `Unlock(s password) → b`: checks the password of the user the daemon runs as with
+  `unix_chkpwd` (PAM's helper, `/usr/sbin/unix_chkpwd`; `SILICA_UNIX_CHKPWD` replaces the path)
+  and, if it is right, runs Ossido's `session.unlock`. `true` when unlocked; `false` for a wrong
+  password, after 1.5 s (the next try waits). `Failed` when the password cannot be checked or
+  Ossido does not answer: the session stays locked. The lock screen (a shell component) is the
+  only caller; the password never goes to the compositor. Only local accounts (`pam_unix`).
+
 ### System look
 
 - `SetLook(a{sv})`: the Appearance choices every app follows live, any of `accent`

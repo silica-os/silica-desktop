@@ -172,6 +172,10 @@ impl State {
         };
         let serial = SERIAL_COUNTER.next_serial();
         let location = pointer.current_location();
+        // Locked: only the lock screen is clicked.
+        if self.locked_blocks(location) {
+            return;
+        }
         // Panorama takes the clicks, except those on the Dock and on the panels.
         if state == ButtonState::Pressed && self.panorama_open() && !self.over_dock_layer(location)
         {
@@ -345,6 +349,9 @@ impl State {
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
+        if self.locked_blocks(pointer.current_location()) {
+            return;
+        }
         if self.scroll_on_transients(pointer.current_location()) {
             return;
         }
@@ -361,9 +368,10 @@ impl State {
         };
         let pressed = state == KeyState::Pressed;
         // Settings recording a new shortcut gets the keys, whatever they are bound to.
+        let locked = self.locked;
         let capturing = self.shortcuts_capture
             && self.front_app_id().as_deref() == Some(crate::config::SHORTCUT_CAPTURE_APP);
-        let shortcuts = if capturing {
+        let shortcuts = if capturing || locked {
             Vec::new()
         } else {
             self.shortcuts.clone()
@@ -371,14 +379,17 @@ impl State {
         // The input source shortcut belongs to the apps while there is only one source.
         let one_source = self.keyboard_config.layouts.len() < 2;
         // Esc closes the open view: its own command is run.
-        let switcher = self.switcher_active;
+        let switcher = self.switcher_active && !locked;
         let logo_released = std::cell::Cell::new(false);
         let vt = std::cell::Cell::new(None);
-        let close_view = self.panorama_mode().map(|mode| match mode {
-            crate::panorama::Mode::Panorama => silica_control::commands::PANORAMA_TOGGLE,
-            crate::panorama::Mode::App => silica_control::commands::PANORAMA_APP,
-            crate::panorama::Mode::Desktop => silica_control::commands::DESKTOP_SHOW,
-        });
+        let close_view = self
+            .panorama_mode()
+            .filter(|_| !locked)
+            .map(|mode| match mode {
+                crate::panorama::Mode::Panorama => silica_control::commands::PANORAMA_TOGGLE,
+                crate::panorama::Mode::App => silica_control::commands::PANORAMA_APP,
+                crate::panorama::Mode::Desktop => silica_control::commands::DESKTOP_SHOW,
+            });
         let command = keyboard.input::<&'static str, _>(
             self,
             code,
@@ -392,7 +403,7 @@ impl State {
                         .unwrap_or(keysym.modified_sym()),
                 );
                 // Ctrl+Alt+Fn: another VT (only the real session has VTs).
-                if let Some(n) = vt_switch(keysym.modified_sym()) {
+                if !locked && let Some(n) = vt_switch(keysym.modified_sym()) {
                     if pressed {
                         vt.set(Some(n));
                     }

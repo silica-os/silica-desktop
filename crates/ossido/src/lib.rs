@@ -29,6 +29,7 @@ mod input;
 mod keep;
 pub mod keys;
 mod layers;
+mod lock;
 pub(crate) mod panorama;
 mod perf;
 mod reap;

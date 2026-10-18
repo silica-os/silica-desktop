@@ -330,6 +330,83 @@ impl HotCornersConfig {
     }
 }
 
+// --- lockscreen.json and screensaver.json ----------------------------------------------------
+
+pub const LOCK_FILE: &str = "lockscreen.json";
+pub const SAVER_FILE: &str = "screensaver.json";
+
+/// How long after the screen saver or the display off the password is asked for, in seconds
+/// (`passwordDelay`; 0 at once); 15 minutes without the key, never when it is `null`.
+pub const PASSWORD_DELAY_DEFAULT: u32 = 900;
+
+/// `lockscreen.json` (Settings › Lock Screen): the part Ossido applies. The shell reads the rest
+/// (`showUser`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LockConfig {
+    pub password_delay: Option<u32>,
+}
+
+impl Default for LockConfig {
+    fn default() -> Self {
+        Self {
+            password_delay: Some(PASSWORD_DELAY_DEFAULT),
+        }
+    }
+}
+
+impl LockConfig {
+    pub fn parse(map: Option<&serde_json::Map<String, Value>>) -> Self {
+        let Some(value) = map.and_then(|map| map.get("passwordDelay")) else {
+            return Self::default();
+        };
+        match value {
+            Value::Null => Self {
+                password_delay: None,
+            },
+            _ => Self {
+                password_delay: map
+                    .and_then(|map| int_in(map, "passwordDelay", (0, 86_400)))
+                    .map(|s| s as u32)
+                    .or(Some(PASSWORD_DELAY_DEFAULT)),
+            },
+        }
+    }
+}
+
+/// `screensaver.json` (Settings › Screen Saver): start after `minutes` without input (absent or
+/// 0: never) with the saver `saver` (one of [`crate::lock::SAVERS`]; the shell draws it).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SaverConfig {
+    pub minutes: Option<f64>,
+    pub saver: String,
+}
+
+impl Default for SaverConfig {
+    fn default() -> Self {
+        Self {
+            minutes: None,
+            saver: crate::lock::SAVER_DEFAULT.to_owned(),
+        }
+    }
+}
+
+impl SaverConfig {
+    pub fn parse(map: Option<&serde_json::Map<String, Value>>) -> Self {
+        let Some(map) = map else {
+            return Self::default();
+        };
+        Self {
+            minutes: number_in(map, "minutes", (0.0, 100_000.0)).filter(|m| *m > 0.0),
+            saver: map
+                .get("saver")
+                .and_then(Value::as_str)
+                .filter(|s| crate::lock::SAVERS.contains(s))
+                .unwrap_or(crate::lock::SAVER_DEFAULT)
+                .to_owned(),
+        }
+    }
+}
+
 // --- dock.json -----------------------------------------------------------------------------
 
 pub const DOCK_FILE: &str = "dock.json";
@@ -501,6 +578,7 @@ impl State {
             HOT_CORNERS_FILE => self.apply_hot_corners_config(),
             SHORTCUTS_FILE => self.apply_shortcuts_config(),
             DOCK_FILE => self.apply_dock_config(),
+            LOCK_FILE | SAVER_FILE => self.apply_lock_config(),
             crate::displays::DISPLAYS_FILE => self.apply_displays_config(),
             _ => {}
         }
@@ -555,6 +633,9 @@ impl State {
         &mut self,
         location: smithay::utils::Point<f64, smithay::utils::Logical>,
     ) {
+        if self.locked {
+            return;
+        }
         let Some(geometry) = self.space.output_geometry(&self.output) else {
             return;
         };
@@ -626,6 +707,7 @@ impl State {
         self.apply_hot_corners_config();
         self.apply_shortcuts_config();
         self.apply_dock_config();
+        self.apply_lock_config();
         self.apply_displays_config();
     }
 
@@ -973,5 +1055,21 @@ mod tests {
         assert_eq!(size(r#"{"cursorSize": 48}"#), Some(48));
         assert_eq!(size(r#"{"cursorSize": 8}"#), None);
         assert_eq!(size(r#"{"cursorSize": "big"}"#), None);
+    }
+
+    #[test]
+    fn lock_and_saver_files() {
+        let delay = |text| LockConfig::parse(Some(&map(text))).password_delay;
+        assert_eq!(LockConfig::parse(None).password_delay, Some(900));
+        assert_eq!(delay(r#"{"passwordDelay": 0}"#), Some(0));
+        assert_eq!(delay(r#"{"passwordDelay": 60}"#), Some(60));
+        assert_eq!(delay(r#"{"passwordDelay": null}"#), None);
+        assert_eq!(delay(r#"{"passwordDelay": -3}"#), Some(900));
+        assert_eq!(delay(r#"{"showUser": false}"#), Some(900));
+        let saver = SaverConfig::parse(Some(&map(r#"{"minutes": 5, "saver": "clock"}"#)));
+        assert_eq!((saver.minutes, saver.saver.as_str()), (Some(5.0), "clock"));
+        let odd = SaverConfig::parse(Some(&map(r#"{"minutes": 0, "saver": "fire"}"#)));
+        assert_eq!((odd.minutes, odd.saver.as_str()), (None, "drift"));
+        assert_eq!(SaverConfig::parse(None).minutes, None);
     }
 }

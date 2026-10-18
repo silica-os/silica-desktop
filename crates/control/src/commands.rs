@@ -47,6 +47,10 @@ pub const WINDOW_ARRANGE_3: &str = "window.arrange_3";
 pub const WINDOW_ARRANGE_4: &str = "window.arrange_4";
 pub const APP_LAUNCH: &str = "app.launch";
 pub const SESSION_QUIT: &str = "session.quit";
+/// Locks the session (the lock screen asks for the password).
+pub const SESSION_LOCK: &str = "session.lock";
+/// Unlocks it; silica-daemon calls it after checking the password.
+pub const SESSION_UNLOCK: &str = "session.unlock";
 pub const APP_QUIT: &str = "app.quit";
 /// Hides the frontmost app (or `app_id`): its windows leave the screen until it is activated.
 pub const APP_HIDE: &str = "app.hide";
@@ -964,6 +968,20 @@ pub const CATALOG: &[CommandSpec] = &[
         label: "Quit the session",
         description: "Closes Ossido and every window.",
         shortcut: Some("Logo+Shift+Q"),
+        params: no_params,
+    },
+    CommandSpec {
+        id: SESSION_LOCK,
+        label: "Lock the screen",
+        description: "Locks the session: the lock screen (a shell component) asks for the password; windows get no input until then.",
+        shortcut: Some("Logo+Ctrl+Q"),
+        params: no_params,
+    },
+    CommandSpec {
+        id: SESSION_UNLOCK,
+        label: "Unlock the screen",
+        description: "Unlocks the session. silica-daemon runs it after it checked the password (System1.Authenticate); nothing else should.",
+        shortcut: None,
         params: no_params,
     },
     CommandSpec {

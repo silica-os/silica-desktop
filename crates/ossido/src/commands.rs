@@ -10,11 +10,12 @@ use silica_control::commands::{
     ExecuteParams, FARO_TOGGLE, GLASS_LIST, GlassQualityParams, INPUT_CLICK, INPUT_KEY,
     INPUT_POINTER_BUTTON, INPUT_POINTER_MOVE, INPUT_SCROLL, INPUT_TYPE, Key, LAYER_LIST,
     NOTIFICATIONS_TOGGLE, PERF_FRAMES, PERF_PROCESS, PERF_RENDER, PerfFramesParams,
-    PerfProcessParams, PerfRenderParams, PointerButton, PointerMove, SESSION_QUIT, Scroll,
-    TypeText, UI_ANIMATION_SCALE, UI_GLASS_QUALITY, UI_SCREENSHOT, WINDOW_ARRANGE_2,
-    WINDOW_ARRANGE_3, WINDOW_ARRANGE_4, WINDOW_CLOSE, WINDOW_FOCUS, WINDOW_FULLSCREEN, WINDOW_LIST,
-    WINDOW_MINIMIZE, WINDOW_MOVE, WINDOW_TILE_BOTTOM, WINDOW_TILE_FILL, WINDOW_TILE_LEFT,
-    WINDOW_TILE_RIGHT, WINDOW_TILE_TOP, WindowInfo, WindowMove, WindowTarget,
+    PerfProcessParams, PerfRenderParams, PointerButton, PointerMove, SESSION_LOCK, SESSION_QUIT,
+    SESSION_UNLOCK, Scroll, TypeText, UI_ANIMATION_SCALE, UI_GLASS_QUALITY, UI_SCREENSHOT,
+    WINDOW_ARRANGE_2, WINDOW_ARRANGE_3, WINDOW_ARRANGE_4, WINDOW_CLOSE, WINDOW_FOCUS,
+    WINDOW_FULLSCREEN, WINDOW_LIST, WINDOW_MINIMIZE, WINDOW_MOVE, WINDOW_TILE_BOTTOM,
+    WINDOW_TILE_FILL, WINDOW_TILE_LEFT, WINDOW_TILE_RIGHT, WINDOW_TILE_TOP, WindowInfo, WindowMove,
+    WindowTarget,
 };
 use silica_control::commands::{
     APP_FORCE_QUIT, APP_FORCE_QUIT_PANEL, SCREENSHOT_REGION, SCREENSHOT_SCREEN,
@@ -678,6 +679,14 @@ impl State {
             PERF_PROCESS => {
                 let PerfProcessParams { pid } = parse_required(params)?;
                 to_value(crate::perf::process_info(pid)?)
+            }
+            SESSION_LOCK => {
+                self.lock_session()?;
+                Ok(json!({ "locked": true }))
+            }
+            SESSION_UNLOCK => {
+                self.unlock_session();
+                Ok(json!({ "locked": false }))
             }
             SESSION_QUIT => {
                 info!("quit requested");

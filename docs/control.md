@@ -29,6 +29,8 @@ parameter schemas. Every catalog id is run by Ossido (test
 | `ui.animation_scale` | `scale` (0–1000) | — (multiplies the animation durations; 0 turns them off) |
 | `ui.glass_quality` | `quality` (`auto`, `full`, `frosted`, `opaque`) | `quality` in use |
 | `dock.icons` | `icons` (`app_id`, `x`, `y`: the center of each app icon in the Dock surface) | `icons` kept; the shell sends it, windows then minimize into their app's icon (`dock.json` `minimizeToApp`) |
+| `session.lock` | — | locks the session (`Logo+Ctrl+Q`); refused when no `lock` layer (the lock screen) exists. See *Lock screen and screen saver* |
+| `session.unlock` | — | unlocks it; silica-daemon calls it after checking the password (`System1.Unlock`) |
 | `engine.commands` | — | the catalog |
 | `engine.execute` | `id`, `params?` | the command's result |
 | `window.list` | — | windows from top to bottom, then the minimized ones: `id`, `title`, `app_id`, `x`, `y`, `width`, `height` (of the content, without the bar), `focused`, `minimized`, `fullscreen`, `space` |
@@ -168,6 +170,28 @@ count. In the real session the display goes off with DPMS (the CRTC is cleared a
 drawn until the next input); nested and headless only keep the state (`idle.state`). There is
 no `ext-idle-notify-v1` for clients yet (Smithay's implementation needs the event loop's data
 to be the compositor state).
+
+### lockscreen.json and screensaver.json
+
+```json
+{"passwordDelay": 900, "showUser": true}
+{"minutes": 10, "saver": "drift"}
+```
+
+*Lock screen and screen saver.* The lock screen is the shell's `lock` layer (an overlay with the
+keyboard). While the session is locked (`session.lock`, `Logo+Ctrl+Q`, the Logo menu, or the
+password delay) Ossido runs no shortcut, no virtual terminal switch, no gesture and no hot
+corner, and a click or the wheel goes only to the `lock` layer; it announces the state to the
+shell as `session.locked` (`1` or `0`). It is a lock against someone at the keyboard, not
+against other programs of the same user (they may call `session.unlock` on the actions socket).
+
+`lockscreen.json`: `passwordDelay`, integer seconds (0 to 86400) between the start of the
+screen saver or the display turning off and the lock; absent: 900 (15 minutes); `null`: never
+(the lock stays manual). The session also locks before sleeping when a delay is set. `showUser`
+(boolean) belongs to the shell. `screensaver.json`: `minutes` without input before the screen
+saver starts (absent or 0: never) and `saver`, `drift`, `clock` or `colors`; Ossido announces
+the saver to the shell as `screensaver.active` (its id, empty when none) and any input ends it.
+`idle.state` has a `lock` object with the state.
 
 ### hotcorners.json
 

@@ -39,6 +39,7 @@ impl State {
     pub fn user_activity(&mut self) {
         self.last_activity = Instant::now();
         self.idle_slept = false;
+        self.lock_activity();
         if self.display_off {
             self.display_off = false;
             info!("display on (activity)");
@@ -65,9 +66,11 @@ impl State {
             #[cfg(feature = "drm")]
             self.drm_display_power(false);
         }
+        self.lock_check(idle);
         if actions.sleep && !self.idle_slept {
             self.idle_slept = true;
             info!("sleep after {} s idle", idle.as_secs());
+            self.lock_before_sleep();
             self.system.queue(crate::system::Call::Suspend);
         }
     }
@@ -80,6 +83,7 @@ impl State {
             "displayOffMinutes": self.power_config.display_off_minutes,
             "sleepMinutes": self.power_config.sleep_minutes,
             "preventSleep": self.power_config.prevent_sleep,
+            "lock": self.lock_state(),
         })
     }
 }

@@ -149,6 +149,15 @@ pub struct State {
     /// the next frame tick draws even if the output is idle (`State::wake`, drm.rs).
     pub redraw: bool,
     pub idle_slept: bool,
+    /// The session is locked (`lock.rs`), the window that had the focus, the lock and screen
+    /// saver settings, and since when the saver or the display off began (the password delay
+    /// counts from there).
+    pub locked: bool,
+    pub locked_focus: Option<smithay::desktop::Window>,
+    pub lock_config: crate::config::LockConfig,
+    pub saver_config: crate::config::SaverConfig,
+    pub saver_active: bool,
+    pub lock_started: Option<Instant>,
     /// The mouse and touchpad settings applied (`input.json`).
     pub input_config: crate::config::InputConfig,
     /// Frame pace, startup and memory of the clients (`perf.*`).
@@ -446,6 +455,12 @@ impl State {
             display_off: false,
             redraw: true,
             idle_slept: false,
+            locked: false,
+            locked_focus: None,
+            lock_config: crate::config::LockConfig::default(),
+            saver_config: crate::config::SaverConfig::default(),
+            saver_active: false,
+            lock_started: None,
             color_temperature: crate::displays::NEUTRAL_KELVIN,
             perf: crate::perf::Perf::default(),
             clear_color: CLEAR_COLOR,
