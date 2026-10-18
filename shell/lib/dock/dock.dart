@@ -1225,11 +1225,51 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     return before;
   }
 
+  /// The gap's width: its presence in the layout runs 0 to 1 along [folderGapCurve], in
+  /// [folderGapOpen] opening and [gapSlide] closing, so the shelf, the separator and the dots
+  /// move with the tiles instead of jumping to the final size (dock-stacks.md). The gap stays
+  /// in the layout until it has closed.
+  late final AnimationController _gapAnim =
+      AnimationController(
+        vsync: this,
+        duration: folderGapOpen,
+        reverseDuration: gapSlide,
+      )..addListener(() {
+        if (mounted) setState(() {});
+      });
+
+  /// Where the gap sits in the items while it is open or closing.
+  int? _gapAt;
+
+  /// The width of the gap, 0 to 1.
+  double get _gapPresence => folderGapCurve.transform(_gapAnim.value);
+
   void _setFolderGap(int? gap) {
     if (gap == _folderGap) return;
     setState(() {
+      final open = _gapAnim.status == AnimationStatus.completed;
       _folderGap = gap;
-      _settleUntil = DateTime.now().add(gapSlide);
+      if (gap == null) {
+        _closeGap();
+      } else {
+        _gapAt = gap;
+        // Opening (or opening again while closing): the layout animates. Moving a gap that is
+        // open: the tiles slide.
+        if (open) {
+          _settleUntil = DateTime.now().add(gapSlide);
+        } else {
+          _gapAnim.forward();
+        }
+      }
+    });
+  }
+
+  void _closeGap() {
+    if (_gapAt == null) return;
+    _gapAnim.reverse().whenComplete(() {
+      if (mounted && _folderGap == null && _gapAnim.value == 0) {
+        setState(() => _gapAt = null);
+      }
     });
   }
 
@@ -1327,7 +1367,7 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     _springTimer = null;
     if (_folderGap != null) {
       _folderGap = null;
-      _settleUntil = DateTime.now().add(gapSlide);
+      _closeGap();
     }
     setState(() {
       if (_pressed == _dropIndex) _pressed = null;
@@ -1367,7 +1407,9 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     }
   }
 
-  double _presenceOf(Item item) => _live[item]?.presence ?? 1;
+  double _presenceOf(Item item) => identical(item, gapItem) && _gapAt != null
+      ? _gapPresence
+      : _live[item]?.presence ?? 1;
 
   /// Stable identity of an item across rebuilds, with the n-th occurrence of equal ones.
   static List<String> _slotKeys(List<Item> items) {
@@ -1561,6 +1603,7 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
     _fileDrags?.cancel();
     _dismissed?.cancel();
     _ticker.dispose();
+    _gapAnim.dispose();
     _bounceTicker.dispose();
     _labelAnim.dispose();
     _labelTimer?.cancel();
@@ -1589,7 +1632,7 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
   /// the Dock, with an empty slot where it would fall.
   List<Item> _displayItems(Size size) {
     final drag = _drag;
-    final gap = _folderGap;
+    final gap = _gapAt;
     if (drag == null && gap != null && gap <= _items.length) {
       // A folder dragged in from another app: room where it would land (D-05, MU-40).
       return [..._items]..insert(gap, gapItem);
@@ -2303,10 +2346,13 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
             : null;
         // During and right after the drag the icons slide into place (~265 ms).
         final settle = _settleUntil;
+        // The folder gap animates in the layout itself ([_gapAnim]): the tiles must not
+        // chase it with a second animation.
+        final gapMoves = _gapAnim.isAnimating;
         final sliding =
             dragging ||
-            _folderGap != null ||
-            (settle != null && DateTime.now().isBefore(settle));
+            (!gapMoves && _folderGap != null) ||
+            (!gapMoves && settle != null && DateTime.now().isBefore(settle));
         if (sliding && !dragging) {
           WidgetsBinding.instance.scheduleFrame();
         }
