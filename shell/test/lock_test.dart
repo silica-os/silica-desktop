@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -14,12 +15,16 @@ class FakeLock implements LockSource {
   final tries = <String>[];
   bool throws = false;
 
+  /// When set, `unlock` waits for it.
+  Completer<void>? gate;
+
   @override
   ({String login, String name}) get user => (login: 'anna', name: 'Anna Rossi');
 
   @override
   Future<bool> unlock(String password) async {
     tries.add(password);
+    await gate?.future;
     if (throws) throw PlatformException(code: 'Failed');
     return password == 'secret';
   }
@@ -114,6 +119,51 @@ void main() {
     expect(find.text('Anna Rossi'), findsNothing);
     expect(find.text('A'), findsNothing);
     expect(find.byKey(const ValueKey('lock password')), findsOneWidget);
+  });
+
+  testWidgets('typed characters replace the placeholder and stay obscured', (
+    tester,
+  ) async {
+    await pump(tester, FakeLock());
+    await tester.pump();
+    expect(find.text('Enter password'), findsOneWidget);
+    await tester.enterText(find.byKey(const ValueKey('lock password')), 'abc');
+    await tester.pump();
+    expect(find.text('Enter password'), findsNothing);
+    final field = tester.widget<EditableText>(
+      find.descendant(
+        of: find.byKey(const ValueKey('lock password')),
+        matching: find.byType(EditableText),
+      ),
+    );
+    expect(field.controller.text, 'abc');
+    expect(field.obscureText, isTrue);
+  });
+
+  testWidgets('the field keeps focus while the password is checked and after '
+      'a failure', (tester) async {
+    final source = FakeLock()..gate = Completer<void>();
+    await pump(tester, source);
+    await tester.pump();
+    EditableText field() => tester.widget<EditableText>(
+      find.descendant(
+        of: find.byKey(const ValueKey('lock password')),
+        matching: find.byType(EditableText),
+      ),
+    );
+    expect(field().focusNode.hasFocus, isTrue);
+    await tester.enterText(find.byKey(const ValueKey('lock password')), 'nope');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    expect(field().focusNode.hasFocus, isTrue);
+    source.gate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Incorrect password.'), findsOneWidget);
+    expect(field().focusNode.hasFocus, isTrue);
+    // Typing goes on without a click.
+    tester.testTextInput.enterText('again');
+    await tester.pump();
+    expect(field().controller.text, 'again');
   });
 
   testWidgets('a wrong password shakes and says so; the right one is sent', (

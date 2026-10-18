@@ -395,8 +395,12 @@ class LockScreenState extends State<LockScreen>
                     focusNode: _focus,
                     placeholder: l.lockPassword,
                     width: 220,
-                    enabled: !_busy,
-                    onSubmitted: (_) => _submit(),
+                    onSubmitted: (_) {
+                      // The editing action unfocuses the field (EditableText's default for
+                      // "done"): take the focus back at once, the check runs with it.
+                      _focus.requestFocus();
+                      _submit();
+                    },
                   ),
                   const SizedBox(height: 10),
                   SizedBox(
