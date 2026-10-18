@@ -97,6 +97,18 @@ void main() {
     expect(popupMenuTopLeft(request), const Offset(300, 389));
   });
 
+  test('a pull-down opens below its control', () {
+    final request = PopupMenuRequest(
+      serial: 1,
+      appId: '',
+      popUp: false,
+      anchor: const Rect.fromLTWH(100, 200, 80, 24),
+      selected: 0,
+      rows: rows,
+    );
+    expect(popupMenuTopLeft(request), const Offset(100, 228));
+  });
+
   test('a pop-up button aligns the selected row on the control', () {
     final items = [
       PopupRow(kind: PopupRowKind.item, id: 1, label: 'A'),

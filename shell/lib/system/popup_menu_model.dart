@@ -210,6 +210,9 @@ Widget? _icon(String icon) {
   );
 }
 
+/// The space between a pull-down's control and its menu.
+const double pullDownGap = 4;
+
 /// The top left corner of the menu on the output.
 ///
 /// A context menu: the first row under the pointer (11 pt above it), as the desktop menu. A
@@ -217,7 +220,12 @@ Widget? _icon(String icon) {
 /// line up) and its row edge 5 pt left of the control's (docs/spec/menus.md, provisional).
 Offset popupMenuTopLeft(PopupMenuRequest request, {double above = 11}) {
   final a = request.anchor;
-  if (!request.popUp) return Offset(a.left, a.top - above);
+  if (!request.popUp) {
+    // A pull-down: below its control. A context menu: the pointer, a 0 x 0 rectangle.
+    return a.height > 0
+        ? Offset(a.left, a.bottom + pullDownGap)
+        : Offset(a.left, a.top - above);
+  }
   const padding = AmalfiMenuMetrics.padding;
   var offset = padding;
   var found = false;

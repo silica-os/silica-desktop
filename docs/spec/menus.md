@@ -86,7 +86,8 @@ baseline on the control's label baseline and the row's left edge 5 pt left of th
 over the control, so the control stays visible through the selected row only. When the menu does
 not fit (the control is near a screen edge) it is moved to fit, not re-aligned, and the selected
 row is highlighted anyway. With no selected item the first row is aligned. A pull-down (no
-selected value) is a `context` menu anchored below the control's bottom edge.
+selected value) is a `context` menu whose anchor has a height: the shell opens it 4 pt below
+the control's bottom edge, its left edge on the control's (a 0-height anchor is the pointer).
 
 Status: the alignment is *provisional*; the reference's pop-up button has not been measured
 (request in silica-reference).
