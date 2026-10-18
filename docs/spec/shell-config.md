@@ -35,6 +35,9 @@ by the daemon with `InvalidArgs`; readers still fall back to the default for any
 | `wallpaper.image` `wallpaper.color` `wallpaper.id` | text | empty | wallpaper: the first of image (an existing file), color (`#rrggbb`), id (Amalfi set) that is usable; the default (Ravello) otherwise |
 | `wallpaper.fit` | `fill` `fit` `stretch` `center` `tile` | fill | wallpaper |
 | `lockscreen.showUser` | bool | true | lock screen: name and picture |
+| `lockscreen.showHints` | bool | true | lock screen: the help button and the hint after the second failure |
+| `lockscreen.passwordHint` `lockscreen.helpAddress` | text | empty | lock screen: the hint text (a default text when empty) and the help address line, both shown in the hint state |
+| `lockscreen.showPowerButtons` | bool | false | lock screen: the Sleep, Restart and Shut Down row (Restart and Shut Down ask for confirmation) |
 | `lockscreen.passwordDelay` | int, seconds, -1 never | 900 | Ossido (see below) |
 | `screensaver.minutes` | int 0-1440 (0 never) | 0 | Ossido (see below) |
 | `screensaver.saver` | `drift` `clock` `colors` | drift | Ossido (see below) |
@@ -63,7 +66,7 @@ by the daemon with `InvalidArgs`; readers still fall back to the default for any
 - **Menu bar** (`menubar_config.dart`): `MenubarConfigWatcher` follows `menubar.*`.
 - **Wallpaper** (`wallpaper.dart`): `WallpaperLayer` follows `wallpaper.*`; a lock screen shows
   the same layer.
-- **Lock screen** (`lock_screen.dart`): follows `lockscreen.showUser` while it is on screen.
+- **Lock screen** (`lock_screen.dart`): follows `lockscreen.showUser`, `showHints`, `passwordHint`, `helpAddress` and `showPowerButtons` while it is on screen.
 - **Notifications** (`notifications/settings.dart`): the settings are read again for every
   notification, so a change applies to the next one.
 - **Control Center** (`controlcenter/modules.dart`): follows `controlcenter.modules`.

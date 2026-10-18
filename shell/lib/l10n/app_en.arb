@@ -1543,5 +1543,24 @@
   },
   "lockPassword": "Enter password",
   "lockIncorrect": "Incorrect password.",
-  "lockUnavailable": "The password could not be checked."
+  "lockUnavailable": "The password could not be checked.",
+  "lockPasswordField": "Password, secure field",
+  "@lockPasswordField": {"description": "Lock screen: screen reader label of the password field"},
+  "lockHelpButton": "Show password hint",
+  "@lockHelpButton": {"description": "Lock screen: label of the help button next to the password field"},
+  "lockSubmit": "Unlock",
+  "@lockSubmit": {"description": "Lock screen: label of the submit button inside the password field"},
+  "lockNoHint": "No password hint is set for this account.",
+  "@lockNoHint": {"description": "Lock screen: shown in place of the user when the help button is used and no hint was set"},
+  "lockSleep": "Sleep",
+  "@lockSleep": {"description": "Lock screen power button"},
+  "lockRestart": "Restart",
+  "@lockRestart": {"description": "Lock screen power button"},
+  "lockShutDown": "Shut Down",
+  "@lockShutDown": {"description": "Lock screen power button"},
+  "lockNotificationCount": "{count, plural, =1{1 notification} other{{count} notifications}}",
+  "@lockNotificationCount": {
+    "description": "Lock screen banner: how many notifications an app has; the text is hidden",
+    "placeholders": {"count": {"type": "int"}}
+  }
 }

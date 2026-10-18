@@ -2185,6 +2185,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The password could not be checked.'**
   String get lockUnavailable;
+
+  /// Lock screen: screen reader label of the password field
+  ///
+  /// In en, this message translates to:
+  /// **'Password, secure field'**
+  String get lockPasswordField;
+
+  /// Lock screen: label of the help button next to the password field
+  ///
+  /// In en, this message translates to:
+  /// **'Show password hint'**
+  String get lockHelpButton;
+
+  /// Lock screen: label of the submit button inside the password field
+  ///
+  /// In en, this message translates to:
+  /// **'Unlock'**
+  String get lockSubmit;
+
+  /// Lock screen: shown in place of the user when the help button is used and no hint was set
+  ///
+  /// In en, this message translates to:
+  /// **'No password hint is set for this account.'**
+  String get lockNoHint;
+
+  /// Lock screen power button
+  ///
+  /// In en, this message translates to:
+  /// **'Sleep'**
+  String get lockSleep;
+
+  /// Lock screen power button
+  ///
+  /// In en, this message translates to:
+  /// **'Restart'**
+  String get lockRestart;
+
+  /// Lock screen power button
+  ///
+  /// In en, this message translates to:
+  /// **'Shut Down'**
+  String get lockShutDown;
+
+  /// Lock screen banner: how many notifications an app has; the text is hidden
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 notification} other{{count} notifications}}'**
+  String lockNotificationCount(int count);
 }
 
 class _AppLocalizationsDelegate

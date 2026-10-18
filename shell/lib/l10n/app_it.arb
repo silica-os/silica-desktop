@@ -347,5 +347,13 @@
   "notificationsNow": "ora",
   "lockPassword": "Inserisci la password",
   "lockIncorrect": "Password errata.",
-  "lockUnavailable": "Non è stato possibile verificare la password."
+  "lockUnavailable": "Non è stato possibile verificare la password.",
+  "lockPasswordField": "Password, campo protetto",
+  "lockHelpButton": "Mostra il suggerimento della password",
+  "lockSubmit": "Sblocca",
+  "lockNoHint": "Per questo account non è stato impostato un suggerimento per la password.",
+  "lockSleep": "Standby",
+  "lockRestart": "Riavvia",
+  "lockShutDown": "Spegni",
+  "lockNotificationCount": "{count, plural, =1{1 notifica} other{{count} notifiche}}"
 }

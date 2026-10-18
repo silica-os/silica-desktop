@@ -180,6 +180,10 @@ pub const KEYS: &[KeyDef] = &[
     k("wallpaper.id", Kind::Text, Dflt::Text("")),
     k("wallpaper.fit", Kind::Enum(FIT), Dflt::Text("fill")),
     k("lockscreen.showUser", Kind::Bool, Dflt::Bool(true)),
+    k("lockscreen.showHints", Kind::Bool, Dflt::Bool(true)),
+    k("lockscreen.passwordHint", Kind::Text, Dflt::Text("")),
+    k("lockscreen.helpAddress", Kind::Text, Dflt::Text("")),
+    k("lockscreen.showPowerButtons", Kind::Bool, Dflt::Bool(false)),
     k(
         "lockscreen.passwordDelay",
         Kind::Int(-1, 86_400),

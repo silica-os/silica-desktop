@@ -1,6 +1,5 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
-
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -1142,4 +1141,37 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get lockUnavailable => 'Non è stato possibile verificare la password.';
+
+  @override
+  String get lockPasswordField => 'Password, campo protetto';
+
+  @override
+  String get lockHelpButton => 'Mostra il suggerimento della password';
+
+  @override
+  String get lockSubmit => 'Sblocca';
+
+  @override
+  String get lockNoHint =>
+      'Per questo account non è stato impostato un suggerimento per la password.';
+
+  @override
+  String get lockSleep => 'Stop';
+
+  @override
+  String get lockRestart => 'Riavvia';
+
+  @override
+  String get lockShutDown => 'Spegni';
+
+  @override
+  String lockNotificationCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count notifiche',
+      one: '1 notifica',
+    );
+    return '$_temp0';
+  }
 }
