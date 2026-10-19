@@ -977,9 +977,8 @@ class _MenuBarState extends State<MenuBar> with SingleTickerProviderStateMixin {
         ShellChannel.instance.states.value['app.frontmost'] ?? '';
     final appId = window?.appId ?? windowless;
     if (window == null && windowless.isEmpty) return 'Silica';
-    final entry = widget.entries?.values
-        .where((e) => e.matchesAppId(appId))
-        .firstOrNull;
+    final entries = widget.entries;
+    final entry = entries == null ? null : entryForAppId(entries.values, appId);
     return entry?.name ??
         (appId.isNotEmpty ? appId : (window?.title ?? 'Silica'));
   }

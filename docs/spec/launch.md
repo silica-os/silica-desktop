@@ -79,6 +79,39 @@ read-write at their own paths, so the app gets the path it was asked to open.
 A bundle started from a disk image (`location = volume`) runs the same way (its `Contents/` is
 already read-only), and the shell shows the "Move to Applications" suggestion (`trust.md`).
 
+## Start time
+
+`silica-launch` adds little to an app's start, and nothing it can avoid:
+
+- A system app (`/usr/Applications`, the development VM's folder) started by its path never
+  connects to D-Bus and is not assessed: `silica-launch` reads `Info.toml` and *becomes* the
+  embedder (`exec`), so no process stays between the caller and the app, and the pid the caller
+  started is the app's. Flatpak apps, AppImages and single-command desktop entries are `exec`ed
+  the same way; only a sandboxed bundle keeps `silica-launch` as its parent (it owns the proxy
+  and the registry relay).
+- The session bus is connected only when something needs it (an id to resolve, a verdict).
+- `Trust1` answers from its cache or verifies in full under 200 ms (`trust.md`), and writes
+  `trust.bin` only when the outcome changed.
+- `xdg-dbus-proxy` signals readiness on a pipe (`--fd`), so no polling waits for it.
+
+`SILICA_LAUNCH_TRACE=1` prints the time of each stage (bus connected, resolved, assessed,
+`Info.toml` read, sandbox prepared, proxy ready, `bwrap` or `exec`) on standard error, which
+is the session log.
+
+Measured in the development VM (virtio-gpu Venus, Vulkan, 2026-10-19), from `app.launch` (or a
+click on the Dock) to the first frame drawn by the app, warm page cache:
+
+| | before `bwrap`/`exec` | first frame |
+| --- | --- | --- |
+| Calculator, system bundle (direct) | under 2 ms | 0.35 to 0.38 s |
+| A self-signed copy in `~/Applications` (sandbox, 30 MB verified in full) | 19 to 29 ms (assessment 14 to 24 ms, proxy 2 to 3 ms) | 0.40 to 0.41 s |
+| Clock, desktop entry (no bundle) | | 0.51 s |
+
+With the page cache dropped first: 1.2 s for the system Calculator, 0.76 s for the sandboxed copy
+(the runtime's files were partly cached again by then). The ~8 s first seen in silica-desktop#260
+came from a sandbox without `/sys`: Mesa found no GPU and Flutter drew in software; binding
+`/sys/dev`, `/sys/devices`, `/sys/class` and `/sys/bus` for apps with the GPU fixed it.
+
 ## Exit status
 
 the app's own exit status once it ends (0 for a clean exit); 2 usage; 3

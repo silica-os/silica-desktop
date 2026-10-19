@@ -486,18 +486,31 @@ impl Shared {
         // What approvals are keyed on: the developer key (empty for an unsigned bundle).
         let manifest = v.key_id.map(|k| k.to_string()).unwrap_or_default();
         let (code, reason) = integrity_code(&v.integrity);
+        let fresh = Cached {
+            stamp: now_stamp,
+            integrity: code,
+            reason,
+            developer: developer_code(v.developer),
+            manifest: manifest.clone(),
+            cost_ms,
+        };
         let mut state = self.state();
-        state.store.cache.insert(
-            bundle.to_string_lossy().into_owned(),
-            Cached {
-                stamp: now_stamp,
-                integrity: code,
-                reason,
-                developer: developer_code(v.developer),
-                manifest: manifest.clone(),
-                cost_ms,
-            },
-        );
+        let previous = state
+            .store
+            .cache
+            .insert(bundle.to_string_lossy().into_owned(), fresh.clone());
+        // The same outcome for the same files (what most launches find): trust.bin is not
+        // written again, unless the bundle crossed the cost threshold.
+        if previous.is_some_and(|p| {
+            p.stamp == fresh.stamp
+                && p.integrity == fresh.integrity
+                && p.reason == fresh.reason
+                && p.developer == fresh.developer
+                && p.manifest == fresh.manifest
+                && (p.cost_ms >= CACHE_FROM_MS) == (fresh.cost_ms >= CACHE_FROM_MS)
+        }) {
+            return (v.integrity, v.developer, manifest);
+        }
         // A bounded cache: the oldest entries (by path order) go first.
         while state.store.cache.len() > 512 {
             let Some(first) = state.store.cache.keys().next().cloned() else {

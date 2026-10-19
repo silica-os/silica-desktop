@@ -128,6 +128,13 @@ directly from its `Exec` otherwise, detached in its own session.
 - Ossido's `app.launch {app}`: `silica_apps::Registry` in process (no D-Bus round trip on the
   compositor's thread); same rules, same command line.
 - The shell (`desktop_entries.dart`): `SilicaApps` (silica_ui) at start and on the signals.
+  A window (or a running app of the process registry) belongs to one app only: the one whose
+  id, or `wm_class`, is the window's app id; the looser guesses (the last part of the id, the
+  program of `exec`, never a launcher such as `silica-launch` or `flatpak`) apply only when no
+  app claims it exactly, so the Dock, the switcher, the menu bar and Force Quit never show an
+  app twice (silica-desktop#260). Dock pins saved under another name of an app (its desktop
+  entry's file name, its window class, another case) are rewritten to the registry id when the
+  apps load.
 - `Thumbnails1.AppIcon` and the document icons: the daemon's live registry.
 - `Share1`: the apps with `share = true`.
 - Mustache's Open With: `AppsFor`, `DefaultFor`, `SetDefault`, `Open`.

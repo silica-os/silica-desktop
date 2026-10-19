@@ -554,4 +554,98 @@ void liveEntriesTests() {
     expect(item.running, isTrue);
     expect(item.pinned, isFalse);
   });
+
+  group('a bundled app in the Dock (silica-desktop#260)', () {
+    // The Calculator as a bundle, and a second bundle whose last id part is also
+    // "calculator" and whose command is the same launcher.
+    const calculator = DesktopEntry(
+      id: 'dev.frascella.Calculator',
+      name: 'Calculator',
+      exec: 'silica-launch /usr/Applications/Calculator.app',
+      wmClass: 'dev.frascella.Calculator',
+      kind: 'system',
+      path: '/usr/Applications/Calculator.app',
+    );
+    const copy = DesktopEntry(
+      id: 'dev.example.Calculator',
+      name: 'Calculator',
+      exec: 'silica-launch /var/home/silica/Applications/Calculator.app',
+      kind: 'bundle',
+      path: '/var/home/silica/Applications/Calculator.app',
+    );
+    const entries = {
+      'dev.example.Calculator': copy,
+      'dev.frascella.Calculator': calculator,
+    };
+
+    test(
+      'a window belongs to the app whose id it carries, and to no other',
+      () {
+        expect(
+          entryForAppId(entries.values, 'dev.frascella.Calculator'),
+          same(calculator),
+        );
+        expect(
+          entryForAppId(entries.values, 'dev.example.Calculator'),
+          same(copy),
+        );
+        // The launcher's program names no app.
+        expect(copy.matchesAppId('silica-launch'), isFalse);
+        expect(entryForAppId(entries.values, 'silica-launch'), isNull);
+      },
+    );
+
+    test(
+      'the pinned app shows once, running, and the other is not running',
+      () {
+        final items = dockItems(
+          entries,
+          const ['dev.frascella.Calculator'],
+          [
+            const Toplevel(
+              id: '1',
+              title: 'Calculator',
+              appId: 'dev.frascella.Calculator',
+            ),
+          ],
+          registered: const {'dev.frascella.Calculator'},
+        );
+        final apps = [
+          for (final i in items)
+            if (i.label == 'Calculator') i,
+        ];
+        expect(apps, hasLength(1));
+        expect(apps.single.id, 'dev.frascella.Calculator');
+        expect(apps.single.pinned, isTrue);
+        expect(apps.single.running, isTrue);
+      },
+    );
+
+    test('pins follow the registry id of the app they name', () {
+      const terminal = DesktopEntry(
+        id: 'dev.frascella.Terminal',
+        name: 'Terminal',
+        exec: 'silica-launch /usr/Applications/Terminal.app',
+        wmClass: 'silica-terminal',
+        path: '/usr/share/applications/silica-terminal.desktop',
+      );
+      final all = {...entries, 'dev.frascella.Terminal': terminal};
+      expect(
+        migratePins(all, const [
+          'dev.frascella.calculator',
+          'silica-terminal',
+          'org.example.Gone',
+          'dev.frascella.Calculator',
+        ]),
+        [
+          'dev.frascella.Calculator',
+          'dev.frascella.Terminal',
+          'org.example.Gone',
+        ],
+      );
+      // Nothing to change, or no apps known yet (the registry has not answered).
+      expect(migratePins(all, const ['dev.frascella.Calculator']), isNull);
+      expect(migratePins(const {}, const ['silica-terminal']), isNull);
+    });
+  });
 }

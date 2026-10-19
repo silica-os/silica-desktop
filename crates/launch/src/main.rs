@@ -1,10 +1,13 @@
 //! `silica-launch [--print] <bundle.app | file.AppImage | app id> [URI…]` (docs/spec/launch.md).
 
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::io::Read;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
-use std::time::Duration;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use silica_apps::info::Info;
 use silica_apps::registry::{Dirs, Kind, Registry};
@@ -27,7 +30,40 @@ fn fail(code: u8, text: &str) -> ExitCode {
     ExitCode::from(code)
 }
 
+/// When the launch started, with `SILICA_LAUNCH_TRACE=1` (docs/spec/launch.md, "Start time").
+static TRACE: OnceLock<Option<Instant>> = OnceLock::new();
+
+/// Writes how long the launch has taken so far, and the stage reached, on standard error (the
+/// session log) when tracing is on.
+fn trace(stage: &str) {
+    if let Some(Some(start)) = TRACE.get() {
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        eprintln!("silica-launch: {ms:8.1} ms {stage}");
+    }
+}
+
+/// The session bus, connected the first time something needs it: a system app started by its
+/// path never connects.
+struct Bus(OnceCell<Option<zbus::blocking::Connection>>);
+
+impl Bus {
+    fn get(&self) -> Option<&zbus::blocking::Connection> {
+        self.0
+            .get_or_init(|| {
+                let bus = zbus::blocking::Connection::session().ok();
+                trace("session bus connected");
+                bus
+            })
+            .as_ref()
+    }
+}
+
 fn main() -> ExitCode {
+    let _ = TRACE.set(
+        std::env::var_os("SILICA_LAUNCH_TRACE")
+            .is_some_and(|v| v == "1")
+            .then(Instant::now),
+    );
     let mut print = false;
     let mut rest: Vec<String> = Vec::new();
     for arg in std::env::args().skip(1) {
@@ -44,13 +80,14 @@ fn main() -> ExitCode {
         return fail(2, USAGE);
     };
     let env = |k: &str| std::env::var(k).ok();
-    let bus = zbus::blocking::Connection::session().ok();
-    let resolved = match resolve(target, bus.as_ref(), &env) {
+    let bus = Bus(OnceCell::new());
+    let resolved = match resolve(target, &bus, &env) {
         Ok(r) => r,
         Err(e) => return fail(NOT_FOUND, &e),
     };
+    trace("resolved");
     match resolved {
-        Target::Flatpak(id) => run_plain(
+        Target::Flatpak(id) => exec_plain(
             print,
             std::iter::once("flatpak".to_owned())
                 .chain(["run".to_owned(), id])
@@ -65,13 +102,16 @@ fn main() -> ExitCode {
                     ..Default::default()
                 },
             );
+            if let [line] = lines.as_slice() {
+                return exec_plain(print, line.clone());
+            }
             let mut code = ExitCode::SUCCESS;
             for line in lines {
                 code = run_plain(print, line);
             }
             code
         }
-        Target::Path(path) => launch_path(&path, uris, print, bus.as_ref(), &env),
+        Target::Path(path) => launch_path(&path, uris, print, &bus, &env),
     }
 }
 
@@ -86,7 +126,7 @@ enum Target {
 
 fn resolve(
     target: &str,
-    bus: Option<&zbus::blocking::Connection>,
+    bus: &Bus,
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Target, String> {
     if target.contains('/') {
@@ -94,7 +134,7 @@ fn resolve(
         return Ok(Target::Path(path));
     }
     // An id: the registry of the session, else a scan of the same folders.
-    if let Some(bus) = bus
+    if let Some(bus) = bus.get()
         && let Ok(reply) = bus.call_method(
             Some("dev.frascella.Silica"),
             "/dev/frascella/Silica/Apps1",
@@ -128,6 +168,21 @@ fn resolve(
     })
 }
 
+/// Becomes the command (no process stays between the caller and the app, whose pid is then the
+/// one the caller started), or prints it with `--print`.
+fn exec_plain(print: bool, argv: Vec<String>) -> ExitCode {
+    if print {
+        return run_plain(print, argv);
+    }
+    let Some((program, args)) = argv.split_first() else {
+        return fail(NOT_FOUND, "empty command");
+    };
+    trace("exec");
+    // `exec` returns only when it failed.
+    let err = Command::new(program).args(args).exec();
+    fail(NOT_FOUND, &format!("{program}: {err}"))
+}
+
 fn run_plain(print: bool, argv: Vec<String>) -> ExitCode {
     if print {
         for a in &argv {
@@ -151,12 +206,12 @@ fn is_system(path: &Path) -> bool {
 
 /// The trust verdict: the daemon's (with its prompt), or without the daemon a local check that
 /// lets only `allow` through.
-fn trusted(path: &Path, bus: Option<&zbus::blocking::Connection>) -> Result<(), String> {
+fn trusted(path: &Path, bus: &Bus) -> Result<(), String> {
     if is_system(path) {
         return Ok(());
     }
     let text = path.to_string_lossy().into_owned();
-    if let Some(bus) = bus {
+    if let Some(bus) = bus.get() {
         let call = |method: &str| {
             bus.call_method(
                 Some("dev.frascella.Silica"),
@@ -171,6 +226,7 @@ fn trusted(path: &Path, bus: Option<&zbus::blocking::Connection>) -> Result<(), 
                 .body()
                 .deserialize::<(String, HashMap<String, OwnedValue>)>()
         {
+            trace(&format!("assessed: {verdict}"));
             if verdict == "allow" {
                 return Ok(());
             }
@@ -217,7 +273,7 @@ fn launch_path(
     path: &Path,
     uris: &[String],
     print: bool,
-    bus: Option<&zbus::blocking::Connection>,
+    bus: &Bus,
     env: &dyn Fn(&str) -> Option<String>,
 ) -> ExitCode {
     let session = Session::from_env(env);
@@ -233,7 +289,7 @@ fn launch_path(
     }
     if !is_bundle {
         // AppImages run as they are, after their confirmation.
-        return run_plain(
+        return exec_plain(
             print,
             std::iter::once(path.to_string_lossy().into_owned())
                 .chain(uris.iter().cloned())
@@ -244,9 +300,11 @@ fn launch_path(
         Ok(info) => info,
         Err(e) => return fail(NOT_FOUND, &e.to_string()),
     };
+    trace("Info.toml read");
     let contents = path.join("Contents");
     if is_system(path) {
-        return run_plain(
+        // Part of the image: no sandbox, and nothing to wait for.
+        return exec_plain(
             print,
             app_command(&info, &contents, &session.embedder, uris),
         );
@@ -262,7 +320,7 @@ fn launch_path(
         &session,
         uris,
         print,
-        bus.is_some(),
+        bus.get().is_some(),
     )
 }
 
@@ -319,6 +377,7 @@ fn run_sandboxed(
         targets: uris,
     };
     let args = bwrap_args(&sandbox);
+    trace("sandbox prepared");
     if print {
         println!("bwrap");
         for a in &args {
@@ -351,6 +410,7 @@ fn run_sandboxed(
                     let _ = std::fs::remove_dir_all(&dir);
                     return fail(NO_SANDBOX, "xdg-dbus-proxy did not start");
                 }
+                trace("D-Bus proxy ready");
                 proxy = Some(child);
             }
             Err(e) => {
@@ -367,6 +427,7 @@ fn run_sandboxed(
     } else {
         registry_relay(&session.runtime_dir, &info.id, &registry)
     };
+    trace("starting bwrap");
     let status = Command::new("bwrap")
         .args(&args)
         .stdin(Stdio::null())

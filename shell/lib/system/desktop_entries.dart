@@ -70,15 +70,88 @@ class DesktopEntry {
   /// Installed and never launched (the Launcher's dot).
   final bool isNew;
 
-  /// The window with this app id belongs to this app.
-  bool matchesAppId(String appId) {
+  /// The window with this app id belongs to this app: its id or its `StartupWMClass` (the
+  /// registry's id, silica-desktop#260).
+  bool matchesAppIdExactly(String appId) {
     if (appId.isEmpty) return false;
     final lower = appId.toLowerCase();
-    return id.toLowerCase() == lower ||
-        (wmClass?.toLowerCase() == lower) ||
-        id.toLowerCase().split('.').last == lower ||
-        exec.split(' ').first.split('/').last.toLowerCase() == lower;
+    return id.toLowerCase() == lower || (wmClass?.toLowerCase() == lower);
   }
+
+  /// The window with this app id may belong to this app: [matchesAppIdExactly], or the last
+  /// part of the id, or the program of its command (for apps whose windows carry their
+  /// executable's name). A launcher's program (`silica-launch`, `flatpak`…) says nothing about
+  /// the app. Use [entryForAppId] to find the one app a window belongs to.
+  bool matchesAppId(String appId) {
+    if (matchesAppIdExactly(appId)) return true;
+    if (appId.isEmpty) return false;
+    final lower = appId.toLowerCase();
+    final program = exec.split(' ').first.split('/').last.toLowerCase();
+    return id.toLowerCase().split('.').last == lower ||
+        (!_launchers.contains(program) && program == lower);
+  }
+}
+
+/// Programs that start other apps: an entry's command naming one of them does not name the app.
+const _launchers = {
+  'silica-launch',
+  'flatpak',
+  'env',
+  'sh',
+  'bash',
+  'gtk-launch',
+  'gio',
+  'xdg-open',
+};
+
+/// The app a window with [appId] belongs to: the one whose id (or `StartupWMClass`) is that
+/// app id, else the first that [DesktopEntry.matchesAppId] loosely. A window belongs to one app
+/// only, so two Dock items never share it (silica-desktop#260).
+DesktopEntry? entryForAppId(Iterable<DesktopEntry> entries, String appId) {
+  if (appId.isEmpty) return null;
+  final lower = appId.toLowerCase();
+  DesktopEntry? byClass;
+  DesktopEntry? loose;
+  for (final entry in entries) {
+    if (entry.id.toLowerCase() == lower) return entry;
+    if (byClass == null && entry.wmClass?.toLowerCase() == lower)
+      byClass = entry;
+    if (loose == null && entry.matchesAppId(appId)) loose = entry;
+  }
+  return byClass ?? loose;
+}
+
+/// The pinned ids with each one that is no longer an app id replaced by the id of the app it
+/// names (a pin saved before the app became a bundle, or under its desktop entry's file name or
+/// its window class); `null` when nothing changes. Pins naming nothing installed stay (the
+/// Dock's question mark).
+List<String>? migratePins(
+  Map<String, DesktopEntry> entries,
+  List<String> pinned,
+) {
+  if (entries.isEmpty) return null;
+  var changed = false;
+  final out = <String>[];
+  for (final id in pinned) {
+    var target = id;
+    if (!entries.containsKey(id)) {
+      final lower = id.toLowerCase();
+      final named = entries.values.where(
+        (e) =>
+            e.id.toLowerCase() == lower ||
+            e.wmClass?.toLowerCase() == lower ||
+            e.path.split('/').last.toLowerCase() == '$lower.desktop',
+      );
+      if (named.firstOrNull case final entry?) target = entry.id;
+    }
+    if (out.contains(target)) {
+      changed = true;
+      continue;
+    }
+    if (target != id) changed = true;
+    out.add(target);
+  }
+  return changed ? out : null;
 }
 
 /// An action of an app (a `[Desktop Action <id>]` group): a name and its command.

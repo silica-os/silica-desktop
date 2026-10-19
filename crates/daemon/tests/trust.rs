@@ -172,6 +172,17 @@ fn verdicts_prompts_and_approvals() {
             (verdict.as_str(), s(&info, "reason").as_str()),
             ("block", "unsigned")
         );
+        // Assessing the same bundles again finds the same outcome: trust.bin is not rewritten
+        // (silica-desktop#260).
+        let store = root.join("state/trust.bin");
+        let written = std::fs::metadata(&store).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert_eq!(trust.assess(&path(&selfsigned)).await.unwrap().0, "block");
+        assert_eq!(trust.assess(&path(&unsigned)).await.unwrap().0, "block");
+        assert_eq!(
+            std::fs::metadata(&store).unwrap().modified().unwrap(),
+            written
+        );
         assert_eq!(trust.assess("/usr/bin/true").await.unwrap().0, "allow");
 
         // Without a shell to ask, a prompt is answered at once.

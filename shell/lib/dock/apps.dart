@@ -209,11 +209,14 @@ List<Item> dockItems(
   Set<String> registered = const {},
   List<String>? folders,
 }) {
+  // Each window and each running app belongs to one entry only (silica-desktop#260).
+  DesktopEntry? ownerOf(String appId) => entryForAppId(entries.values, appId);
   List<Toplevel> windowsOf(DesktopEntry entry) => [
     for (final t in toplevels)
-      if (entry.matchesAppId(t.appId)) t,
+      if (ownerOf(t.appId)?.id == entry.id) t,
   ];
-  bool isRegistered(DesktopEntry entry) => registered.any(entry.matchesAppId);
+  bool isRegistered(DesktopEntry entry) =>
+      registered.any((appId) => ownerOf(appId)?.id == entry.id);
   final items = <Item>[];
   final shown = <String>{};
   // The file manager first, whatever the configuration says (#141).
@@ -261,9 +264,7 @@ List<Item> dockItems(
   final before = items.length;
   // Open apps that are not pinned, in the order they appeared.
   for (final window in toplevels) {
-    final entry = entries.values
-        .where((e) => e.matchesAppId(window.appId))
-        .firstOrNull;
+    final entry = ownerOf(window.appId);
     if (entry == null || !shown.add(entry.id)) continue;
     items.add(
       _appItem(entry, windowsOf(entry), registered: isRegistered(entry)),
@@ -271,9 +272,7 @@ List<Item> dockItems(
   }
   // Running apps without windows (#142), after those with windows.
   for (final appId in registered.toList()..sort()) {
-    final entry = entries.values
-        .where((e) => e.matchesAppId(appId))
-        .firstOrNull;
+    final entry = ownerOf(appId);
     if (entry == null || !shown.add(entry.id)) continue;
     items.add(_appItem(entry, const [], registered: true));
   }
@@ -324,9 +323,7 @@ Item _windowItem(
   Map<String, DesktopEntry> entries,
   ui.Image? thumbnail,
 ) {
-  final entry = entries.values
-      .where((e) => e.matchesAppId(window.appId))
-      .firstOrNull;
+  final entry = entryForAppId(entries.values, window.appId);
   return Item.window(
     window.title.isNotEmpty ? window.title : (entry?.name ?? window.appId),
     window: window.id,

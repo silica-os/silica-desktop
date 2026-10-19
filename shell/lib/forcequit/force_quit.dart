@@ -85,9 +85,7 @@ class _ForceQuitLayerState extends State<ForceQuitLayer> {
     final apps = <ForceQuitApp>[];
     for (final top in ShellChannel.instance.toplevels.value) {
       if (top.appId.isEmpty || !seen.add(top.appId)) continue;
-      final entry = widget.entries.values
-          .where((e) => e.matchesAppId(top.appId))
-          .firstOrNull;
+      final entry = entryForAppId(widget.entries.values, top.appId);
       final IconSource? icon = switch (entry) {
         null => null,
         final e => switch ((silicaIconFor(e), findIcon(e.icon))) {

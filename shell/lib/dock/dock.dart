@@ -240,6 +240,7 @@ class _LiveDockState extends State<LiveDock> {
     super.initState();
     _layer = LayerControl.of(context);
     desktopEntryStore.addListener(_entriesChanged);
+    _migratePins();
     ShellChannel.instance.toplevels.addListener(_changed);
     AppRegistry.instance.apps.addListener(_changed);
     AppRegistry.instance.start();
@@ -259,7 +260,21 @@ class _LiveDockState extends State<LiveDock> {
 
   /// An app was installed or removed: the running ones get their tiles, the pinned ones that
   /// appeared theirs.
-  void _entriesChanged() => _changed();
+  void _entriesChanged() {
+    _migratePins();
+    _changed();
+  }
+
+  /// Pins saved under another name of an app (its desktop entry before it became a bundle, its
+  /// window class) follow the app's registry id, and are saved that way (silica-desktop#260).
+  void _migratePins() {
+    final migrated = migratePins(_entries, _pinned);
+    if (migrated == null) return;
+    _pinned
+      ..clear()
+      ..addAll(migrated);
+    savePinned(_pinned);
+  }
 
   /// The separator was dragged to a new size: the same key Settings writes (`dock.tileSize`);
   /// the magnified size never goes below it.
@@ -336,9 +351,7 @@ class _LiveDockState extends State<LiveDock> {
         for (final t in ShellChannel.instance.toplevels.value) t.appId,
         ...AppRegistry.instance.apps.value,
       ])
-        if (_entries.values.where((e) => e.matchesAppId(appId)).firstOrNull
-            case final entry?)
-          entry.id,
+        if (entryForAppId(_entries.values, appId) case final entry?) entry.id,
     };
     for (final id in _running.difference(now)) {
       _closed
@@ -418,8 +431,8 @@ class _LiveDockState extends State<LiveDock> {
         .firstOrNull
         ?.appId;
     if (appId != null) {
-      for (final entry in _entries.values) {
-        if (entry.matchesAppId(appId)) _launcher.activated(entry.id);
+      if (entryForAppId(_entries.values, appId) case final entry?) {
+        _launcher.activated(entry.id);
       }
     }
     _recent

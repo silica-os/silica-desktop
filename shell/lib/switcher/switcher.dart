@@ -158,9 +158,7 @@ class SwitcherModel {
   }
 
   SwitcherApp _app(String key, Toplevel top, List<String> ids) {
-    final entry = _entries.values
-        .where((e) => e.matchesAppId(top.appId))
-        .firstOrNull;
+    final entry = entryForAppId(_entries.values, top.appId);
     final IconSource? icon = switch (entry) {
       null => null,
       final e => switch ((silicaIconFor(e), findIcon(e.icon))) {
@@ -541,8 +539,9 @@ class SwitcherPanel extends StatelessWidget {
             textAlign: TextAlign.center,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: AmalfiType.bodyEmphasis(color: theme.colors.textPrimary)
-                .copyWith(fontSize: AmalfiType.bodyEmphasisToken.size * k),
+            style: AmalfiType.bodyEmphasis(
+              color: theme.colors.textPrimary,
+            ).copyWith(fontSize: AmalfiType.bodyEmphasisToken.size * k),
           ),
         ),
     ];
