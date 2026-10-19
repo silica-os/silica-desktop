@@ -578,6 +578,22 @@ delegate_output!(State);
 delegate_viewporter!(State);
 smithay::delegate_cursor_shape!(State);
 smithay::delegate_xdg_foreign!(State);
+smithay::delegate_xdg_dialog!(State);
+
+impl smithay::wayland::shell::xdg::dialog::XdgDialogHandler for State {
+    /// A modal dialog (a sheet) is centred on its parent once its size is known, and keeps
+    /// the focus from its parent while it shows.
+    fn modal_changed(&mut self, toplevel: ToplevelSurface, is_modal: bool) {
+        let Some(window) = self.window_for(toplevel.wl_surface()) else {
+            return;
+        };
+        crate::windows::set_modal(&window, is_modal);
+        if is_modal {
+            crate::windows::center_at_first_buffer(&window);
+            self.center_on_parent(&window);
+        }
+    }
+}
 
 impl smithay::wayland::xdg_foreign::XdgForeignHandler for State {
     fn xdg_foreign_state(&mut self) -> &mut smithay::wayland::xdg_foreign::XdgForeignState {

@@ -15,6 +15,8 @@ uniform float exponent;
 uniform float pixel;
 // The rim colour (straight alpha): `Line/Border` of the Amalfi tokens.
 uniform vec4 rim;
+// 1: the whole inside is filled (the veil over a window that has a sheet), 0: the rim.
+uniform float fill;
 
 // Signed distance (positive outside) from the window's superellipse outline.
 float shape_distance(vec2 p) {
@@ -36,7 +38,7 @@ void main() {
     vec2 p = v_coords * size;
     float d = shape_distance(p);
     // The 1 pt band just inside the outline.
-    float band = cover(d) - cover(d + 1.0);
+    float band = fill > 0.5 ? cover(d) : cover(d) - cover(d + 1.0);
     vec4 result = vec4(rim.rgb * rim.a, rim.a) * band * alpha;
 #if defined(DEBUG_FLAGS)
     if (tint == 1.0)

@@ -191,6 +191,7 @@ impl State {
 
     /// Advances the scroll in progress (on every frame).
     pub fn advance_spaces(&mut self, now: Instant) {
+        self.follow_sheets();
         self.sync_fullscreen_front();
         let speed = self.animation_speed;
         let Some(t) = self.workspaces.transition.as_mut() else {

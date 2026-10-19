@@ -33,6 +33,8 @@ use wayland_protocols::xdg::decoration::zv1::client::zxdg_decoration_manager_v1:
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1::{
     self, ZxdgToplevelDecorationV1,
 };
+use wayland_protocols::xdg::dialog::v1::client::xdg_dialog_v1::XdgDialogV1;
+use wayland_protocols::xdg::dialog::v1::client::xdg_wm_dialog_v1::XdgWmDialogV1;
 use wayland_protocols::xdg::foreign::zv2::client::zxdg_exported_v2::{self, ZxdgExportedV2};
 use wayland_protocols::xdg::foreign::zv2::client::zxdg_exporter_v2::ZxdgExporterV2;
 use wayland_protocols::xdg::foreign::zv2::client::zxdg_imported_v2::ZxdgImportedV2;
@@ -71,6 +73,8 @@ pub const FIRST_WINDOW_AT: u32 = 4;
 #[derive(Default)]
 struct App {
     compositor: Option<WlCompositor>,
+    /// xdg-dialog (modal dialogs: a Vetro app's sheets).
+    dialogs: Option<XdgWmDialogV1>,
     shm: Option<WlShm>,
     wm_base: Option<XdgWmBase>,
     decorations: Option<ZxdgDecorationManagerV1>,
@@ -172,6 +176,7 @@ impl Dispatch<WlRegistry, ()> for App {
                 }
                 "zxdg_exporter_v2" => state.exporter = Some(registry.bind(name, 1, qh, ())),
                 "zxdg_importer_v2" => state.importer = Some(registry.bind(name, 1, qh, ())),
+                "xdg_wm_dialog_v1" => state.dialogs = Some(registry.bind(name, 1, qh, ())),
                 _ => {}
             }
         }
@@ -397,6 +402,8 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
 delegate_noop!(App: ignore ZwlrLayerShellV1);
 delegate_noop!(App: WlRegion);
 delegate_noop!(App: ignore WlCompositor);
+delegate_noop!(App: ignore XdgWmDialogV1);
+delegate_noop!(App: ignore XdgDialogV1);
 delegate_noop!(App: ignore WlSurface);
 delegate_noop!(App: ignore WlBuffer);
 delegate_noop!(App: WlShmPool);
@@ -593,6 +600,14 @@ pub struct TestWindow {
     /// xdg-foreign: this window exported, or another app's window imported as its parent.
     exported: Option<ZxdgExportedV2>,
     imported: Option<ZxdgImportedV2>,
+    /// A second window of this client with the first as its parent ([`TestWindow::open_child`]).
+    child: Option<(
+        WlSurface,
+        XdgSurface,
+        XdgToplevel,
+        Option<XdgDialogV1>,
+        WlBuffer,
+    )>,
     buffer: WlBuffer,
 }
 
@@ -719,6 +734,7 @@ impl TestWindow {
             menu: None,
             exported: None,
             imported,
+            child: None,
             buffer,
         }
     }
@@ -822,6 +838,7 @@ impl TestWindow {
             menu: None,
             exported: None,
             imported: None,
+            child: None,
             buffer,
         }
     }
@@ -1362,6 +1379,58 @@ impl TestWindow {
         offer.finish();
         self.queue.roundtrip(&mut self.app).unwrap();
         data
+    }
+
+    /// Opens a second window of this client, filled with `RED_BGRA`, whose parent is this
+    /// window (`xdg_toplevel.set_parent`); `modal` makes it a modal dialog (xdg-dialog), as
+    /// a Vetro app's sheet.
+    #[allow(dead_code)]
+    pub fn open_child(&mut self, title: &str, (w, h): (u32, u32), modal: bool) {
+        let qh = self.queue.handle();
+        let compositor = self.app.compositor.clone().expect("wl_compositor missing");
+        let shm = self.app.shm.clone().expect("wl_shm missing");
+        let wm_base = self.app.wm_base.clone().expect("xdg_wm_base missing");
+        let surface = compositor.create_surface(&qh, ());
+        let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
+        let toplevel = xdg_surface.get_toplevel(&qh, ());
+        toplevel.set_parent(self._toplevel.as_ref());
+        toplevel.set_title(title.to_owned());
+        let app_id = APP_ID.with(|id| id.borrow().clone());
+        if !app_id.is_empty() {
+            toplevel.set_app_id(app_id);
+        }
+        let dialog = modal.then(|| {
+            let d = self
+                .app
+                .dialogs
+                .clone()
+                .expect("xdg_wm_dialog_v1 missing")
+                .get_xdg_dialog(&toplevel, &qh, ());
+            d.set_modal();
+            d
+        });
+        surface.commit();
+        self.queue.roundtrip(&mut self.app).unwrap();
+        self.queue.roundtrip(&mut self.app).unwrap();
+        let stride = w * 4;
+        let pixels = RED_BGRA.repeat((w * h) as usize);
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(&pixels).unwrap();
+        let pool = shm.create_pool(file.as_fd(), (stride * h) as i32, &qh, ());
+        let buffer = pool.create_buffer(
+            0,
+            w as i32,
+            h as i32,
+            stride as i32,
+            wl_shm::Format::Argb8888,
+            &qh,
+            (),
+        );
+        surface.attach(Some(&buffer), 0, 0);
+        surface.damage_buffer(0, 0, w as i32, h as i32);
+        surface.commit();
+        self.queue.roundtrip(&mut self.app).unwrap();
+        self.child = Some((surface, xdg_surface, toplevel, dialog, buffer));
     }
 
     /// Exports the window (xdg-foreign v2) and returns its handle.

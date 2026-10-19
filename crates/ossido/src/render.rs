@@ -173,6 +173,10 @@ const WINDOW_VEIL: [f32; 4] = [
     0.51,
 ];
 
+/// The veil drawn over a window that has a sheet (its own shader cache).
+#[derive(Default)]
+struct SheetVeil(ossido_render::border::WindowBorder);
+
 /// Stable id of the window screenshot veil, in the output data.
 struct WindowVeilId(Id);
 
@@ -1384,6 +1388,12 @@ pub fn output_elements(
         }
     }
 
+    // Windows with a sheet (a modal dialog of theirs on screen) are veiled under it.
+    let veiled: Vec<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface> = space
+        .elements()
+        .filter(|w| crate::windows::is_modal(w))
+        .filter_map(crate::windows::parent_of)
+        .collect();
     for window in space.elements().rev() {
         // The window dragged in Panorama is already on top.
         if context
@@ -1438,6 +1448,22 @@ pub fn output_elements(
         let Some(at) = placed(space, window) else {
             continue;
         };
+        if let (Some(program), Some(toplevel)) = (&shaders.border, window.toplevel())
+            && veiled.contains(toplevel.wl_surface())
+        {
+            window.user_data().insert_if_missing(SheetVeil::default);
+            if let Some(veil) = window.user_data().get::<SheetVeil>() {
+                let mut frame = decorations::frame_of(window, at.1);
+                frame.loc -= output_origin;
+                let dark = crate::window_appearance::window_dark(window, context.dark);
+                elements.push(OutputElement::Shader(RescaleRenderElement::from_element(
+                    veil.0
+                        .veil_element(program, frame, ossido_render::border::veil(dark), scale),
+                    frame.to_f64().to_physical(scale).to_i32_round().loc,
+                    1.0,
+                )));
+            }
+        }
         // The window's popups above it, each with its own glass behind it.
         if let Some(toplevel) = window.toplevel() {
             let render_location = (at.0 - window.geometry().loc - output_origin + offset)

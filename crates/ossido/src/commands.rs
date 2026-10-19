@@ -544,6 +544,7 @@ impl State {
                 let WindowMove { id, x, y } = parse_required(params)?;
                 let window = self.target_window(id)?;
                 self.space.map_element(window, (x, y), false);
+                self.follow_sheets();
                 Ok(Value::Null)
             }
             APP_LAUNCH => {
@@ -1016,6 +1017,8 @@ impl State {
 
     /// Gives the focus to a window (or to none) and brings it to the top.
     pub fn focus_window(&mut self, window: Option<Window>) {
+        // A window with a modal dialog (a sheet) gives the focus to the dialog.
+        let window = window.map(|w| self.modal_child(&w).unwrap_or(w));
         // Locked: nothing takes the focus from the lock surface; the window is remembered.
         if self.locked {
             if window.is_some() {

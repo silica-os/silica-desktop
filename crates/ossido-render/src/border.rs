@@ -40,12 +40,27 @@ pub fn style(_active: bool, dark: bool) -> Option<BorderStyle> {
 }
 
 pub const SHADER: &str = include_str!("shaders/border.frag");
-pub const UNIFORMS: [(&str, UniformType); 4] = [
+pub const UNIFORMS: [(&str, UniformType); 5] = [
     ("radius", UniformType::_1f),
     ("exponent", UniformType::_1f),
     ("pixel", UniformType::_1f),
     ("rim", UniformType::_4f),
+    ("fill", UniformType::_1f),
 ];
+
+/// The veil over a window while it has a sheet (docs/spec/dialogs.md "Veil": white
+/// becomes `#cccccc` in light, the dark surface `#1a1a1a` in dark).
+pub fn veil(dark: bool) -> BorderStyle {
+    if dark {
+        BorderStyle {
+            rgba: [0.0, 0.0, 0.0, 0.33],
+        }
+    } else {
+        BorderStyle {
+            rgba: [0.0, 0.0, 0.0, 0.2],
+        }
+    }
+}
 
 /// The border of a window, kept in its data.
 #[derive(Default)]
@@ -61,6 +76,28 @@ impl WindowBorder {
         frame: smithay::utils::Rectangle<i32, Logical>,
         style: BorderStyle,
         scale: f64,
+    ) -> PixelShaderElement {
+        self.shape(program, frame, style, scale, false)
+    }
+
+    /// The veil element: the window's shape filled with `style`'s colour.
+    pub fn veil_element(
+        &self,
+        program: &GlesPixelProgram,
+        frame: smithay::utils::Rectangle<i32, Logical>,
+        style: BorderStyle,
+        scale: f64,
+    ) -> PixelShaderElement {
+        self.shape(program, frame, style, scale, true)
+    }
+
+    fn shape(
+        &self,
+        program: &GlesPixelProgram,
+        frame: smithay::utils::Rectangle<i32, Logical>,
+        style: BorderStyle,
+        scale: f64,
+        fill: bool,
     ) -> PixelShaderElement {
         let pixel = (1.0 / scale.max(1.0)) as f32;
         self.cache
@@ -82,6 +119,7 @@ impl WindowBorder {
                             style.rgba[3],
                         ),
                     ),
+                    Uniform::new("fill", UniformValue::_1f(if fill { 1.0 } else { 0.0 })),
                 ]
             })
     }

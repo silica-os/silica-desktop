@@ -618,7 +618,25 @@ pub fn centered_over(
 }
 
 /// The parent's surface of a window (`xdg_toplevel.set_parent`, or an xdg-foreign handle).
-fn parent_of(window: &Window) -> Option<WlSurface> {
+/// A modal dialog of its parent (xdg-dialog `set_modal`: a Vetro app's sheet), and where
+/// its parent was when it was last placed (it follows its parent's moves).
+struct Modal(Cell<bool>, Cell<Option<Point<i32, Logical>>>);
+
+/// Marks `window` as a modal dialog of its parent, or not.
+pub fn set_modal(window: &Window, modal: bool) {
+    let data = window.user_data();
+    data.insert_if_missing(|| Modal(Cell::new(false), Cell::new(None)));
+    if let Some(m) = data.get::<Modal>() {
+        m.0.set(modal);
+    }
+}
+
+/// Whether `window` is a modal dialog of its parent.
+pub fn is_modal(window: &Window) -> bool {
+    window.user_data().get::<Modal>().is_some_and(|m| m.0.get())
+}
+
+pub fn parent_of(window: &Window) -> Option<WlSurface> {
     window.toplevel()?.parent()
 }
 
@@ -702,6 +720,72 @@ impl State {
         let at = location + (to - frame.loc);
         pending.placed.set(Some((size, at)));
         self.space.map_element(window.clone(), at, false);
+        // A sheet follows its parent from where it was centred.
+        if let Some(modal) = window.user_data().get::<Modal>() {
+            modal.1.set(self.space.element_location(&parent));
+        }
+    }
+
+    /// Moves every sheet by as much as its parent moved since it was placed: a sheet stays
+    /// attached to its window (called before each frame and after moves).
+    pub fn follow_sheets(&mut self) {
+        let sheets: Vec<Window> = self
+            .space
+            .elements()
+            .filter(|w| is_modal(w))
+            .cloned()
+            .collect();
+        for sheet in sheets {
+            let Some(parent) = parent_of(&sheet).and_then(|p| self.window_for(&p)) else {
+                continue;
+            };
+            let (Some(parent_at), Some(at)) = (
+                self.space.element_location(&parent),
+                self.space.element_location(&sheet),
+            ) else {
+                continue;
+            };
+            let Some(modal) = sheet.user_data().get::<Modal>() else {
+                continue;
+            };
+            // Not placed yet: centring sets it first.
+            if sheet.geometry().size.is_empty() {
+                continue;
+            }
+            match modal.1.get() {
+                Some(before) if before != parent_at => {
+                    let moved = at + (parent_at - before);
+                    modal.1.set(Some(parent_at));
+                    self.space.map_element(sheet.clone(), moved, false);
+                }
+                Some(_) => {}
+                None => modal.1.set(Some(parent_at)),
+            }
+        }
+    }
+
+    /// The modal dialog shown on `window` (the topmost, and its own modal dialog first):
+    /// the window the focus goes to when `window` is asked for it.
+    pub fn modal_child(&self, window: &Window) -> Option<Window> {
+        let mut current = window.clone();
+        let mut found = None;
+        for _ in 0..8 {
+            let surface = current.toplevel().map(|t| t.wl_surface().clone())?;
+            let child = self
+                .space
+                .elements()
+                .rev()
+                .find(|w| is_modal(w) && parent_of(w).as_ref() == Some(&surface))
+                .cloned();
+            match child {
+                Some(c) => {
+                    found = Some(c.clone());
+                    current = c;
+                }
+                None => break,
+            }
+        }
+        found
     }
 
     /// The window that takes the keyboard when `closing` (focused) goes: its parent if on
