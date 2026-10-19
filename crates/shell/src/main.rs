@@ -12,6 +12,9 @@ mod cc;
 mod dock;
 mod lock;
 mod menubar;
+mod motion;
+mod popmenu;
+mod stack;
 mod status;
 mod system;
 mod time;
@@ -73,6 +76,7 @@ impl Shell {
         for v in self.backgrounds.borrow().iter() {
             ui.request_paint(*v);
         }
+        dock::settings_changed(ui, &self.dock, settings);
         let mut l = self.lock.borrow_mut();
         l.wallpaper = choice;
         if let Some(h) = settings
@@ -99,10 +103,12 @@ impl Shell {
                 lock::lock(ui, &self.lock);
             }
             AppEvent::Shell(ShellEvent::Toplevel {
-                identifier, app_id, ..
-            }) => dock::window_changed(ui, &self.dock, identifier, app_id, true),
+                identifier,
+                app_id,
+                title,
+            }) => dock::window_changed(ui, &self.dock, identifier, app_id, title, true),
             AppEvent::Shell(ShellEvent::ToplevelClosed(identifier)) => {
-                dock::window_changed(ui, &self.dock, identifier, "", false);
+                dock::window_changed(ui, &self.dock, identifier, "", "", false);
             }
             AppEvent::Shell(ShellEvent::Focused(identifier)) => {
                 dock::focused(&self.dock, identifier)

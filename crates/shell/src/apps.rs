@@ -135,15 +135,7 @@ pub fn silica_icon_file(value: &str, dark: bool) -> Option<PathBuf> {
     } else if value.contains('/') {
         return None;
     } else {
-        let mut roots: Vec<PathBuf> = Vec::new();
-        if let Some(d) = std::env::var_os("SILICA_ICONS_DIR").filter(|d| !d.is_empty()) {
-            roots.push(PathBuf::from(d));
-        }
-        roots.extend(data_dirs().into_iter().map(|d| d.join("silica/icons")));
-        if let Some(h) = std::env::var_os("HOME") {
-            roots.push(PathBuf::from(h).join("silica/silica-icons"));
-        }
-        roots
+        icon_roots()
             .into_iter()
             .map(|r| r.join("apps").join(value))
             .collect()
@@ -157,6 +149,50 @@ pub fn silica_icon_file(value: &str, dark: bool) -> Option<PathBuf> {
         .iter()
         .flat_map(|f| names.iter().map(move |n| f.join(n)))
         .find(|p| p.is_file())
+}
+
+/// The folders holding Silica's icons, most important first: `SILICA_ICONS_DIR`
+/// (development), then `silica/icons` in the data folders, then a silica-icons checkout in
+/// `~/silica`.
+fn icon_roots() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(d) = std::env::var_os("SILICA_ICONS_DIR").filter(|d| !d.is_empty()) {
+        roots.push(PathBuf::from(d));
+    }
+    roots.extend(data_dirs().into_iter().map(|d| d.join("silica/icons")));
+    if let Some(h) = std::env::var_os("HOME") {
+        roots.push(PathBuf::from(h).join("silica/silica-icons"));
+    }
+    roots
+}
+
+/// A shared Silica icon (`<category>/<name>/<file>`, e.g. `files/trash-full/icon.png`),
+/// decoded and cached; with `dark`, the `-dark` rendering when there is one.
+pub fn shared_icon(category: &str, name: &str, file: &str, dark: bool) -> Option<Image> {
+    let dark_file = file.replace(".png", "-dark.png");
+    let path = icon_roots().into_iter().find_map(|r| {
+        let dir = r.join(category).join(name);
+        [dark.then_some(dark_file.as_str()), Some(file)]
+            .into_iter()
+            .flatten()
+            .map(|f| dir.join(f))
+            .find(|p| p.is_file())
+    })?;
+    cached(&path)
+}
+
+/// The silica-icons name of one of Silica's own apps (`dev.frascella.TextEditor` →
+/// `text-editor`), for entries installed without `X-Silica-Icon`.
+pub fn own_icon_name(id: &str) -> Option<String> {
+    let last = id.strip_prefix("dev.frascella.")?;
+    let mut out = String::new();
+    for (i, ch) in last.chars().enumerate() {
+        if ch.is_uppercase() && i > 0 {
+            out.push('-');
+        }
+        out.extend(ch.to_lowercase());
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 thread_local! {
@@ -193,7 +229,17 @@ fn decode(path: &Path) -> Option<Image> {
 
 /// The decoded icon of app `entry` (cached per file): its Silica icon, else its theme icon.
 pub fn icon(entry: &DesktopEntry, dark: bool) -> Option<Image> {
-    let path = silica_icon_file(&entry.silica_icon, dark).or_else(|| icon_file(&entry.icon))?;
+    let path = silica_icon_file(&entry.silica_icon, dark)
+        .or_else(|| {
+            // Silica's own apps always get their Silica icon, never the theme's.
+            own_icon_name(&entry.id).and_then(|n| silica_icon_file(&n, dark))
+        })
+        .or_else(|| icon_file(&entry.icon))?;
+    cached(&path)
+}
+
+fn cached(path: &Path) -> Option<Image> {
+    let path = path.to_path_buf();
     ICONS.with(|c| {
         c.borrow_mut()
             .entry(path.clone())
@@ -217,6 +263,11 @@ mod tests {
         assert!(!e.no_display);
         assert_eq!(parse("org.x.Thing", "").name, "Thing");
         assert_eq!(entry("../etc"), None);
+        assert_eq!(
+            own_icon_name("dev.frascella.TextEditor").as_deref(),
+            Some("text-editor")
+        );
+        assert_eq!(own_icon_name("org.gnome.Nautilus"), None);
     }
 }
 

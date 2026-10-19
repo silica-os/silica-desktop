@@ -164,6 +164,16 @@ pub fn toggle(
     let _ = ui.set(view, Prop::MaxHeight, Value::from(f32::INFINITY));
     ui.set_content(popup, view);
     ui.show_window(popup);
+    // The shadows' margin passes clicks through (and so closes the panel).
+    ui.set_input_region(
+        popup,
+        Some(vec![Rect::new(
+            m,
+            metrics::MARGIN_TOP,
+            metrics::WIDTH,
+            height(&state),
+        )]),
+    );
     if let Some(root) = ui.window(popup).map(|w| w.root) {
         let c = cc.clone();
         ui.connect(root, Signal::Closed, move |ui, _, _| {
