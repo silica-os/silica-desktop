@@ -427,6 +427,135 @@ pub(crate) fn bundle_icon(
     png.is_file().then_some((png, false))
 }
 
+/// The icon of an app's desktop entry (`*.desktop`, `Type=Application`): its silica-icons app
+/// icon (`X-Silica-Icon`) when it has one, else its freedesktop `Icon` (an absolute file, or a
+/// name looked up in the `hicolor` theme and `pixmaps` of the data folders, Flatpak exports
+/// included), as file managers show apps. The Applications view's Flatpak items are their
+/// exported entries (mustache#32). None for anything else.
+pub(crate) fn desktop_entry_icon(
+    root: &Path,
+    app_icons: &AppIcons,
+    uri: &str,
+    size_px: u32,
+    scale: f64,
+    flags: u32,
+) -> Answer {
+    let path = uri_to_path(uri)?;
+    if !path.extension().is_some_and(|e| e == "desktop") {
+        return None;
+    }
+    let meta = fs::metadata(&path).ok()?;
+    if !meta.is_file() || meta.len() > 64 * 1024 {
+        return None;
+    }
+    let entry = silica_apps::desktop::parse(&fs::read_to_string(&path).ok()?);
+    if !entry.is_application() {
+        return None;
+    }
+    if let Some(folder) = entry.silica_icon.as_deref().filter(|f| f.starts_with('/')) {
+        let appearance = (flags >> ICON_APPEARANCE_SHIFT) & 7;
+        let accent = flags >> ICON_ACCENT_SHIFT;
+        if let Some(png) = app_icons.icon(folder, size_px, scale, appearance, accent) {
+            return Some((png, false));
+        }
+        let png = Path::new(folder).join("icon.png");
+        if png.is_file() {
+            return Some((png, false));
+        }
+    }
+    let icon = entry.icon.as_deref().filter(|i| !i.is_empty())?;
+    let file = if icon.starts_with('/') {
+        PathBuf::from(icon)
+    } else {
+        let dirs = silica_apps::registry::Dirs::from_env(&|k| std::env::var(k).ok());
+        let data: Vec<PathBuf> = std::iter::once(dirs.data_home)
+            .chain(dirs.data_dirs)
+            .collect();
+        theme_icon(&data, icon, size_px)?
+    };
+    // Scaled and cached like a thumbnail of the icon file (SVG drawn at the size).
+    let file_uri = format!("file://{}", file.display());
+    let svg = |p: &Path, edge: u32| render_svg(p, edge);
+    thumbnail_with(root, &file_uri, size_px, Some(&svg)).map(|p| (p, false))
+}
+
+/// The file of the freedesktop icon `name` for `size_px`: in `icons/hicolor/` of the data
+/// folders the smallest bitmap at least that large (else the largest), a scalable one, then
+/// `pixmaps/`.
+pub(crate) fn theme_icon(data_dirs: &[PathBuf], name: &str, size_px: u32) -> Option<PathBuf> {
+    if name.contains('/') || name.starts_with('.') {
+        return None;
+    }
+    const SIZES: [u32; 10] = [16, 24, 32, 48, 64, 96, 128, 192, 256, 512];
+    let mut best: Option<(u32, PathBuf)> = None;
+    let mut scalable = None;
+    for dir in data_dirs {
+        let theme = dir.join("icons/hicolor");
+        for size in SIZES {
+            let png = theme.join(format!("{size}x{size}/apps/{name}.png"));
+            if png.is_file() {
+                let better = match &best {
+                    None => true,
+                    Some((b, _)) => {
+                        (size >= size_px && (*b < size_px || size < *b))
+                            || (*b < size_px && size > *b)
+                    }
+                };
+                if better {
+                    best = Some((size, png));
+                }
+            }
+        }
+        let svg = theme.join(format!("scalable/apps/{name}.svg"));
+        if scalable.is_none() && svg.is_file() {
+            scalable = Some(svg);
+        }
+    }
+    match (best, scalable) {
+        (Some((size, png)), _) if size >= size_px => Some(png),
+        (_, Some(svg)) => Some(svg),
+        (Some((_, png)), None) => Some(png),
+        (None, None) => data_dirs.iter().find_map(|dir| {
+            ["png", "svg"]
+                .iter()
+                .map(|ext| dir.join(format!("pixmaps/{name}.{ext}")))
+                .find(|p| p.is_file())
+        }),
+    }
+}
+
+/// An SVG drawn to fit `edge` x `edge` pixels.
+fn render_svg(path: &Path, edge: u32) -> Option<image::DynamicImage> {
+    if !path.extension().is_some_and(|e| e == "svg") {
+        return None;
+    }
+    let tree =
+        resvg::usvg::Tree::from_data(&fs::read(path).ok()?, &resvg::usvg::Options::default())
+            .ok()?;
+    let size = tree.size();
+    let factor = edge as f32 / size.width().max(size.height()).max(1.0);
+    let (w, h) = (
+        ((size.width() * factor).round() as u32).max(1),
+        ((size.height() * factor).round() as u32).max(1),
+    );
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h)?;
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::from_scale(factor, factor),
+        &mut pixmap.as_mut(),
+    );
+    // tiny-skia keeps premultiplied pixels: back to straight alpha for the PNG.
+    let rgba: Vec<u8> = pixmap
+        .pixels()
+        .iter()
+        .flat_map(|p| {
+            let c = p.demultiply();
+            [c.red(), c.green(), c.blue(), c.alpha()]
+        })
+        .collect();
+    image::RgbaImage::from_raw(w, h, rgba).map(image::DynamicImage::ImageRgba8)
+}
+
 /// A fixed set of threads that render thumbnails.
 struct Pool {
     jobs: SyncSender<Job>,
@@ -459,9 +588,15 @@ impl Pool {
                                 size_px,
                                 scale,
                                 flags,
-                            } => bundle_icon(&app_icons, uri, *size_px, *scale, *flags).or_else(
-                                || icon_job(&root, icons.as_deref(), uri, *size_px, *scale, *flags),
-                            ),
+                            } => bundle_icon(&app_icons, uri, *size_px, *scale, *flags)
+                                .or_else(|| {
+                                    desktop_entry_icon(
+                                        &root, &app_icons, uri, *size_px, *scale, *flags,
+                                    )
+                                })
+                                .or_else(|| {
+                                    icon_job(&root, icons.as_deref(), uri, *size_px, *scale, *flags)
+                                }),
                             Request::AppIcon {
                                 app,
                                 size_px,
@@ -656,6 +791,91 @@ mod tests {
     }
 
     use super::*;
+
+    fn png(path: &Path, side: u32) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        image::RgbaImage::from_pixel(side, side, image::Rgba([200, 30, 30, 255]))
+            .save(path)
+            .unwrap();
+    }
+
+    #[test]
+    fn theme_icons_are_found_at_the_right_size() {
+        let root = tmp("theme-icon");
+        let (a, b) = (root.join("a"), root.join("b"));
+        png(&a.join("icons/hicolor/48x48/apps/org.example.App.png"), 48);
+        png(
+            &b.join("icons/hicolor/256x256/apps/org.example.App.png"),
+            256,
+        );
+        png(
+            &b.join("icons/hicolor/128x128/apps/org.example.App.png"),
+            128,
+        );
+        let data = [a.clone(), b.clone()];
+        // The smallest at least as large; else the largest.
+        assert_eq!(
+            theme_icon(&data, "org.example.App", 100),
+            Some(b.join("icons/hicolor/128x128/apps/org.example.App.png"))
+        );
+        assert_eq!(
+            theme_icon(&data, "org.example.App", 32),
+            Some(a.join("icons/hicolor/48x48/apps/org.example.App.png"))
+        );
+        assert_eq!(
+            theme_icon(&data, "org.example.App", 1024),
+            Some(b.join("icons/hicolor/256x256/apps/org.example.App.png"))
+        );
+        // A scalable one beats a bitmap too small; pixmaps come last; no paths in names.
+        fs::create_dir_all(a.join("icons/hicolor/scalable/apps")).unwrap();
+        fs::write(
+            a.join("icons/hicolor/scalable/apps/org.example.App.svg"),
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#08f"/></svg>"##,
+        )
+        .unwrap();
+        assert_eq!(
+            theme_icon(&data, "org.example.App", 1024),
+            Some(a.join("icons/hicolor/scalable/apps/org.example.App.svg"))
+        );
+        png(&b.join("pixmaps/old.png"), 32);
+        assert_eq!(
+            theme_icon(&data, "old", 64),
+            Some(b.join("pixmaps/old.png"))
+        );
+        assert_eq!(theme_icon(&data, "../old", 64), None);
+
+        // A desktop entry with that icon: drawn at the size asked (the SVG rendered), cached.
+        let entry = root.join("org.example.App.desktop");
+        fs::write(
+            &entry,
+            format!(
+                "[Desktop Entry]\nType=Application\nName=App\nExec=app\nIcon={}\n",
+                a.join("icons/hicolor/scalable/apps/org.example.App.svg")
+                    .display()
+            ),
+        )
+        .unwrap();
+        let icons = AppIcons::new(root.join("apps"), crate::icons::apps::Dirs::default());
+        let uri = |p: &Path| format!("file://{}", p.display());
+        let (file, preview) =
+            desktop_entry_icon(&root.join("cache"), &icons, &uri(&entry), 64, 1.0, 0).unwrap();
+        assert!(!preview);
+        let img = image::open(&file).unwrap();
+        // Drawn at the thumbnail bucket's edge (at least the size asked), square.
+        assert!(img.width() >= 64 && img.width() == img.height());
+        let middle = img.width() / 2;
+        assert_eq!(
+            img.to_rgba8().get_pixel(middle, middle).0,
+            [0, 0x88, 0xff, 255]
+        );
+        // Not an app, or not an entry: no answer.
+        fs::write(&entry, "[Desktop Entry]\nType=Link\nName=L\nURL=x\n").unwrap();
+        assert_eq!(
+            desktop_entry_icon(&root.join("cache"), &icons, &uri(&entry), 64, 1.0, 0),
+            None
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
 
     fn tmp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("thumbs-{name}-{}", std::process::id()));
