@@ -33,6 +33,8 @@ pub enum Item {
     },
     /// A separator.
     Separator,
+    /// A grey section header that cannot be chosen.
+    Header(String),
 }
 
 impl Item {
@@ -41,6 +43,24 @@ impl Item {
         Item::Action {
             label: label.into(),
             action: Some(Rc::new(f)),
+            checked: false,
+        }
+    }
+
+    /// An item with a check mark when `checked`.
+    pub fn check(label: &str, checked: bool, f: impl Fn(&mut Ui) + 'static) -> Item {
+        Item::Action {
+            label: label.into(),
+            action: Some(Rc::new(f)),
+            checked,
+        }
+    }
+
+    /// A disabled item.
+    pub fn disabled(label: &str) -> Item {
+        Item::Action {
+            label: label.into(),
+            action: None,
             checked: false,
         }
     }
@@ -75,6 +95,11 @@ fn row(item: &Item) -> Row {
         },
         Item::Separator => Row {
             kind: RowKind::Separator,
+            ..Row::default()
+        },
+        Item::Header(label) => Row {
+            kind: RowKind::Header,
+            label: label.clone(),
             ..Row::default()
         },
     }

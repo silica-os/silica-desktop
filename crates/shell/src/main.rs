@@ -12,16 +12,17 @@ mod cc;
 mod dialogs;
 mod dock;
 mod faro;
+mod file_icons;
 mod lock;
 mod menubar;
 mod motion;
 mod notifications;
 mod popmenu;
 mod screenshot;
-mod stack;
 mod status;
 mod switcher;
 mod system;
+mod text;
 mod time;
 mod wallpaper;
 
@@ -130,12 +131,16 @@ impl Shell {
 
     /// The open windows (window, app), the most recently focused last.
     fn windows(&self) -> Vec<(String, String)> {
-        self.dock
-            .borrow()
+        let d = self.dock.borrow();
+        let mut v: Vec<(String, String)> = d
+            .inputs
             .windows
             .iter()
-            .map(|(w, a, _)| (w.clone(), a.clone()))
-            .collect()
+            .map(|w| (w.id.clone(), w.app.clone()))
+            .collect();
+        // The most recently focused last.
+        v.sort_by_key(|(id, _)| d.focus.iter().position(|f| f == id));
+        v
     }
 
     /// Opens or closes Notification Center (the clock stays highlighted while it is open).
@@ -195,13 +200,23 @@ impl Shell {
                 dock::window_changed(ui, &self.dock, identifier, "", "", false);
             }
             AppEvent::Shell(ShellEvent::Focused(identifier)) => {
-                dock::focused(&self.dock, identifier)
+                dock::focused(ui, &self.dock, identifier)
             }
             AppEvent::Shell(ShellEvent::AppMenu {
                 app_id,
                 serial,
                 json,
             }) => menubar::set_app_menu(ui, &self.bar, app_id.clone(), *serial, json),
+            AppEvent::Shell(ShellEvent::Minimized {
+                identifier,
+                minimized,
+            }) => dock::minimized(ui, &self.dock, identifier, *minimized),
+            AppEvent::Shell(ShellEvent::Thumbnail {
+                identifier,
+                width,
+                height,
+                rgba,
+            }) => dock::thumbnail(ui, &self.dock, identifier, *width, *height, rgba.clone()),
             AppEvent::Quit => ui.request(vetro_lib::core::Request::Quit),
             _ => {}
         }
@@ -361,6 +376,12 @@ fn main() {
         notifications::start(ui, &shell.notes);
         dialogs::start(&shell.dialogs);
         menubar::open(ui, &shell.bar);
+        {
+            let faro = shell.faro.clone();
+            shell.dock.borrow_mut().on_launcher = Some(Rc::new(move |ui: &mut Ui| {
+                faro::toggle(ui, &faro, faro::Mode::Launcher)
+            }));
+        }
         dock::open(ui, &shell.dock);
         // The menu bar's clock, each minute on the minute.
         schedule_clock(ui, shell.clone());

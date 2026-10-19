@@ -94,6 +94,13 @@ fn list(v: &str) -> Vec<String> {
 
 /// Every app to show, by name (the first data folder wins for an id).
 pub fn all() -> Vec<DesktopEntry> {
+    let mut v = all_entries();
+    v.retain(|e| !e.no_display && !e.hidden);
+    v
+}
+
+/// Every desktop entry, hidden ones included, by name.
+pub fn all_entries() -> Vec<DesktopEntry> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for d in data_dirs() {
@@ -111,10 +118,7 @@ pub fn all() -> Vec<DesktopEntry> {
             let Ok(text) = std::fs::read_to_string(f.path()) else {
                 continue;
             };
-            let e = parse(id, &text);
-            if !e.no_display && !e.hidden {
-                out.push(e);
-            }
+            out.push(parse(id, &text));
         }
     }
     out.sort_by_key(|e| e.name.to_lowercase());

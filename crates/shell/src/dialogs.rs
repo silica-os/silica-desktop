@@ -71,7 +71,7 @@ fn present(
 
 fn icon_view(ui: &mut Ui, image: Option<skia_safe::Image>, symbol: &str) -> ViewId {
     match image {
-        Some(img) => ui.create(crate::dock::IconView {
+        Some(img) => ui.create(crate::dock::menus::IconView {
             image: img,
             size: 56.0,
         }),
