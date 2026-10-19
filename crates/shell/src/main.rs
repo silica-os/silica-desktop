@@ -343,6 +343,14 @@ fn main() {
             std::mem::forget(sub);
         }
         ui.connect_shell();
+        // Wallpapers are kept at the largest output's size.
+        let px = ui
+            .outputs()
+            .iter()
+            .map(|o| (o.size.width.max(o.size.height) * o.scale.max(1.0)).ceil() as i32)
+            .max()
+            .unwrap_or(2560);
+        wallpaper::set_max_pixels(px);
         if shell.wallpaper.borrow().is_none() {
             let choice = wallpaper::choice(&Default::default(), ui.appearance.dark);
             *shell.wallpaper.borrow_mut() = choice.clone();

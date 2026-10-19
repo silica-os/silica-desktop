@@ -2873,6 +2873,7 @@ dependencies = [
  "futures-lite",
  "libvetro",
  "serde_json",
+ "silica-assets",
  "silica-control",
  "silica-protocols",
  "skia-safe",

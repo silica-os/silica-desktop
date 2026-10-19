@@ -251,6 +251,36 @@ thread_local! {
 /// The size SVG icons are rendered at (device pixels; a magnified Dock icon at 2×).
 const SVG_SIZE: i32 = 256;
 
+/// The largest side an icon is kept at (a 128 pt magnified Dock icon at 2×): the 1024 px
+/// renderings would otherwise take 4 MB each.
+const MAX_ICON: i32 = 256;
+
+/// `img` scaled down so that its longer side is at most `max` pixels (as it is when smaller).
+pub fn downscale(img: Image, max: i32) -> Image {
+    let (w, h) = (img.width(), img.height());
+    if w <= max && h <= max || w <= 0 || h <= 0 {
+        return img;
+    }
+    let k = max as f32 / w.max(h) as f32;
+    let (nw, nh) = (
+        ((w as f32 * k).round() as i32).max(1),
+        ((h as f32 * k).round() as i32).max(1),
+    );
+    let Some(mut surface) = skia_safe::surfaces::raster_n32_premul((nw, nh)) else {
+        return img;
+    };
+    let canvas = surface.canvas();
+    canvas.clear(skia_safe::Color::TRANSPARENT);
+    canvas.draw_image_rect_with_sampling_options(
+        &img,
+        None,
+        skia_safe::Rect::from_wh(nw as f32, nh as f32),
+        skia_safe::SamplingOptions::from(skia_safe::CubicResampler::mitchell()),
+        &skia_safe::Paint::default(),
+    );
+    surface.image_snapshot()
+}
+
 fn decode(path: &Path) -> Option<Image> {
     let bytes = std::fs::read(path).ok()?;
     if path.extension().is_some_and(|e| e == "svg") {
@@ -272,7 +302,7 @@ fn decode(path: &Path) -> Option<Image> {
         dom.render(canvas);
         Some(surface.image_snapshot())
     } else {
-        Image::from_encoded(Data::new_copy(&bytes))
+        Image::from_encoded(Data::new_copy(&bytes)).map(|i| downscale(i, MAX_ICON))
     }
 }
 

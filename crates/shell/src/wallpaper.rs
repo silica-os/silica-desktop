@@ -2,8 +2,9 @@
 //! `wallpaper.color` `#rrggbb`, `wallpaper.id` an image of the Amalfi set; the first one
 //! set wins in that order), the Amalfi set from `SILICA_WALLPAPERS`, the data folders'
 //! `silica/wallpapers` or a silica-wallpapers checkout in `~/silica` (`amalfi/<id>/light.png`
-//! and `dark.png`), Ravello by default. Images fill the screen and are centred (the excess
-//! is cropped).
+//! and `dark.png`), else the compiled system assets (`SILICA_ASSETS` or the data folders'
+//! `silica/silica.assets`, their wallpapers by name); Ravello by default. Images fill the
+//! screen and are centred (the excess is cropped).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -24,6 +25,66 @@ pub enum Choice {
     Image(PathBuf),
     /// A plain colour.
     Color(Color),
+    /// A wallpaper of the system assets, by name, light or dark.
+    Asset(String, bool),
+}
+
+/// The compiled system assets, if there are any.
+fn assets() -> Option<silica_assets::Assets> {
+    let mut candidates: Vec<PathBuf> = std::env::var_os("SILICA_ASSETS")
+        .map(PathBuf::from)
+        .into_iter()
+        .collect();
+    candidates.extend(
+        crate::apps::data_dirs()
+            .into_iter()
+            .map(|d| d.join("silica/silica.assets")),
+    );
+    candidates
+        .into_iter()
+        .filter(|p| p.is_file())
+        .find_map(|p| silica_assets::Assets::open(p).ok())
+}
+
+/// Whether the system assets have wallpaper `id`.
+fn asset_exists(id: &str) -> bool {
+    assets().is_some_and(|a| a.lookup(silica_assets::KeySpace::Wallpaper, id).is_some())
+}
+
+/// The decoded wallpaper `id` of the system assets (decoded once per process).
+fn asset_image(id: &str, dark: bool) -> Option<Image> {
+    let key = PathBuf::from(format!("asset:{id}:{dark}"));
+    IMAGES.with(|cache| {
+        cache
+            .borrow_mut()
+            .entry(key)
+            .or_insert_with(|| {
+                let a = assets()?;
+                let entry = a.entry(a.lookup(silica_assets::KeySpace::Wallpaper, id)?)?;
+                let want = if dark {
+                    silica_assets::Theme::Dark
+                } else {
+                    silica_assets::Theme::Default
+                };
+                // The largest rendition of the theme (else of any theme).
+                let v = entry
+                    .variants()
+                    .filter(|v| v.theme == want)
+                    .max_by_key(|v| v.width)
+                    .or_else(|| entry.variants().max_by_key(|v| v.width))?;
+                Image::from_encoded(Data::new_copy(v.data)).map(fit)
+            })
+            .clone()
+    })
+}
+
+/// The image of a choice (none for a colour).
+pub fn choice_image(c: &Choice) -> Option<Image> {
+    match c {
+        Choice::Image(p) => image(p),
+        Choice::Asset(id, dark) => asset_image(id, *dark),
+        Choice::Color(_) => None,
+    }
 }
 
 /// The folders that may hold the Amalfi set.
@@ -91,13 +152,31 @@ pub fn choice(settings: &SettingsMap, dark: bool) -> Option<Choice> {
         return Some(Choice::Color(c));
     }
     let id = text(settings, "wallpaper.id").unwrap_or(DEFAULT_ID);
-    set_image(id, dark)
-        .or_else(|| set_image(DEFAULT_ID, dark))
+    if let Some(p) = set_image(id, dark) {
+        return Some(Choice::Image(p));
+    }
+    if asset_exists(id) {
+        return Some(Choice::Asset(id.to_string(), dark));
+    }
+    set_image(DEFAULT_ID, dark)
         .map(Choice::Image)
+        .or_else(|| asset_exists(DEFAULT_ID).then(|| Choice::Asset(DEFAULT_ID.into(), dark)))
 }
 
 thread_local! {
+    /// The largest output in device pixels: wallpapers are kept no larger.
+    static MAX_PIXELS: std::cell::Cell<i32> = const { std::cell::Cell::new(2560) };
     static IMAGES: RefCell<HashMap<PathBuf, Option<Image>>> = RefCell::new(HashMap::new());
+}
+
+/// Wallpapers are decoded no larger than the largest output (device pixels).
+pub fn set_max_pixels(px: i32) {
+    MAX_PIXELS.with(|m| m.set(px.clamp(640, 8192)));
+}
+
+fn fit(img: Image) -> Image {
+    let max = MAX_PIXELS.with(std::cell::Cell::get);
+    crate::apps::downscale(img, max)
 }
 
 /// The decoded image of a file (decoded once per process).
@@ -108,7 +187,7 @@ pub fn image(path: &PathBuf) -> Option<Image> {
             .entry(path.clone())
             .or_insert_with(|| {
                 let bytes = std::fs::read(path).ok()?;
-                Image::from_encoded(Data::new_copy(&bytes))
+                Image::from_encoded(Data::new_copy(&bytes)).map(fit)
             })
             .clone()
     })
@@ -154,7 +233,7 @@ impl vetro_lib::core::Widget for BackgroundView {
         let r = cx.bounds();
         let fallback = Color::rgb(0x1b, 0x1c, 0x1f);
         match self.choice.borrow().as_ref() {
-            Some(Choice::Image(path)) => match image(path) {
+            Some(c @ (Choice::Image(_) | Choice::Asset(..))) => match choice_image(c) {
                 Some(img) => {
                     let to = fill_rect(img.width() as f32, img.height() as f32, r);
                     cx.rec.push_clip(r, Shape::RECT);

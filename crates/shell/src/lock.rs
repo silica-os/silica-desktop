@@ -395,7 +395,7 @@ impl Widget for LockView {
         let st = self.state.borrow();
         // The wallpaper, not blurred, under a black 6 % veil.
         match &st.wallpaper {
-            Some(Choice::Image(path)) => match wallpaper::image(path) {
+            Some(c @ (Choice::Image(_) | Choice::Asset(..))) => match wallpaper::choice_image(c) {
                 Some(img) => {
                     let to = wallpaper::fill_rect(img.width() as f32, img.height() as f32, r);
                     cx.rec.push_clip(r, Shape::RECT);

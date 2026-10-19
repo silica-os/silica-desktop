@@ -15,6 +15,7 @@ path = "src/main.rs"
 # The sibling checkout of silica-os/vetro (the repositories sit side by side).
 libvetro = { path = "../../../vetro/crates/libvetro" }
 silica-protocols = { path = "../protocols", features = ["client"] }
+silica-assets = { path = "../silica-assets", default-features = false }
 skia-safe = { version = "0.153", default-features = false, features = ["binary-cache", "embed-icudtl", "gl", "egl", "vulkan", "wayland", "x11", "textlayout", "svg", "webp", "jpeg", "pdf", "skottie"] }
 serde_json = "1"
 tracing = "0.1"
