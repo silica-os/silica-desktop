@@ -18,7 +18,7 @@
 //!
 //! ```text
 //! cargo xtask os start [--image PATH] [--fresh] [--virgl | --software] [--size WxH] [--headless]
-//! cargo xtask os deploy [--apps | --apps=terminal,mail] [--no-build]
+//! cargo xtask os deploy [--apps | --apps=terminal,mail] [--no-build] [--toolkit=vetro]
 //! cargo xtask os shot PATH | cmd <silica-cli args> | ssh [command] | log | status | stop
 //! ```
 
@@ -675,6 +675,9 @@ struct DeployOptions {
     /// The apps to deploy: none, all of [`APPS`] (`--apps`) or some (`--apps=terminal,clock`).
     apps: Vec<&'static str>,
     build: bool,
+    /// The shell's toolkit: the Flutter shell (default) or the native Vetro one
+    /// (`--toolkit=vetro`, crates/shell).
+    vetro: bool,
 }
 
 /// The apps named in `--apps=a,b`: an app is named by its directory (`mail` for `mail/app`).
@@ -694,6 +697,7 @@ fn deploy(args: &[String]) -> Result<()> {
     let mut options = DeployOptions {
         apps: Vec::new(),
         build: true,
+        vetro: false,
     };
     for arg in args {
         match arg.as_str() {
@@ -702,6 +706,8 @@ fn deploy(args: &[String]) -> Result<()> {
                 options.apps = select_apps(&other["--apps=".len()..])?;
             }
             "--no-build" => options.build = false,
+            "--toolkit=vetro" => options.vetro = true,
+            "--toolkit=flutter" => options.vetro = false,
             other => return Err(format!("unknown option: {other}")),
         }
     }
@@ -740,6 +746,14 @@ fn deploy(args: &[String]) -> Result<()> {
             "--package",
             "silica-bundle",
         ]))?;
+        if options.vetro {
+            status(cargo_command(&[
+                "build",
+                "--release",
+                "--package",
+                "silica-shell",
+            ]))?;
+        }
         flutter::bundle_release("shell")?;
         for app in &apps {
             flutter::bundle_release(&app.display().to_string())?;
@@ -761,6 +775,13 @@ fn deploy(args: &[String]) -> Result<()> {
         "silica-applications-helper",
     ] {
         replace_file(&release.join(binary), &share.join("bin").join(binary))?;
+    }
+    // The native shell, or no stale copy of it.
+    let native = share.join("bin/silica-shell");
+    if options.vetro {
+        replace_file(&release.join("silica-shell"), &native)?;
+    } else {
+        let _ = std::fs::remove_file(&native);
     }
     // The shell's own applications (Apps, Screenshot).
     for (name, entry) in
@@ -816,7 +837,7 @@ fn deploy(args: &[String]) -> Result<()> {
         &dev_key.public().to_file(),
     )?;
     write_executable(&share.join("bin/silica-app"), &silica_app_script())?;
-    write_executable(&share.join("session.sh"), &session_script())?;
+    write_executable(&share.join("session.sh"), &session_script(options.vetro))?;
 
     sync_to_guest_disk()?;
     prepare_guest_bus(&share)?;
@@ -1193,11 +1214,19 @@ const MUSTACHE_BUNDLE_ASSETS: &str = "Applications/Mustache.app/Contents/app/flu
 
 /// The session of the share: silica-session (silica-packages) with the share's paths. It is
 /// started by the hook in 50-dev.env, after the environment files were read.
-fn session_script() -> String {
-    let components = crate::shell_component_args(
-        &format!("{GUEST_RUN}/bin/silica-app"),
-        &format!("{GUEST_RUN}/shell/flutter_assets"),
-    );
+fn session_script(vetro: bool) -> String {
+    let components = if vetro {
+        // The native shell (crates/shell on Vetro): one process with every shell surface.
+        vec![
+            "--keep-shell".to_owned(),
+            format!("{GUEST_RUN}/bin/silica-shell"),
+        ]
+    } else {
+        crate::shell_component_args(
+            &format!("{GUEST_RUN}/bin/silica-app"),
+            &format!("{GUEST_RUN}/shell/flutter_assets"),
+        )
+    };
     // Mustache's desktop runs its bundle's code directly, as silica-launch runs system apps; a
     // Mustache deployed before it became a bundle still has its old folder.
     let desktop = crate::desktop_component_args(
@@ -1338,8 +1367,15 @@ mod tests {
     }
 
     #[test]
+    fn the_vetro_session_keeps_the_native_shell() {
+        let script = session_script(true);
+        assert!(script.contains("--keep-shell '/var/lib/silica-dev/bin/silica-shell'"));
+        assert!(!script.contains("--dart-arg shell"));
+    }
+
+    #[test]
     fn session_runs_from_the_local_copy() {
-        let script = session_script();
+        let script = session_script(false);
         assert!(script.contains("\n\"$D/bin/ossido\" $OSSIDO_ARGS"));
         assert!(script.contains("systemctl --user start silica-session.target"));
         assert!(script.contains("systemctl --user stop silica-session.target"));

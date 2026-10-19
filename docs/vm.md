@@ -74,6 +74,7 @@ gh release download -R silica-os/silica-os -p '*.qcow2' -D ~/silica-vm   # once
 cargo xtask os start          # the VM in a full-screen window ("Silica OS (dev)")
 cargo xtask os deploy         # build Ossido, the embedder, the services and the shell, run them
 cargo xtask os deploy --apps  # the apps too (mustache, mail, terminal, clock, calculator, settings)
+cargo xtask os deploy --toolkit=vetro  # the native shell (crates/shell on Vetro) instead of the Flutter one
 cargo xtask os deploy --apps=terminal,mail  # only some of them
 cargo xtask os shot out.png   # screenshot through Ossido's control channel
 cargo xtask os cmd window.list            # any silica-cli command
