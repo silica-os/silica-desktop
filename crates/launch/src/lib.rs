@@ -186,7 +186,12 @@ pub fn app_command(
             argv.extend(info.args.iter().cloned());
         }
     }
-    argv.extend(targets.iter().cloned());
+    // Files as paths (what the apps' own command lines take, like `%F`), other URIs as they are.
+    argv.extend(
+        targets
+            .iter()
+            .map(|t| silica_apps::exec::target_path(t).unwrap_or_else(|| t.clone())),
+    );
     argv
 }
 
@@ -634,6 +639,29 @@ mod tests {
             "/home/u/Documents/a.txt".into(),
             "/home/u/Documents/a.txt".into()
         )));
+    }
+
+    #[test]
+    fn files_reach_the_app_as_paths() {
+        let i = info("", "flutter", "dev.silica.Platform//1", "");
+        let argv = app_command(
+            &i,
+            Path::new("/usr/Applications/Hello.app/Contents"),
+            Path::new("/usr/bin/silica-app"),
+            &[
+                "file:///home/u/My%20Notes.txt".to_owned(),
+                "/home/u/b.png".to_owned(),
+                "https://example.org/x".to_owned(),
+            ],
+        );
+        assert_eq!(
+            &argv[argv.len() - 3..],
+            [
+                "/home/u/My Notes.txt",
+                "/home/u/b.png",
+                "https://example.org/x"
+            ]
+        );
     }
 
     #[test]

@@ -159,6 +159,12 @@ struct Raw {
     #[serde(default)]
     url_schemes: Vec<String>,
     #[serde(default)]
+    generic_name: Option<String>,
+    #[serde(default)]
+    comment: Option<String>,
+    #[serde(default)]
+    share: bool,
+    #[serde(default)]
     types: BTreeMap<String, Role>,
     #[serde(default)]
     documents: BTreeMap<String, String>,
@@ -189,6 +195,12 @@ pub struct Info {
     pub categories: Vec<String>,
     pub keywords: Vec<String>,
     pub url_schemes: Vec<String>,
+    /// What kind of app it is ("Calculator", "Mail Client"), as `GenericName` of a desktop entry.
+    pub generic_name: String,
+    /// One line about it, as `Comment`.
+    pub comment: String,
+    /// A target of the Share menu (`X-Silica-Share=true`).
+    pub share: bool,
     pub types: BTreeMap<String, Role>,
     pub documents: BTreeMap<String, String>,
     pub permissions: Permissions,
@@ -332,6 +344,10 @@ impl Info {
         if raw.version.trim().is_empty() || raw.version.contains(['\n', '\r']) {
             return invalid("the version is empty".to_owned());
         }
+        // One line each: they become desktop entry values.
+        let line = |v: Option<String>| v.filter(|t| !t.contains(['\n', '\r'])).unwrap_or_default();
+        let generic_name = line(raw.generic_name);
+        let comment = line(raw.comment);
         let Some(runtime) = Runtime::parse(&raw.runtime) else {
             return invalid(format!("not a runtime: {}", raw.runtime));
         };
@@ -408,6 +424,9 @@ impl Info {
             categories: raw.categories,
             keywords: raw.keywords,
             url_schemes: raw.url_schemes,
+            generic_name,
+            comment,
+            share: raw.share,
             types: raw.types,
             documents,
             permissions: raw.permissions,
@@ -517,6 +536,30 @@ key = "RWQabc"
             info.update.feed.as_deref(),
             Some("https://example.org/feed.toml")
         );
+    }
+
+    #[test]
+    fn the_desktop_keys_of_silica_apps() {
+        let info = Info::parse(&HELLO.replace(
+            "future_key = \"ignored\"\n",
+            "generic_name = \"Greeter\"\ncomment = \"Says hello\"\nshare = true\n",
+        ))
+        .unwrap();
+        assert_eq!(
+            (
+                info.generic_name.as_str(),
+                info.comment.as_str(),
+                info.share
+            ),
+            ("Greeter", "Says hello", true)
+        );
+        // Optional, and one line each.
+        let plain = Info::parse(HELLO).unwrap();
+        assert_eq!((plain.generic_name.as_str(), plain.share), ("", false));
+        let two =
+            Info::parse(&HELLO.replace("future_key = \"ignored\"\n", "comment = \"one\\ntwo\"\n"))
+                .unwrap();
+        assert_eq!(two.comment, "");
     }
 
     #[test]

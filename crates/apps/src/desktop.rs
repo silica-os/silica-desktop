@@ -336,6 +336,9 @@ pub fn render(entry: &DesktopEntry) -> String {
     if entry.no_display {
         put("NoDisplay", "true");
     }
+    if entry.share {
+        put("X-Silica-Share", "true");
+    }
     put(
         "X-Silica-Bundle",
         &esc(entry.bundle.as_deref().unwrap_or_default()),

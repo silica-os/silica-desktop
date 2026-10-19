@@ -804,10 +804,9 @@ fn deploy(args: &[String]) -> Result<()> {
     // Apps with an Info.toml template become signed bundles in the guest's stand-in for
     // /usr/Applications; the others keep their desktop entry.
     let dev_key = dev_release_key(&work)?;
-    let bundles = share.join("Applications");
     for app in &apps {
         if app.join("linux/Info.toml.in").is_file() {
-            deploy_bundle(app, &bundles, &dev_key)?;
+            deploy_bundle(app, &share, &dev_key)?;
         } else {
             deploy_app(app, &share)?;
         }
@@ -1020,11 +1019,8 @@ fn dev_release_key(work: &Path) -> Result<silica_bundle::minisign::SecretKey> {
 
 /// An app as a signed bundle (silica-os docs/app-bundles.md): `<app>/linux/Info.toml.in` with
 /// its release Flutter bundle and icon, into `bundles/<Name>.app`.
-fn deploy_bundle(
-    app: &Path,
-    bundles: &Path,
-    key: &silica_bundle::minisign::SecretKey,
-) -> Result<()> {
+fn deploy_bundle(app: &Path, share: &Path, key: &silica_bundle::minisign::SecretKey) -> Result<()> {
+    let bundles = &share.join("Applications");
     std::fs::create_dir_all(bundles).map_err(|e| format!("{}: {e}", bundles.display()))?;
     // The icon is compiled next to the release bundle first (as for desktop entries).
     crate::app_icon::bundle_icon(app, &app.join("build/release"))?;
@@ -1045,6 +1041,30 @@ fn deploy_bundle(
     let bundle = silica_bundle::assemble::assemble(&parts, bundles)?;
     silica_bundle::trust::sign_bundle(&bundle, key, None)?;
     eprintln!("xtask: bundle {}", bundle.display());
+    // Its desktop entry for the tools outside Silica (and the shell before the registry
+    // answers), as silica-packages installs it: X-Silica-Bundle names the guest's bundle. It
+    // replaces the entry of the app's earlier, unbundled deploys, whose folder goes too.
+    let info = silica_apps::info::Info::read(&bundle).map_err(|e| e.to_string())?;
+    let name = bundle
+        .file_name()
+        .ok_or_else(|| format!("{}: no name", bundle.display()))?
+        .to_string_lossy()
+        .into_owned();
+    let guest = format!("{GUEST_RUN}/Applications/{name}");
+    let entry =
+        silica_apps::registry::app_of_info(&info, &bundle, silica_apps::registry::Location::System)
+            .compat_entry()
+            .replace(&bundle.to_string_lossy().into_owned(), &guest);
+    write(
+        &share
+            .join("share/applications")
+            .join(format!("{}.desktop", info.id)),
+        &entry,
+    )?;
+    let old = share.join("apps").join(&info.id);
+    if old.exists() {
+        std::fs::remove_dir_all(&old).map_err(|e| format!("{}: {e}", old.display()))?;
+    }
     Ok(())
 }
 
@@ -1168,6 +1188,9 @@ fn silica_app_script() -> String {
     )
 }
 
+/// Mustache's Flutter bundle inside its app bundle, relative to the share.
+const MUSTACHE_BUNDLE_ASSETS: &str = "Applications/Mustache.app/Contents/app/flutter_assets";
+
 /// The session of the share: silica-session (silica-packages) with the share's paths. It is
 /// started by the hook in 50-dev.env, after the environment files were read.
 fn session_script() -> String {
@@ -1175,7 +1198,13 @@ fn session_script() -> String {
         &format!("{GUEST_RUN}/bin/silica-app"),
         &format!("{GUEST_RUN}/shell/flutter_assets"),
     );
+    // Mustache's desktop runs its bundle's code directly, as silica-launch runs system apps; a
+    // Mustache deployed before it became a bundle still has its old folder.
     let desktop = crate::desktop_component_args(
+        &format!("{GUEST_RUN}/bin/silica-app"),
+        &format!("{GUEST_RUN}/{MUSTACHE_BUNDLE_ASSETS}"),
+    );
+    let legacy_desktop = crate::desktop_component_args(
         &format!("{GUEST_RUN}/bin/silica-app"),
         &format!("{GUEST_RUN}/apps/dev.frascella.Mustache/flutter_assets"),
     );
@@ -1186,7 +1215,9 @@ fn session_script() -> String {
             _ => None,
         })
         .collect();
-    let [desktop_flag, desktop_command] = desktop.as_slice() else {
+    let ([desktop_flag, desktop_command], [_, legacy_command]) =
+        (desktop.as_slice(), legacy_desktop.as_slice())
+    else {
         return String::new();
     };
     format!(
@@ -1225,9 +1256,12 @@ if [ -n "$DBUS_SESSION_BUS_ADDRESS" ]; then
 else
   set -- --session-bus "$@"
 fi
-# The file manager's desktop (#147), when Mustache is deployed.
-if [ -d "$D/apps/dev.frascella.Mustache/flutter_assets" ]; then
+# The file manager's desktop (#147), when Mustache is deployed: its bundle, or the folder of a
+# Mustache deployed before it was one.
+if [ -d "$D/{MUSTACHE_BUNDLE_ASSETS}" ]; then
   set -- "$@" {desktop_flag} '{desktop_command}'
+elif [ -d "$D/apps/dev.frascella.Mustache/flutter_assets" ]; then
+  set -- "$@" {desktop_flag} '{legacy_command}'
 fi
 # shellcheck disable=SC2086
 "$D/bin/ossido" $OSSIDO_ARGS "$@"
@@ -1317,7 +1351,8 @@ mod tests {
         assert!(script.contains(
             "--namespace screensaver --dart-arg shell /var/lib/silica-dev/shell/flutter_assets"
         ));
-        assert_eq!(script.matches("--namespace ").count(), 9);
+        // The 8 layers, and the desktop in its two forms (bundle or older folder).
+        assert_eq!(script.matches("--namespace ").count(), 10);
         assert!(!script.contains("--spawn-shell"));
         assert!(script.contains("SILICA_ICONS_DIR"));
         assert!(script.contains("export SILICA_ASSETS=\"$D/silica.assets\""));
@@ -1327,7 +1362,10 @@ mod tests {
         // The file manager's desktop, kept running, when Mustache is deployed (#147).
         assert!(script.contains("--keep-shell '/var/lib/silica-dev/bin/silica-app --layer bottom"));
         assert!(script.contains(
-            "--namespace desktop-icons:dev.frascella.Mustache --dart-arg --desktop /var/lib/silica-dev/apps/dev.frascella.Mustache/flutter_assets"
+            "--namespace desktop-icons:dev.frascella.Mustache --dart-arg --desktop /var/lib/silica-dev/Applications/Mustache.app/Contents/app/flutter_assets'"
+        ));
+        assert!(script.contains(
+            "--namespace desktop-icons:dev.frascella.Mustache --dart-arg --desktop /var/lib/silica-dev/apps/dev.frascella.Mustache/flutter_assets'"
         ));
     }
 }

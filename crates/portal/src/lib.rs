@@ -90,26 +90,19 @@ pub fn exec_words(exec: &str) -> Vec<String> {
 
 /// The value of `Exec` in the `[Desktop Entry]` section.
 pub fn desktop_exec(text: &str) -> Option<String> {
-    let mut in_entry = false;
-    for line in text.lines() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            in_entry = line == "[Desktop Entry]";
-            continue;
-        }
-        if in_entry && let Some(value) = line.strip_prefix("Exec=") {
-            return Some(value.trim().to_owned());
-        }
-    }
-    None
+    desktop_value(text, "Exec")
 }
 
 /// Mustache's command line for the dialog: `Exec` plus the arguments for Dart. The dialog is
 /// a helper process of the embedder (`--helper`): not the running Mustache, which a click in
 /// the Dock must reach, and it ends with its window, so that a closed dialog still answers.
 /// With the app's window (`--parent`) the dialog opens over it and gives it the focus back.
-pub fn dialog_command(exec: &str, kind: DialogKind, request: &DialogRequest) -> Vec<String> {
-    let mut words = exec_words(exec);
+pub fn dialog_command(
+    mustache: &[String],
+    kind: DialogKind,
+    request: &DialogRequest,
+) -> Vec<String> {
+    let mut words = mustache.to_vec();
     words.push("--helper".to_owned());
     if let Some(parent) = &request.parent {
         words.push("--parent".to_owned());
@@ -161,8 +154,36 @@ pub fn path_from_bytes(bytes: &[u8]) -> Option<String> {
     (!text.is_empty() && Path::new(text).is_absolute()).then(|| text.to_owned())
 }
 
-/// Mustache's entry in the XDG data directories (the first one wins).
-pub fn find_mustache_exec(env: &HashMap<String, String>) -> Option<String> {
+/// The value of `key` in the `[Desktop Entry]` section.
+fn desktop_value(text: &str, key: &str) -> Option<String> {
+    let mut in_entry = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_entry = line == "[Desktop Entry]";
+            continue;
+        }
+        if in_entry && let Some(value) = line.strip_prefix(key).and_then(|r| r.strip_prefix('=')) {
+            return Some(value.trim().to_owned());
+        }
+    }
+    None
+}
+
+/// Mustache's command (embedder and bundle, without field codes), from its entry in the XDG
+/// data directories (the first one wins). Mustache is an app bundle of the system
+/// (`X-Silica-Bundle=` in its entry names it): the command is the bundle's own embedder command,
+/// run directly as `silica-launch` runs system apps (docs/spec/launch.md), so that the
+/// dialog's embedder options can follow it; an entry without a system bundle gives its `Exec`.
+pub fn find_mustache_command(env: &HashMap<String, String>) -> Option<Vec<String>> {
+    find_mustache_command_with(env, silica_apps::registry::is_system_path)
+}
+
+/// [`find_mustache_command`] with the test of a system folder given (for tests).
+pub fn find_mustache_command_with(
+    env: &HashMap<String, String>,
+    is_system: impl Fn(&Path) -> bool,
+) -> Option<Vec<String>> {
     let home = env.get("HOME").cloned().unwrap_or_default();
     let data_home = env
         .get("XDG_DATA_HOME")
@@ -174,13 +195,25 @@ pub fn find_mustache_exec(env: &HashMap<String, String>) -> Option<String> {
         .filter(|v| !v.is_empty())
         .cloned()
         .unwrap_or_else(|| "/usr/local/share:/usr/share".to_owned());
-    std::iter::once(data_home)
+    let text = std::iter::once(data_home)
         .chain(data_dirs.split(':').map(str::to_owned))
         .filter(|d| !d.is_empty())
         .find_map(|dir| {
-            let text = std::fs::read_to_string(format!("{dir}/applications/{MUSTACHE_ID}")).ok()?;
-            desktop_exec(&text)
-        })
+            std::fs::read_to_string(format!("{dir}/applications/{MUSTACHE_ID}")).ok()
+        })?;
+    if let Some(bundle) = desktop_value(&text, "X-Silica-Bundle").map(std::path::PathBuf::from)
+        && is_system(&bundle)
+        && let Ok(info) = silica_apps::info::Info::read(&bundle)
+    {
+        let session = silica_launch::Session::from_env(&|k| env.get(k).cloned());
+        return Some(silica_launch::app_command(
+            &info,
+            &bundle.join("Contents"),
+            &session.embedder,
+            &[],
+        ));
+    }
+    desktop_exec(&text).map(|exec| exec_words(&exec))
 }
 
 /// Marks a file an app saves through the dialog with the quarantine attribute (silica-os
@@ -255,7 +288,7 @@ mod tests {
             current_folder: Some("/home/io".to_owned()),
             ..DialogRequest::default()
         };
-        let words = dialog_command("emb --app-id x /b", DialogKind::Open, &request);
+        let words = dialog_command(&exec_words("emb --app-id x /b"), DialogKind::Open, &request);
         assert_eq!(
             words,
             [
@@ -287,7 +320,7 @@ mod tests {
             parent: parent_handle("wayland:Zx81"),
             ..DialogRequest::default()
         };
-        let words = dialog_command("emb /b", DialogKind::Save, &request);
+        let words = dialog_command(&exec_words("emb /b"), DialogKind::Save, &request);
         assert_eq!(
             words,
             [
@@ -332,7 +365,47 @@ mod tests {
             ("HOME".to_owned(), "/nowhere".to_owned()),
             ("XDG_DATA_DIRS".to_owned(), dir.display().to_string()),
         ]);
-        assert_eq!(find_mustache_exec(&env).as_deref(), Some("emb /b"));
+        assert_eq!(
+            find_mustache_command(&env),
+            Some(vec!["emb".to_owned(), "/b".to_owned()])
+        );
+
+        // Mustache as a system bundle: the bundle's embedder command, not silica-launch.
+        let bundle = dir.join("Mustache.app");
+        std::fs::create_dir_all(bundle.join("Contents/app/flutter_assets")).unwrap();
+        std::fs::write(
+            bundle.join("Contents/Info.toml"),
+            "format = 1\nid = \"dev.frascella.Mustache\"\nname = \"Mustache\"\nversion = \"1\"\n\
+             build = 1\nkind = \"flutter\"\nruntime = \"dev.silica.Platform//1\"\n\
+             args = [\"--size\", \"1000x700\"]\n[developer]\nname = \"Silica\"\nkey = \"k\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            apps.join(MUSTACHE_ID),
+            format!(
+                "[Desktop Entry]\nType=Application\nExec=silica-launch {0} %U\nX-Silica-Bundle={0}\n",
+                bundle.display()
+            ),
+        )
+        .unwrap();
+        let words = find_mustache_command_with(&env, |_| true).unwrap();
+        assert_eq!(
+            &words[1..],
+            [
+                "--app-id",
+                "dev.frascella.Mustache",
+                "--size",
+                "1000x700",
+                &bundle
+                    .join("Contents/app/flutter_assets")
+                    .display()
+                    .to_string(),
+            ]
+        );
+        assert!(words[0].ends_with("silica-app"));
+        // A bundle outside the system folders is not run directly: its entry's Exec.
+        let words = find_mustache_command_with(&env, |_| false).unwrap();
+        assert_eq!(words[0], "silica-launch");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

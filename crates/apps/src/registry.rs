@@ -173,6 +173,7 @@ impl App {
             keywords: self.keywords.clone(),
             mime_types: self.mime_types.clone(),
             no_display: self.no_display,
+            share: self.share,
             bundle: Some(self.path.to_string_lossy().into_owned()),
             ..DesktopEntry::default()
         })
@@ -324,8 +325,8 @@ pub fn app_of_info(info: &Info, path: &Path, location: Location) -> App {
         id: info.id.clone(),
         name: info.name.clone(),
         names: info.names.clone(),
-        generic_name: String::new(),
-        comment: String::new(),
+        generic_name: info.generic_name.clone(),
+        comment: info.comment.clone(),
         kind,
         location,
         path: path.to_path_buf(),
@@ -357,7 +358,7 @@ pub fn app_of_info(info: &Info, path: &Path, location: Location) -> App {
         desktop_file: None,
         no_display: false,
         terminal: false,
-        share: false,
+        share: info.share,
     }
 }
 

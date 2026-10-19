@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use silica_portal::{
     BUS_NAME, DialogKind, DialogRequest, OBJECT_PATH, RESPONSE_CANCELLED, RESPONSE_OK,
-    RESPONSE_OTHER, dialog_command, find_mustache_exec, parent_handle, parse_uris, path_from_bytes,
+    RESPONSE_OTHER, dialog_command, find_mustache_command, parent_handle, parse_uris,
+    path_from_bytes,
 };
 use zbus::interface;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
@@ -54,14 +55,14 @@ fn request(
 /// Opens Mustache's dialog and waits for the choice, without blocking the bus.
 async fn run_dialog(kind: DialogKind, request: DialogRequest) -> (u32, Results) {
     let env: HashMap<String, String> = std::env::vars().collect();
-    let Some(exec) = find_mustache_exec(&env) else {
+    let Some(mustache) = find_mustache_command(&env) else {
         eprintln!(
             "silica-portal: Mustache is not installed ({})",
             silica_portal::MUSTACHE_ID
         );
         return (RESPONSE_OTHER, Results::new());
     };
-    let words = dialog_command(&exec, kind, &request);
+    let words = dialog_command(&mustache, kind, &request);
     let Some((program, args)) = words.split_first() else {
         return (RESPONSE_OTHER, Results::new());
     };
