@@ -218,6 +218,12 @@ impl Shell {
                 height,
                 rgba,
             }) => dock::thumbnail(ui, &self.dock, identifier, *width, *height, rgba.clone()),
+            AppEvent::OutputsChanged => {
+                fit_wallpapers(ui);
+                for v in self.backgrounds.borrow().iter() {
+                    ui.request_paint(*v);
+                }
+            }
             AppEvent::Quit => ui.request(vetro_lib::core::Request::Quit),
             _ => {}
         }
@@ -270,6 +276,17 @@ fn install_status(ui: &mut Ui, shell: &Rc<Shell>) {
     });
     shell.bar.borrow_mut().on_status = Some(on_click);
     system::watch(ui, shell.system.clone());
+}
+
+/// Wallpapers are kept at the largest output's size (device pixels).
+fn fit_wallpapers(ui: &mut Ui) {
+    let px = ui
+        .outputs()
+        .iter()
+        .map(|o| (o.size.width.max(o.size.height) * o.scale.max(1.0)).ceil() as i32)
+        .max()
+        .unwrap_or(1920);
+    wallpaper::set_max_pixels(px);
 }
 
 /// Updates the clock at the next minute, and again after that.
@@ -359,14 +376,9 @@ fn main() {
             std::mem::forget(sub);
         }
         ui.connect_shell();
-        // Wallpapers are kept at the largest output's size.
-        let px = ui
-            .outputs()
-            .iter()
-            .map(|o| (o.size.width.max(o.size.height) * o.scale.max(1.0)).ceil() as i32)
-            .max()
-            .unwrap_or(2560);
-        wallpaper::set_max_pixels(px);
+        fit_wallpapers(ui);
+        // Skia keeps decoded images in a resource cache: a few MB are enough for the shell.
+        skia_safe::graphics::set_resource_cache_total_bytes_limit(8 << 20);
         if shell.wallpaper.borrow().is_none() {
             let choice = wallpaper::choice(&Default::default(), ui.appearance.dark);
             *shell.wallpaper.borrow_mut() = choice.clone();
@@ -386,6 +398,9 @@ fn main() {
         dock::open(ui, &shell.dock);
         // The menu bar's clock, each minute on the minute.
         schedule_clock(ui, shell.clone());
+        // Start-up decodes large images and scales them down: give the freed memory back.
+        ui.after(3.0, |_| vetro_lib::platform::trim_memory());
+        ui.after(10.0, |_| vetro_lib::platform::trim_memory());
     });
     if let Err(e) = r {
         eprintln!("silica-shell: {e}");

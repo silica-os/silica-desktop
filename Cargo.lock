@@ -1527,6 +1527,7 @@ dependencies = [
  "calloop 0.14.5",
  "futures-lite",
  "khronos-egl",
+ "libc",
  "libloading",
  "rustix 1.1.5",
  "serde",

@@ -259,6 +259,15 @@ const SVG_SIZE: i32 = 256;
 /// renderings would otherwise take 4 MB each.
 const MAX_ICON: i32 = 256;
 
+/// Decodes encoded image bytes to pixels now, without leaving the full-size pixels in Skia's
+/// resource cache (a lazy image drawn once keeps them there), scaled down to `max` pixels.
+pub fn decode_fit(bytes: &[u8], max: i32) -> Option<Image> {
+    let lazy = Image::from_encoded(Data::new_copy(bytes))?;
+    let raster = lazy.make_raster_image(None, skia_safe::image::CachingHint::Disallow)?;
+    drop(lazy);
+    Some(downscale(raster, max))
+}
+
 /// `img` scaled down so that its longer side is at most `max` pixels (as it is when smaller).
 pub fn downscale(img: Image, max: i32) -> Image {
     let (w, h) = (img.width(), img.height());
@@ -306,7 +315,7 @@ fn decode(path: &Path) -> Option<Image> {
         dom.render(canvas);
         Some(surface.image_snapshot())
     } else {
-        Image::from_encoded(Data::new_copy(&bytes)).map(|i| downscale(i, MAX_ICON))
+        decode_fit(&bytes, MAX_ICON)
     }
 }
 

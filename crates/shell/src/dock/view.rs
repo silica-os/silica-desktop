@@ -1006,6 +1006,9 @@ fn paint_label(
 ) {
     let theme = *cx.theme();
     let style = theme.text(&typography::BODY, theme.colors.text_primary);
+    if labels.len() <= slot {
+        labels.resize_with(slot + 1, Label::default);
+    }
     let tw = labels.get_mut(slot).map_or(0.0, |l| l.width(text, &style));
     let w = geometry::label_width(tw);
     let body = Rect::new(
@@ -1070,6 +1073,23 @@ impl vetro_lib::core::Widget for DockView {
     fn measure(&mut self, _cx: &mut LayoutCx<'_>, p: Proposal) -> Size {
         let s = self.state.borrow().size;
         p.replacing_unspecified(s)
+    }
+
+    /// The width the compositor gave the layer (the output's): the Dock centres on it. The
+    /// window can be created before the outputs are known, at a guessed width.
+    fn place(&mut self, _cx: &mut LayoutCx<'_>, size: Size) {
+        let changed = {
+            let mut s = self.state.borrow_mut();
+            let changed = size.width >= 1.0 && (s.size.width - size.width).abs() > 0.5;
+            if changed {
+                s.size.width = size.width;
+            }
+            changed
+        };
+        if changed {
+            let state = self.state.clone();
+            vetro_lib::platform::post(move |ui| sync_region(ui, &state));
+        }
     }
 
     fn tick(&mut self, cx: &mut EventCx<'_>, _dt: f32) -> bool {

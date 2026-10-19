@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use skia_safe::{Data, Image};
+use skia_safe::Image;
 use vetro_lib::color::Color;
 use vetro_lib::geom::Rect;
 use vetro_lib::services::settings::{SettingValue, SettingsMap};
@@ -72,7 +72,7 @@ fn asset_image(id: &str, dark: bool) -> Option<Image> {
                     .filter(|v| v.theme == want)
                     .max_by_key(|v| v.width)
                     .or_else(|| entry.variants().max_by_key(|v| v.width))?;
-                Image::from_encoded(Data::new_copy(v.data)).map(fit)
+                crate::apps::decode_fit(v.data, max_pixels())
             })
             .clone()
     })
@@ -171,12 +171,19 @@ thread_local! {
 
 /// Wallpapers are decoded no larger than the largest output (device pixels).
 pub fn set_max_pixels(px: i32) {
-    MAX_PIXELS.with(|m| m.set(px.clamp(640, 8192)));
+    let px = px.clamp(640, 8192);
+    if MAX_PIXELS.with(|m| m.replace(px)) != px {
+        forget();
+    }
 }
 
-fn fit(img: Image) -> Image {
-    let max = MAX_PIXELS.with(std::cell::Cell::get);
-    crate::apps::downscale(img, max)
+fn max_pixels() -> i32 {
+    MAX_PIXELS.with(std::cell::Cell::get)
+}
+
+/// Forgets the decoded wallpapers (the outputs changed size).
+pub fn forget() {
+    IMAGES.with(|c| c.borrow_mut().clear());
 }
 
 /// The decoded image of a file (decoded once per process).
@@ -187,7 +194,7 @@ pub fn image(path: &PathBuf) -> Option<Image> {
             .entry(path.clone())
             .or_insert_with(|| {
                 let bytes = std::fs::read(path).ok()?;
-                Image::from_encoded(Data::new_copy(&bytes)).map(fit)
+                crate::apps::decode_fit(&bytes, max_pixels())
             })
             .clone()
     })
