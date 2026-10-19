@@ -229,6 +229,28 @@ Which control to use:
 Used in: Terminal settings (4 panes, W 112: General, Profiles, Window Groups, Encodings), Mustache settings
 (4 panes, W 80: General, Tags, Sidebar, Advanced).
 
+## Alerts (binding)
+
+Every alert (`Alerts/Alert/*`, `Alerts/Gatekeeper/*`, `Alerts/Authentication`) has the same anatomy. It is 280 wide
+and its height hugs the content. From top to bottom:
+
+| Part | Value |
+|---|---|
+| Top padding | 24 |
+| Icon | 56 × 56, centred; a badge keeps its offset from the icon |
+| Icon → title | 16 |
+| Title | `Title 3/Primary`, 240 wide at x 20, **centred** |
+| Title → message | 8 |
+| Message | `Callout/Secondary` (detail lines `Callout/Tertiary`), 240 wide, **centred** |
+| Message → accessory | 16; the suppression checkbox is centred, text fields are 240 wide with a gap of 8 |
+| Text or accessory → buttons | 20 |
+| Buttons | **one per row**, each 240 × 28 at x 20 (the full width inside the 20 side margins), gap 8. Never side by side, whatever the count |
+| Bottom padding | 20 |
+
+**Button order:** the default button comes first, at the top. The Escape button (Cancel, Done, Not Now, Keep) comes
+last. Return activates the default button. Each button keeps its role: Primary for the default, the red destructive
+button for a destructive default, Secondary for the others.
+
 ## Component inventory (3047 symbols, every one in Light and Dark)
 
 Names follow `Category/Component/Variant/Size/State/Appearance`. States are always
@@ -237,7 +259,7 @@ Read each one from the kit for exact geometry (see README, "How to read the kit"
 
 | Family | Components and variants | Sizes (pt) |
 |---|---|---|
-| Alerts | Alert: one / two / three buttons, critical, with field, glass | 280 wide |
+| Alerts | Alert: one / two / three buttons, critical, with field, glass; Gatekeeper (6, [`app-installation.md`](app-installation.md)); Authentication. One anatomy, see "Alerts" above | 280 wide |
 | Buttons | Push: Primary, Secondary, Destructive, Borderless, Glass × 4 sizes × 5 states (200); Icon: Round, Square × 4 sizes × 5 states; Help; Link; Toolbar: Icon, Icon + Label; Gradient add/remove; Pop-up and Pull-down × 4 sizes × 5 states + Open | push 48×20 … 88×32; icon 20–32; toolbar 36×36, 56×44 |
 | Color Wells | Color Well: Minimal, Default, Expanded × states; Color Panel swatch grid; Swatch Chip; Swatch Row | 44×24, 72×28, 188×28 |
 | Combo Boxes | Combo Box: Small, Regular, Large × Rest/Focused/Disabled + Open; Combo Button | 200×24/28/32 |

@@ -27,33 +27,24 @@ window, and built on the kit's alert (`Alerts/Alert/*`).
 
 ### Anatomy (all variants)
 
-| Part | Value |
-|---|---|
-| Surface | 280 wide, height hugs the content; the alert surface, radius and shadow of `Alerts/Alert/*` |
-| Padding | top 24, sides 20, bottom 20; vertical stack, gap 16 |
-| Icon | 56 × 56 at x 112, y 24: the app's icon (the volume icon in Eject) |
-| Badge (Blocked, Malware) | the Critical alert's badge: a 24 × 20 disc at (152, 50) with the `warning` glyph 16 at (156, 53), over the icon's bottom-right corner |
-| Text block | 240 wide at x 20, 16 below the icon; vertical stack, gap 8, bottom padding 4 |
-| Title | `Title 3/Primary` (16/22, 600), left-aligned as in the kit's alerts, wraps, no line limit |
-| Message | `Callout/Secondary`, wraps |
-| Detail (Confirm) | `Callout/Tertiary`, two lines: the origin, then `Developer: <name>` |
-| Buttons | 16 below the text block; `Buttons/Push/<Primary|Secondary>/Regular` 28 tall, each `max(72, label + 24)` rounded up to 4, gap 8, centred |
-| Button stacking | when the pair is wider than 240 the buttons stack, each 240 wide, the default on top, gap 8 |
-| Default button | always the trailing (right) one in a row and the top one in a stack; Return activates it |
+The common alert anatomy of [`components.md`](components.md) › Alerts applies: centred text, title → message 8,
+buttons one per row and 240 wide, the default on top. Specific to these alerts:
+
+- **Icon:** the app's icon; the Eject alert shows the volume icon.
+- **Badge (Blocked, Malware):** the Critical alert's badge, a 24 × 20 disc with the `warning` glyph 16, over the
+  icon's bottom-right corner.
+- **Detail (Confirm):** two lines in `Callout/Tertiary` under the message block: the origin, then `Developer: <name>`.
 
 ### Variants
 
-| Variant | Verdict or trigger | Title | Message / detail | Buttons, left → right (default last) | Escape |
+| Variant | Verdict or trigger | Title | Message / detail | Buttons, top → bottom (default first) | Escape |
 |---|---|---|---|---|---|
-| `Confirm` | `confirm` | “Lemon” is an app downloaded from the Internet. Are you sure you want to open it? | detail: `lemon.example.org` / `Developer: Marta Rossi` | Open (Secondary) · **Cancel** (Primary) | Cancel |
-| `Blocked` | `block` | “Lemon” Not Opened | Silica cannot verify that “Lemon” is free of malware or has not been modified. | Move to Trash (116, Secondary) · **Done** (Primary) | Done |
-| `Malware` | `malware` | “Lemon” will damage your computer. | Its developer’s key was revoked. Move it to the Trash. | Done (Secondary) · **Move to Trash** (116, the destructive red button of the Critical alert) | Done |
-| `Disk Image` | an app started from a mounted `.sxv` | “Lemon” is running from a disk image. | Move it to Applications to keep it after the disk image is ejected. | **Move to Applications** (Primary) above Not Now (Secondary), stacked, 240 each | Not Now |
-| `Quit and Move` | uninstalling an app that is running | “Lemon” is open. Quit it and move it to the Trash? | — | Quit and Move (116, Secondary) · **Cancel** (Primary) | Cancel |
-| `Eject` | after an app is copied from a volume to Applications | Eject “Lemon 2.1” and move the disk image to the Trash? | “Lemon” is now in Applications. | Move to Trash (116, Secondary) · **Keep** (Primary) | Keep |
-
-Button widths in the kit: Open, Cancel, Done, Keep 72; Not Now 80; Move to Trash and Quit and Move 116; Move to
-Applications 156. The rule above computes them in code.
+| `Confirm` | `confirm` | “Lemon” is an app downloaded from the Internet. Are you sure you want to open it? | detail: `lemon.example.org` / `Developer: Marta Rossi` | **Cancel** (Primary), Open | Cancel |
+| `Blocked` | `block` | “Lemon” Not Opened | Silica cannot verify that “Lemon” is free of malware or has not been modified. | **Done** (Primary), Move to Trash | Done |
+| `Malware` | `malware` | “Lemon” will damage your computer. | Its developer’s key was revoked. Move it to the Trash. | **Move to Trash** (the red destructive button), Done | Done |
+| `Disk Image` | an app started from a mounted `.sxv` | “Lemon” is running from a disk image. | Move it to Applications to keep it after the disk image is ejected. | **Move to Applications** (Primary), Not Now | Not Now |
+| `Quit and Move` | uninstalling an app that is running | “Lemon” is open. Quit it and move it to the Trash? | — | **Cancel** (Primary), Quit and Move | Cancel |
+| `Eject` | after an app is copied from a volume to Applications | Eject “Lemon 2.1” and move the disk image to the Trash? | “Lemon” is now in Applications. | **Keep** (Primary), Move to Trash | Keep |
 
 - **Origin and developer:** origin is the host of the quarantine origin. When there is no origin, the detail shows only
   the developer line. For a self-signed bundle the developer line reads `Developer: <name> (self-signed)`. For an
@@ -158,7 +149,7 @@ permission card.
     apps open; every bundle and AppImage is `block`).
 - **Open Anyway:** it asks for the administrator password with the system authentication alert
   `Alerts/Authentication/Rest/<L|D>` ("Settings needs an administrator’s permission." / "Type the password to allow
-  it.", User name and Password fields, Cancel · **Allow**). Then it calls `OpenAnyway`. Artboard
+  it.", User name and Password fields, **Allow** above Cancel). Then it calls `OpenAnyway`. Artboard
   `Privacy & Security › Open Anyway password`.
 
 ### General › Storage: Applications
