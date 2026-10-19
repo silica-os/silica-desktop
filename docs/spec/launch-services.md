@@ -15,8 +15,8 @@ fallback when the daemon is not running (tests, another desktop).
 
 | Source | Where | Kind |
 | --- | --- | --- |
-| System bundles | `/usr/Applications/*.app` | `system` |
-| Bundles | `/Applications/*.app`, `~/Applications/*.app`, `/var/lib/silica-dev/Applications/*.app` | `bundle` |
+| System bundles | `/usr/Applications/*.app` (and the development VM's root-owned `/var/lib/silica-dev/Applications`) | `system` |
+| Bundles | `/Applications/*.app`, `~/Applications/*.app` | `bundle` |
 | AppImages | type-2 AppImages (`*.AppImage`, magic `AI\x02` at offset 8) in the same folders | `appimage` |
 | Flatpak | desktop entries under `…/flatpak/exports/share/applications` (or with `X-Flatpak=`) | `flatpak` |
 | Desktop entries | `applications/` of `XDG_DATA_HOME` and `XDG_DATA_DIRS` | `system` |

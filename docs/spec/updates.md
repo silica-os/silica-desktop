@@ -77,5 +77,6 @@ Object `/dev/frascella/Silica/Updates1`.
 | `Progress(s id, d fraction)` | signal | |
 | `Finished(s id, s result)` | signal | `result` as above, or `failed: <reason>` |
 
-Automatic checks run once a day while the session is on AC power and online; Settings checks on
-open. Nothing installs without the user's click (no automatic install yet).
+Settings checks when Software Update opens and with Check Now; nothing installs without the
+user's click. Daily checks in the background and automatic installs come later (tracked in an
+issue of silica-desktop).
