@@ -212,6 +212,7 @@ class Item {
     this.trash = false,
     this.action,
     this.fixed = false,
+    this.missing = false,
   }) : kind = ItemKind.app,
        minimizedWindow = null,
        thumbnail = null;
@@ -234,6 +235,7 @@ class Item {
        trash = false,
        action = null,
        fixed = false,
+       missing = false,
        minimizedWindow = window;
   const Item.separator()
     : kind = ItemKind.separator,
@@ -250,6 +252,7 @@ class Item {
       trash = false,
       action = null,
       fixed = false,
+      missing = false,
       minimizedWindow = null,
       thumbnail = null;
 
@@ -290,6 +293,10 @@ class Item {
 
   /// Always first in the Dock, neither dragged nor removed: the file manager (#141).
   final bool fixed;
+
+  /// A pinned app that is no longer installed (moved to the Trash, or its volume ejected): the
+  /// question mark until it is found again (silica-desktop#138).
+  final bool missing;
 
   /// Accepts files dragged from another app (D-05, MU-40).
   bool get acceptsFiles =>

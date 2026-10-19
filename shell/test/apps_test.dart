@@ -126,6 +126,42 @@ void main() {
     expect(items[2].kind, ItemKind.separator);
   });
 
+  test('a pinned app that is gone is a question mark until it comes back', () {
+    const editor = DesktopEntry(id: 'editor', name: 'Editor', exec: 'editor');
+    final items = dockItems(
+      {'editor': editor},
+      ['editor', 'dev.example.Hello'],
+      const [],
+    );
+    final missing = items.firstWhere((i) => i.id == 'dev.example.Hello');
+    expect(missing.missing, isTrue);
+    expect(missing.label, 'Hello');
+    expect(missing.command, isNull);
+    expect(items.firstWhere((i) => i.id == 'editor').missing, isFalse);
+    // Installed again: a normal item.
+    const hello = DesktopEntry(
+      id: 'dev.example.Hello',
+      name: 'Hello',
+      exec: 'hello',
+    );
+    final back = dockItems(
+      {'editor': editor, 'dev.example.Hello': hello},
+      ['editor', 'dev.example.Hello'],
+      const [],
+    );
+    expect(
+      back.firstWhere((i) => i.id == 'dev.example.Hello').missing,
+      isFalse,
+    );
+    // Before the apps are known (an empty registry), nothing is marked missing.
+    expect(
+      dockItems(const {}, [
+        'dev.example.Hello',
+      ], const []).any((i) => i.missing),
+      isFalse,
+    );
+  });
+
   test('minimized windows go into their app icon with minimizeToApp', () {
     const editor = DesktopEntry(id: 'editor', name: 'Editor', exec: 'editor');
     const windows = [Toplevel(id: 'a', title: 'Documento', appId: 'editor')];

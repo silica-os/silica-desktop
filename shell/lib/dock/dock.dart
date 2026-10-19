@@ -523,6 +523,12 @@ class _LiveDockState extends State<LiveDock> {
         MenuAction(l.dockShowApps, onSelected: () => shell.execute(action)),
       ];
     }
+    // A pinned app that is no longer installed: only Remove from Dock.
+    if (item.missing) {
+      return [
+        MenuAction(l.removeFromDock, onSelected: () => _setPinned(item, false)),
+      ];
+    }
     if (item.fixed) return _fileManagerMenu(item);
     // Trash: Open; when full also Empty (D-07).
     if (item.id == null) {
@@ -2339,6 +2345,11 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
 
   void _activate(int index) {
     final item = _items[index];
+    // A pinned app that is gone: its menu, where Remove from Dock is (no launch, no bounce).
+    if (item.missing) {
+      _openMenu(index, longPress: false);
+      return;
+    }
     if (item.folder != null && widget.onOpenPath != null) {
       _stackIndex == index
           ? _closeStack(by: StackClose.button)
@@ -2736,7 +2747,9 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
                               items[i].icon,
                               items[i],
                             )
-                          else if (items[i].icon != null || i == _stackIndex)
+                          else if (items[i].icon != null ||
+                              items[i].missing ||
+                              i == _stackIndex)
                             _icon(
                               l,
                               i,
@@ -3021,6 +3034,8 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
             side,
             place: true,
           )
+        : item.missing
+        ? _drawn((body) => MissingAppIcon(side: body), side, place: false)
         : source == null
         ? const SizedBox.shrink()
         : _drawn(
@@ -3418,4 +3433,34 @@ class _LabelShadow extends CustomPainter {
   @override
   bool shouldRepaint(_LabelShadow old) =>
       old.width != width || old.height != height || old.shadows != shadows;
+}
+
+/// The icon of a pinned app that is no longer installed: a question mark on a grey tile.
+// PROVISIONAL(amalfi-gatekeeper): until the Amalfi master of the Dock's question mark.
+class MissingAppIcon extends StatelessWidget {
+  const MissingAppIcon({super.key, required this.side});
+
+  final double side;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AmalfiTheme.of(context).colors;
+    return SizedBox.square(
+      dimension: side,
+      child: DecoratedBox(
+        key: const ValueKey('dock missing app'),
+        decoration: ShapeDecoration(
+          color: colors.surfaceControlPressed,
+          shape: AmalfiSmoothBorder(radius: side * 0.225),
+        ),
+        child: Center(
+          child: AmalfiSymbol(
+            'question',
+            size: side * 0.5,
+            color: colors.textSecondary,
+          ),
+        ),
+      ),
+    );
+  }
 }
