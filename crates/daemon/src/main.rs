@@ -10,6 +10,7 @@ use silica_daemon::share::{SHARE_PATH, Share};
 use silica_daemon::sound::{SOUND_PATH, Sound, SoundConfig};
 use silica_daemon::thumbnails::{THUMBNAILS_PATH, Thumbnails};
 use silica_daemon::trust::{TRUST_PATH, Trust, TrustConfig};
+use silica_daemon::volumes::{VOLUMES_PATH, Volumes, VolumesConfig};
 use silica_daemon::{
     AuthConfig, AuthService, ClipboardService, Daemon, SystemConfig, SystemService,
 };
@@ -82,6 +83,11 @@ async fn run(address: Option<String>, replace: bool) -> zbus::Result<()> {
             TRUST_PATH,
             Trust::new(TrustConfig::from_env(system_bus.clone())),
         )
+        .await?;
+    // Disk images (.sxv): verified, mounted with FUSE, ejected.
+    connection
+        .object_server()
+        .at(VOLUMES_PATH, Volumes::new(VolumesConfig::from_env()))
         .await?;
     let system = SystemService::serve(
         connection.clone(),

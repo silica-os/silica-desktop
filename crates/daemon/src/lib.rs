@@ -19,6 +19,7 @@ pub mod sun;
 pub mod system;
 pub mod thumbnails;
 pub mod trust;
+pub mod volumes;
 
 pub use auth::{AuthConfig, AuthService};
 pub use clipboard::ClipboardService;
