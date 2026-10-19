@@ -31,6 +31,7 @@ rustix = { version = "1", features = ["event", "fs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 silica-apps = { path = "../apps" }
+silica-bundle = { path = "../bundle" }
 silica-assets = { path = "../silica-assets", default-features = false, features = ["compose"] }
 silica-control = { path = "../control" }
 tracing = "0.1"

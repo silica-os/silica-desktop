@@ -69,10 +69,12 @@ The alert texts and layout are provisional until the Amalfi masters arrive (mark
   modification time) for AppImages: an update or a modification asks again;
 - the recently blocked list.
 
-Verifying hashes every file of the bundle: the cache keeps a launch from re-reading a large
-app; a changed file changes the bundle folder's or a subfolder's modification time only when
-files are added or removed, so a cached `allow` is re-verified in the background after the
-launch, and a mismatch moves the app to `block` for the next launch and removes its approval.
+Verifying hashes every file of the bundle. A bundle whose full verification takes under
+200 ms (most apps: a Flutter app of 30 MB hashes in about 30 ms) is verified in full at every
+launch. A larger one is answered from the cache while its stamp (inode and modification times of
+the bundle, `Contents/`, `Info.toml` and the manifest) is unchanged, and verified again in the
+background: a file changed in place, which no folder time shows, moves the app to `block` for the
+next launch and removes its approval.
 
 ## Developers, CA and revocation
 

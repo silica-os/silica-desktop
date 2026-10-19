@@ -9,6 +9,7 @@ use silica_daemon::settings::{SETTINGS_PATH, Settings};
 use silica_daemon::share::{SHARE_PATH, Share};
 use silica_daemon::sound::{SOUND_PATH, Sound, SoundConfig};
 use silica_daemon::thumbnails::{THUMBNAILS_PATH, Thumbnails};
+use silica_daemon::trust::{TRUST_PATH, Trust, TrustConfig};
 use silica_daemon::{
     AuthConfig, AuthService, ClipboardService, Daemon, SystemConfig, SystemService,
 };
@@ -74,6 +75,14 @@ async fn run(address: Option<String>, replace: bool) -> zbus::Result<()> {
         },
     )
     .await?;
+    // Gatekeeper: the verdicts on app bundles and AppImages, and their alerts.
+    connection
+        .object_server()
+        .at(
+            TRUST_PATH,
+            Trust::new(TrustConfig::from_env(system_bus.clone())),
+        )
+        .await?;
     let system = SystemService::serve(
         connection.clone(),
         SystemConfig {

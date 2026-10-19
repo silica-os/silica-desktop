@@ -2440,6 +2440,7 @@ dependencies = [
  "serde_json",
  "silica-apps",
  "silica-assets",
+ "silica-bundle",
  "silica-control",
  "toml",
  "tracing",
