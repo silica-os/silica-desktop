@@ -1,12 +1,17 @@
-// The installed apps, from .desktop files (freedesktop Desktop Entry specification): the
-// applications/ folders of XDG_DATA_HOME and XDG_DATA_DIRS, the first one wins on equal ids.
+// The installed apps. From the session's app registry (silica-daemon's Launch Services,
+// `SilicaApps`, silica-desktop docs/spec/launch-services.md) when it runs: desktop entries,
+// app bundles, AppImages and Flatpak apps, kept current by its signals. Without it (tests,
+// another session) from the .desktop files themselves (freedesktop Desktop Entry
+// specification): the applications/ folders of XDG_DATA_HOME and XDG_DATA_DIRS, the first one
+// wins on equal ids.
 
 import 'dart:async';
 import 'dart:collection' show UnmodifiableMapView;
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show ChangeNotifier;
-import 'package:silica_ui/silica_ui.dart' show xdgDataDirs;
+import 'package:silica_ui/silica_ui.dart'
+    show SilicaApps, SilicaAppsEvent, SilicaInstalledApp, xdgDataDirs;
 
 import '../l10n/l10n.dart' show systemLanguage;
 
@@ -26,6 +31,9 @@ class DesktopEntry {
     this.categories = const [],
     this.actions = const [],
     this.mimeTypes = const [],
+    this.kind = 'system',
+    this.path = '',
+    this.isNew = false,
   });
 
   /// File name without `.desktop` (e.g. `org.gnome.Nautilus`).
@@ -52,6 +60,15 @@ class DesktopEntry {
 
   /// The entry's own actions (`Actions` and their `[Desktop Action …]` groups).
   final List<DesktopAction> actions;
+
+  /// Where the app comes from: `system`, `bundle`, `flatpak` or `appimage`.
+  final String kind;
+
+  /// The bundle folder, the AppImage or the desktop entry file ('' when unknown).
+  final String path;
+
+  /// Installed and never launched (the Launcher's dot).
+  final bool isNew;
 
   /// The window with this app id belongs to this app.
   bool matchesAppId(String appId) {
@@ -247,6 +264,39 @@ Map<String, DesktopEntry> loadDesktopEntries({
   return entries;
 }
 
+/// The entries of the registry's apps, with names in `locale`: the apps to show (no
+/// `NoDisplay`), with a command for `sh -c`.
+Map<String, DesktopEntry> entriesFromApps(
+  Iterable<SilicaInstalledApp> apps, {
+  String locale = 'en',
+}) => {
+  for (final app in apps)
+    if (!app.noDisplay && app.exec.isNotEmpty)
+      app.id: DesktopEntry(
+        id: app.id,
+        name: app.nameIn(locale),
+        exec: stripFieldCodes(app.exec),
+        rawExec: app.exec,
+        icon: app.icon.isEmpty ? null : app.icon,
+        wmClass: app.wmClass.isEmpty ? null : app.wmClass,
+        keywords: app.keywordsIn(locale),
+        silicaIcon: app.silicaIcon.isEmpty ? null : app.silicaIcon,
+        categories: app.categories,
+        mimeTypes: app.mimeTypes,
+        actions: [
+          for (final a in app.actions)
+            DesktopAction(
+              id: a.id,
+              name: a.name,
+              exec: stripFieldCodes(a.exec),
+            ),
+        ],
+        kind: app.kind.name,
+        path: app.path,
+        isNew: app.isNew,
+      ),
+};
+
 /// The data folders to look for apps and their icons in: the XDG ones, plus the Flatpak
 /// exports (user and system) when the session's XDG_DATA_DIRS does not list them (a shell
 /// started outside the login scripts that add them, #198).
@@ -275,14 +325,20 @@ class DesktopEntryStore extends ChangeNotifier {
     Map<String, String>? env,
     this.debounce = const Duration(milliseconds: 300),
     this.rescan = const Duration(seconds: 10),
+    bool? service,
   }) : _env = env {
     _live.addAll(loadDesktopEntries(env: _env, locale: locale));
     _watch();
+    // The registry, unless told otherwise; widget tests have no daemon.
+    if (service ?? !Platform.environment.containsKey('FLUTTER_TEST')) {
+      unawaited(_tryService());
+    }
     // A folder that did not exist yet (the first Flatpak install creates its exports) cannot
     // be watched: look again now and then.
     // (A zero [rescan] turns the look off.)
     if (rescan > Duration.zero) {
       _timer = Timer.periodic(rescan, (_) {
+        if (_fromService) return;
         final now = _existing();
         if (now.length != _watched.length || !now.every(_watched.containsKey)) {
           _watch();
@@ -307,6 +363,60 @@ class DesktopEntryStore extends ChangeNotifier {
   Timer? _timer;
   Timer? _reload;
   bool _disposed = false;
+
+  /// Whether [entries] come from the registry (its signals keep them current; the folders are
+  /// not watched).
+  bool get fromService => _fromService;
+  bool _fromService = false;
+  StreamSubscription<SilicaAppsEvent>? _events;
+  Timer? _serviceReload;
+
+  Future<void> _tryService() async {
+    // Subscribed before the first list, so that no change falls between the two.
+    _events = SilicaApps.events().listen((_) {
+      if (!_fromService) return;
+      // A burst of changes (a Flatpak install) is one reload.
+      _serviceReload?.cancel();
+      _serviceReload = Timer(const Duration(milliseconds: 50), reload);
+    });
+    final apps = await SilicaApps.list();
+    if (_disposed) return;
+    if (apps == null) {
+      await _events?.cancel();
+      _events = null;
+      return;
+    }
+    _fromService = true;
+    for (final sub in _watched.values) {
+      sub.cancel();
+    }
+    _watched.clear();
+    _reload?.cancel();
+    _apply(entriesFromApps(apps, locale: locale));
+  }
+
+  Future<void> _reloadFromService() async {
+    final apps = await SilicaApps.list();
+    if (_disposed) return;
+    if (apps == null) {
+      // The registry went away: back to the folders.
+      _fromService = false;
+      await _events?.cancel();
+      _events = null;
+      _apply(loadDesktopEntries(env: _env, locale: locale));
+      _watch();
+      return;
+    }
+    _apply(entriesFromApps(apps, locale: locale));
+  }
+
+  void _apply(Map<String, DesktopEntry> fresh) {
+    if (_signature(fresh) == _signature(_live)) return;
+    _live
+      ..clear()
+      ..addAll(fresh);
+    notifyListeners();
+  }
 
   Set<String> _existing() => {
     for (final dir in appDataDirs(_env ?? Platform.environment))
@@ -340,7 +450,11 @@ class DesktopEntryStore extends ChangeNotifier {
 
   String _signature(Map<String, DesktopEntry> entries) =>
       (entries.values
-              .map((e) => '${e.id}\u0000${e.name}\u0000${e.exec}')
+              .map(
+                (e) =>
+                    '${e.id}\u0000${e.name}\u0000${e.exec}\u0000${e.isNew}'
+                    '\u0000${e.silicaIcon}\u0000${e.path}',
+              )
               .toList()
             ..sort())
           .join('\u0001');
@@ -362,9 +476,13 @@ class DesktopEntryStore extends ChangeNotifier {
     _reload = Timer(debounce, reload);
   }
 
-  /// Reads the folders again now.
+  /// Reads the apps again now (from the registry, or the folders).
   void reload() {
     if (_disposed) return;
+    if (_fromService) {
+      unawaited(_reloadFromService());
+      return;
+    }
     final fresh = loadDesktopEntries(env: _env, locale: locale);
     _live
       ..clear()
@@ -377,6 +495,8 @@ class DesktopEntryStore extends ChangeNotifier {
     _disposed = true;
     _timer?.cancel();
     _reload?.cancel();
+    _serviceReload?.cancel();
+    _events?.cancel();
     for (final sub in _watched.values) {
       sub.cancel();
     }

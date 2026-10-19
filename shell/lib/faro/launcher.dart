@@ -136,6 +136,10 @@ class FaroColors {
   Color get completion => _t.faro.completion;
   Color get key => _t.faro.key;
 
+  /// The dot of a newly installed app (`Accent/Amalfi`).
+  // PROVISIONAL(amalfi-gatekeeper): colour and size of the "new" dot until the Amalfi master.
+  Color get newDot => _t.accentAmalfi;
+
   /// Glyph tiles and the answer card.
   Color get sunken => _t.surfaceSunken;
 
@@ -933,13 +937,38 @@ class LauncherState extends State<Launcher>
               top: gridLabelTop,
               width: cellWidth,
               height: gridLabelHeight,
-              child: Text(
-                entry.name,
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: AmalfiType.callout(color: _c.text),
-              ),
+              child: entry.isNew
+                  ? Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // A newly installed app, until its first launch.
+                        Container(
+                          key: const ValueKey('launcher-new-dot'),
+                          width: newDotSize,
+                          height: newDotSize,
+                          decoration: BoxDecoration(
+                            color: _c.newDot,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: newDotGap),
+                        Flexible(
+                          child: Text(
+                            entry.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AmalfiType.callout(color: _c.text),
+                          ),
+                        ),
+                      ],
+                    )
+                  : Text(
+                      entry.name,
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AmalfiType.callout(color: _c.text),
+                    ),
             ),
           ],
         ),
@@ -947,6 +976,11 @@ class LauncherState extends State<Launcher>
     );
   }
 }
+
+/// The "new" dot before the name of an app installed and never launched.
+// PROVISIONAL(amalfi-gatekeeper): until the Amalfi master gives its size and gap.
+const double newDotSize = 6;
+const double newDotGap = 4;
 
 /// Grid opacity `ms` after the category change (measured on the video).
 double categoryFade(double ms) {

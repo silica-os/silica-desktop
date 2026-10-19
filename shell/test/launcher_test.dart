@@ -183,6 +183,44 @@ void main() {
     },
   );
 
+  testWidgets('a newly installed app has the dot before its name', (
+    tester,
+  ) async {
+    final withNew = {
+      ...entries,
+      'fresh': const DesktopEntry(
+        id: 'fresh',
+        name: 'Fresh',
+        exec: 'fresh',
+        categories: ['Utility'],
+        isNew: true,
+      ),
+    };
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: Launcher(
+            entries: withNew,
+            recents: const [],
+            onLaunch: (_) {},
+            onBack: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final dot = find.byKey(const ValueKey('launcher-new-dot'));
+    expect(dot, findsOneWidget);
+    // Left of the name, in the same row.
+    final name = tester.getRect(find.text('Fresh'));
+    final at = tester.getRect(dot);
+    expect(at.right, lessThanOrEqualTo(name.left));
+    expect((at.center.dy - name.center.dy).abs(), lessThan(2));
+    expect(at.width, newDotSize);
+  });
+
   testWidgets(
     'grid: Down chooses the first icon, arrows move it, Return opens (PA-60)',
     (tester) async {
