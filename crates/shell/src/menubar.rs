@@ -10,13 +10,12 @@ use std::rc::Rc;
 use silica_protocols::menu::model::{Item, Model, parse_model};
 use vetro_lib::amalfi::foundation::{Label, whole};
 use vetro_lib::amalfi::menus::{self, Placement, Row, RowKind};
-use vetro_lib::amalfi::statusbar::{ItemContent, StatusItem, status_bar};
 use vetro_lib::amalfi::tokens::typography;
 use vetro_lib::core::a11y::{A11y, Role};
 use vetro_lib::core::shell::ShellRequest;
 use vetro_lib::core::window::{Edges, KeyboardMode, Layer};
 use vetro_lib::core::{
-    Button, Event, EventCx, Handled, LayoutCx, PaintCx, Prop, Proposal, Signal, Ui, Value, ViewId,
+    Button, Event, EventCx, Handled, LayoutCx, PaintCx, Prop, Proposal, Signal, Ui, Value,
     WindowId, WindowKind,
 };
 use vetro_lib::geom::{Point, Rect, Size};
@@ -71,8 +70,12 @@ pub struct BarState {
     pub titles: Vec<Title>,
     /// The open title and its popup.
     pub open: Option<(usize, WindowId)>,
-    /// The bars (one per output) and their clock items.
-    pub bars: Vec<(WindowId, ViewId)>,
+    /// The bars (one per output) and their status clusters.
+    pub bars: Vec<(WindowId, crate::status::Cluster)>,
+    /// What a click on a status item does.
+    pub on_status: Option<crate::status::OnClick>,
+    /// The system's state the clusters show.
+    pub system: crate::system::SystemState,
     /// 24-hour clock.
     pub hour24: bool,
     /// The user's name (the Log Out item).
@@ -159,15 +162,17 @@ pub fn open(ui: &mut Ui, state: &Shared) {
             },
             Size::new(width, metrics::HEIGHT),
         );
-        let clock = ui.create(StatusItem::new(ItemContent::Clock(text.clone())).titled("Clock"));
-        let cluster = status_bar(ui, &[clock]);
+        let on_click = state.borrow().on_status.clone();
+        let cluster = crate::status::cluster(ui, crate::status::MENU_BAR, on_click);
+        let system = state.borrow().system.clone();
+        crate::status::update(ui, &cluster, &system, &text);
         let view = ui.create(MenuBarView::new(state.clone()));
-        ui.add_child(view, cluster);
+        ui.add_child(view, cluster.view);
         let _ = ui.set(view, Prop::MaxWidth, Value::from(f32::INFINITY));
         let _ = ui.set(view, Prop::MaxHeight, Value::from(f32::INFINITY));
         ui.set_content(w, view);
         ui.show_window(w);
-        bars.push((w, clock));
+        bars.push((w, cluster));
     }
     state.borrow_mut().bars = bars;
 }
@@ -184,15 +189,23 @@ pub fn set_app_menu(ui: &mut Ui, state: &Shared, app_id: String, serial: u32, js
     repaint(ui, state);
 }
 
-/// Updates the clocks (each minute) and the clock format.
-pub fn tick_clock(ui: &mut Ui, state: &Shared) {
-    let (bars, hour24) = {
+/// Shows the clock (each minute) and the system's state in the status clusters.
+pub fn update_status(ui: &mut Ui, state: &Shared) {
+    let (bars, hour24, system) = {
         let s = state.borrow();
-        (s.bars.clone(), s.hour24)
+        (s.bars.clone(), s.hour24, s.system.clone())
     };
     let text = clock_text(&time::now(), hour24);
-    for (_, clock) in bars {
-        let _ = ui.set(clock, Prop::Text, Value::Str(text.clone()));
+    for (_, cluster) in bars {
+        crate::status::update(ui, &cluster, &system, &text);
+    }
+}
+
+/// Marks a status item active in every bar (its panel is open).
+pub fn set_status_active(ui: &mut Ui, state: &Shared, kind: crate::status::Kind, active: bool) {
+    let bars = state.borrow().bars.clone();
+    for (_, cluster) in bars {
+        crate::status::set_active(ui, &cluster, kind, active);
     }
 }
 

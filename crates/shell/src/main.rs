@@ -8,9 +8,12 @@
 //! `silica-shell --preview-lock PATH [W H]` renders the lock screen headless to a PNG.
 
 mod apps;
+mod cc;
 mod dock;
 mod lock;
 mod menubar;
+mod status;
+mod system;
 mod time;
 mod wallpaper;
 
@@ -30,6 +33,10 @@ struct Shell {
     lock: lock::Shared,
     bar: menubar::Shared,
     dock: dock::Shared,
+    /// The system's state (network, sound, battery, appearance).
+    system: system::Shared,
+    /// Control Center.
+    cc: cc::Shared,
     /// The desktop wallpaper and its surfaces.
     wallpaper: Rc<RefCell<Option<wallpaper::Choice>>>,
     backgrounds: RefCell<Vec<vetro_lib::core::ViewId>>,
@@ -51,6 +58,8 @@ impl Shell {
             lock: Rc::new(RefCell::new(lock)),
             bar: Rc::new(RefCell::new(bar)),
             dock: Rc::new(RefCell::new(dock::DockState::default())),
+            system: Rc::default(),
+            cc: Rc::default(),
             wallpaper: Rc::new(RefCell::new(None)),
             backgrounds: RefCell::new(Vec::new()),
         }
@@ -109,11 +118,60 @@ impl Shell {
     }
 }
 
+/// Connects the status items to the system's state and to Control Center.
+fn install_status(ui: &mut Ui, shell: &Rc<Shell>) {
+    let s = shell.clone();
+    shell
+        .system
+        .borrow_mut()
+        .listeners
+        .push(Rc::new(move |ui: &mut Ui| {
+            let state = s.system.borrow().state.clone();
+            s.bar.borrow_mut().system = state.clone();
+            s.lock.borrow_mut().system = state;
+            menubar::update_status(ui, &s.bar);
+            lock::update_status(ui, &s.lock);
+            cc::repaint(ui, &s.cc);
+        }));
+    let s = Rc::downgrade(shell);
+    let on_click: status::OnClick = Rc::new(move |ui, kind, item| {
+        let Some(s) = s.upgrade() else {
+            return;
+        };
+        match kind {
+            status::Kind::Search => ui.shell(vetro_lib::core::shell::ShellRequest::Execute(
+                "faro.toggle".into(),
+            )),
+            status::Kind::Clock => {}
+            _ => {
+                let Some(w) = ui.window_of(item) else {
+                    return;
+                };
+                let width = ui.window(w).map_or(0.0, |w| w.size.width);
+                let bar = s.bar.clone();
+                menubar::set_status_active(ui, &bar, status::Kind::ControlCenter, true);
+                cc::toggle(
+                    ui,
+                    &s.cc,
+                    &s.system,
+                    w,
+                    width,
+                    Rc::new(move |ui: &mut Ui| {
+                        menubar::set_status_active(ui, &bar, status::Kind::ControlCenter, false)
+                    }),
+                );
+            }
+        }
+    });
+    shell.bar.borrow_mut().on_status = Some(on_click);
+    system::watch(ui, shell.system.clone());
+}
+
 /// Updates the clock at the next minute, and again after that.
 fn schedule_clock(ui: &mut Ui, shell: Rc<Shell>) {
     let wait = 60.0 - f64::from(time::now().second.min(59));
     ui.after(wait, move |ui| {
-        menubar::tick_clock(ui, &shell.bar);
+        menubar::update_status(ui, &shell.bar);
         schedule_clock(ui, shell.clone());
     });
 }
@@ -202,6 +260,7 @@ fn main() {
             shell.lock.borrow_mut().wallpaper = choice;
         }
         *shell.backgrounds.borrow_mut() = wallpaper::open_background(ui, &shell.wallpaper);
+        install_status(ui, &shell);
         menubar::open(ui, &shell.bar);
         dock::open(ui, &shell.dock);
         // The menu bar's clock, each minute on the minute.

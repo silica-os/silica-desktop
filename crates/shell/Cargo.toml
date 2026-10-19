@@ -18,6 +18,7 @@ silica-protocols = { path = "../protocols", features = ["client"] }
 skia-safe = { version = "0.153", default-features = false, features = ["binary-cache", "embed-icudtl", "gl", "egl", "vulkan", "wayland", "x11", "textlayout", "svg", "webp", "jpeg", "pdf", "skottie"] }
 serde_json = "1"
 tracing = "0.1"
+zbus = "5.19"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [lints]

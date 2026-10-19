@@ -2877,6 +2877,7 @@ dependencies = [
  "skia-safe",
  "tracing",
  "tracing-subscriber",
+ "zbus",
 ]
 
 [[package]]

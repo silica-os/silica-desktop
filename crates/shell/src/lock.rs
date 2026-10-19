@@ -117,6 +117,21 @@ pub struct LockState {
     pub wallpaper: Option<Choice>,
     /// The lock surfaces.
     pub windows: Vec<vetro_lib::core::WindowId>,
+    /// The system's state its status items show.
+    pub system: crate::system::SystemState,
+    /// The status items of each surface (lock.md L-01: Wi-Fi and battery).
+    pub clusters: Vec<crate::status::Cluster>,
+}
+
+/// Shows the system's state in the lock surfaces' status items.
+pub fn update_status(ui: &mut Ui, state: &Shared) {
+    let (clusters, system) = {
+        let s = state.borrow();
+        (s.clusters.clone(), s.system.clone())
+    };
+    for c in clusters {
+        crate::status::update(ui, &c, &system, "");
+    }
 }
 
 /// A shared lock state.
@@ -159,9 +174,21 @@ pub fn lock(ui: &mut Ui, state: &Shared) {
             .collect()
     };
     let mut windows = Vec::new();
+    let mut clusters = Vec::new();
     for (i, (name, size)) in outputs.into_iter().enumerate() {
         let w = ui.create_window(WindowKind::Lock { output: name }, size);
         let view = ui.create(LockView::new(state.clone(), i == 0));
+        // The status items sit where the menu bar keeps them, white over the wallpaper.
+        let cluster = crate::status::cluster(ui, crate::status::LOCK_SCREEN, None);
+        let _ = ui.set(
+            cluster.view,
+            vetro_lib::core::Prop::AppearanceOverride,
+            vetro_lib::core::Value::Int(2),
+        );
+        let system = state.borrow().system.clone();
+        crate::status::update(ui, &cluster, &system, "");
+        ui.add_child(view, cluster.view);
+        clusters.push(cluster);
         let _ = ui.set(
             view,
             vetro_lib::core::Prop::MaxWidth,
@@ -179,7 +206,9 @@ pub fn lock(ui: &mut Ui, state: &Shared) {
         }
         windows.push(w);
     }
-    state.borrow_mut().windows = windows;
+    let mut s = state.borrow_mut();
+    s.windows = windows;
+    s.clusters = clusters;
 }
 
 /// Ends the lock after the password was right.
@@ -192,6 +221,7 @@ pub fn unlock(ui: &mut Ui, state: &Shared) {
     s.password.clear();
     s.phase = Phase::Entry;
     s.windows.clear();
+    s.clusters.clear();
     drop(s);
     ui.unlock_session();
 }
@@ -199,6 +229,7 @@ pub fn unlock(ui: &mut Ui, state: &Shared) {
 /// Ossido unlocked on its own (the lock ended): the surfaces go.
 pub fn forget(ui: &mut Ui, state: &Shared) {
     let windows = std::mem::take(&mut state.borrow_mut().windows);
+    state.borrow_mut().clusters.clear();
     state.borrow_mut().locked = false;
     for w in windows {
         ui.close_window(w);
@@ -314,6 +345,14 @@ impl Widget for LockView {
 
     fn measure(&mut self, _cx: &mut LayoutCx<'_>, p: Proposal) -> Size {
         p.replacing_unspecified(Size::new(1920.0, 1200.0))
+    }
+
+    fn place(&mut self, cx: &mut LayoutCx<'_>, size: Size) {
+        if let Some(cluster) = cx.children().first().copied() {
+            let s = cx.measure(cluster, Proposal::new(None, None));
+            let x = size.width - crate::menubar::metrics::PADDING - s.width;
+            cx.place(cluster, Rect::new(x, 0.0, s.width, s.height));
+        }
     }
 
     fn attached(&mut self, cx: &mut EventCx<'_>) {
