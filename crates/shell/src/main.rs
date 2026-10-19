@@ -16,6 +16,7 @@ mod menubar;
 mod motion;
 mod notifications;
 mod popmenu;
+mod screenshot;
 mod stack;
 mod status;
 mod switcher;
@@ -49,6 +50,8 @@ struct Shell {
     notes: notifications::Shared,
     /// The app switcher.
     switcher: switcher::Shared,
+    /// Screenshots.
+    shots: screenshot::Shared,
     /// The desktop wallpaper and its surfaces.
     wallpaper: Rc<RefCell<Option<wallpaper::Choice>>>,
     backgrounds: RefCell<Vec<vetro_lib::core::ViewId>>,
@@ -75,6 +78,7 @@ impl Shell {
             faro: Rc::default(),
             notes: Rc::default(),
             switcher: Rc::default(),
+            shots: Rc::default(),
             wallpaper: Rc::new(RefCell::new(None)),
             backgrounds: RefCell::new(Vec::new()),
         }
@@ -144,12 +148,20 @@ impl Shell {
                     lock::forget(ui, &self.lock);
                 }
             }
+            AppEvent::Shell(ShellEvent::Broadcast { topic, value }) if topic == "screenshot" => {
+                screenshot::captured(ui, &self.shots, value);
+            }
             AppEvent::Shell(ShellEvent::Command(id)) => match id.as_str() {
                 "lock.now" => lock::lock(ui, &self.lock),
                 "faro.toggle" => faro::toggle(ui, &self.faro, faro::Mode::Faro),
                 "launcher.toggle" => faro::toggle(ui, &self.faro, faro::Mode::Launcher),
                 "controlcenter.toggle" => self.toggle_cc(ui),
                 "notifications.toggle" => self.toggle_center(ui),
+                "screenshot.selection" => screenshot::select(ui, &self.shots, false, false),
+                "screenshot.selection_clipboard" => {
+                    screenshot::select(ui, &self.shots, true, false)
+                }
+                "screenshot.toolbar" => screenshot::toggle_bar(ui, &self.shots),
                 s if s.starts_with("switcher.") => {
                     let windows: Vec<(String, String)> = self
                         .dock

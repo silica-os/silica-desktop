@@ -392,12 +392,19 @@ fn folders() -> Vec<PathBuf> {
 
 /// The downloads folder: xdg-user-dirs' `XDG_DOWNLOAD_DIR`, else `~/Downloads`.
 pub fn downloads_dir() -> Option<PathBuf> {
+    user_dir("XDG_DOWNLOAD_DIR", "Downloads")
+}
+
+/// A user folder of xdg-user-dirs (`key` in `user-dirs.dirs`), else `~/<fallback>`; only one
+/// that exists.
+pub fn user_dir(key: &str, fallback: &str) -> Option<PathBuf> {
     let home = PathBuf::from(std::env::var_os("HOME")?);
+    let prefix = format!("{key}=");
     let from_dirs = config_dir()
         .and_then(|d| std::fs::read_to_string(d.join("user-dirs.dirs")).ok())
         .and_then(|text| {
             text.lines().find_map(|l| {
-                let v = l.trim().strip_prefix("XDG_DOWNLOAD_DIR=")?;
+                let v = l.trim().strip_prefix(prefix.as_str())?;
                 let v = v.trim_matches('"');
                 let p = match v.strip_prefix("$HOME") {
                     Some(rest) => home.join(rest.trim_start_matches('/')),
@@ -407,7 +414,7 @@ pub fn downloads_dir() -> Option<PathBuf> {
             })
         });
     from_dirs
-        .or_else(|| Some(home.join("Downloads")))
+        .or_else(|| Some(home.join(fallback)))
         .filter(|p| p.is_dir())
 }
 
