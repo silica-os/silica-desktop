@@ -7,6 +7,8 @@
 //!
 //! `silica-shell --preview-lock PATH [W H]` renders the lock screen headless to a PNG.
 
+mod apps;
+mod dock;
 mod lock;
 mod menubar;
 mod time;
@@ -27,6 +29,7 @@ pub const APP_ID: &str = "dev.silica.Shell";
 struct Shell {
     lock: lock::Shared,
     bar: menubar::Shared,
+    dock: dock::Shared,
     /// The desktop wallpaper and its surfaces.
     wallpaper: Rc<RefCell<Option<wallpaper::Choice>>>,
     backgrounds: RefCell<Vec<vetro_lib::core::ViewId>>,
@@ -47,6 +50,7 @@ impl Shell {
         Shell {
             lock: Rc::new(RefCell::new(lock)),
             bar: Rc::new(RefCell::new(bar)),
+            dock: Rc::new(RefCell::new(dock::DockState::default())),
             wallpaper: Rc::new(RefCell::new(None)),
             backgrounds: RefCell::new(Vec::new()),
         }
@@ -84,6 +88,15 @@ impl Shell {
             }
             AppEvent::Shell(ShellEvent::Command(id)) if id == "lock.now" => {
                 lock::lock(ui, &self.lock);
+            }
+            AppEvent::Shell(ShellEvent::Toplevel {
+                identifier, app_id, ..
+            }) => dock::window_changed(ui, &self.dock, identifier, app_id, true),
+            AppEvent::Shell(ShellEvent::ToplevelClosed(identifier)) => {
+                dock::window_changed(ui, &self.dock, identifier, "", false);
+            }
+            AppEvent::Shell(ShellEvent::Focused(identifier)) => {
+                dock::focused(&self.dock, identifier)
             }
             AppEvent::Shell(ShellEvent::AppMenu {
                 app_id,
@@ -190,6 +203,7 @@ fn main() {
         }
         *shell.backgrounds.borrow_mut() = wallpaper::open_background(ui, &shell.wallpaper);
         menubar::open(ui, &shell.bar);
+        dock::open(ui, &shell.dock);
         // The menu bar's clock, each minute on the minute.
         schedule_clock(ui, shell.clone());
     });
