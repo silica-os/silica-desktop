@@ -59,3 +59,9 @@ opt-level = 3
 
 [profile.dev.package.xxhash-rust]
 opt-level = 3
+
+# The shell on Vetro (`crates/shell`, branch `vetro`) uses libvetro from the sibling vetro
+# checkout, which takes this repository's protocols by git: they come from here instead.
+[patch."https://github.com/silica-os/silica-desktop"]
+silica-protocols = { path = "crates/protocols" }
+silica-control = { path = "crates/control" }

@@ -1,0 +1,26 @@
+[package]
+name = "silica-shell"
+description = "Silica's desktop shell on Vetro: lock screen, menu bar, Dock and the shell panels"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "silica-shell"
+path = "src/main.rs"
+
+[dependencies]
+# The sibling checkout of silica-os/vetro (the repositories sit side by side).
+libvetro = { path = "../../../vetro/crates/libvetro" }
+skia-safe = { version = "0.153", default-features = false, features = ["binary-cache", "embed-icudtl", "gl", "egl", "vulkan", "wayland", "x11", "textlayout", "svg", "webp", "jpeg", "pdf", "skottie"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+silica-control = { path = "../control" }
+serde_json = "1"
