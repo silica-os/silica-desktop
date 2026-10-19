@@ -61,17 +61,36 @@ pub struct Title {
     pub bold: bool,
 }
 
+/// What a bar process shows (silica-desktop#261: the menu bar and the status items are
+/// separate processes, as on the reference).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Parts {
+    /// The titles and the status items (one shell process).
+    #[default]
+    All,
+    /// The Silica mark and the app's menus, along the whole top edge.
+    Titles,
+    /// The status items alone, in their own surface at the top right over the bar.
+    Status,
+}
+
+/// The status items' surface (`Parts::Status`): wide enough for every item; only the items
+/// take input.
+pub const STATUS_SURFACE_WIDTH: f32 = 560.0;
+
 /// The menu bar's state, shared by its surfaces.
 #[derive(Default)]
 pub struct BarState {
+    /// What this process shows.
+    pub parts: Parts,
     /// The focused app's menus and the serial to answer with.
     pub model: Option<(String, u32, Model)>,
     /// The titles shown.
     pub titles: Vec<Title>,
     /// The open title and its popup.
     pub open: Option<(usize, WindowId)>,
-    /// The bars (one per output) and their status clusters.
-    pub bars: Vec<(WindowId, crate::status::Cluster)>,
+    /// The bars (one per output) and their status clusters (none with `Parts::Titles`).
+    pub bars: Vec<(WindowId, Option<crate::status::Cluster>)>,
     /// What a click on a status item does.
     pub on_status: Option<crate::status::OnClick>,
     /// The system's state the clusters show.
@@ -146,12 +165,25 @@ pub fn open(ui: &mut Ui, state: &Shared) {
             .map(|o| (Some(o.name.clone()), o.size.width))
             .collect()
     };
-    state.borrow_mut().rebuild_titles();
+    let parts = state.borrow().parts;
+    if parts != Parts::Status {
+        state.borrow_mut().rebuild_titles();
+    }
     let text = clock_text(&time::now(), state.borrow().hour24);
     let mut bars = Vec::new();
     for (name, width) in outputs {
-        let w = ui.create_window(
-            WindowKind::Shell {
+        let kind = match parts {
+            // Over the bar's exclusive zone, at its trailing end.
+            Parts::Status => WindowKind::Shell {
+                layer: Layer::Top,
+                anchor: Edges::TOP | Edges::RIGHT,
+                exclusive: -1,
+                margin: [0; 4],
+                keyboard: KeyboardMode::None,
+                namespace: "status-items".into(),
+                output: name,
+            },
+            Parts::All | Parts::Titles => WindowKind::Shell {
                 layer: Layer::Top,
                 anchor: Edges::TOP | Edges::LEFT | Edges::RIGHT,
                 exclusive: metrics::HEIGHT as i32,
@@ -160,14 +192,21 @@ pub fn open(ui: &mut Ui, state: &Shared) {
                 namespace: "menubar".into(),
                 output: name,
             },
-            Size::new(width, metrics::HEIGHT),
-        );
-        let on_click = state.borrow().on_status.clone();
-        let cluster = crate::status::cluster(ui, crate::status::MENU_BAR, on_click);
-        let system = state.borrow().system.clone();
-        crate::status::update(ui, &cluster, &system, &text);
+        };
+        let size = match parts {
+            Parts::Status => Size::new(STATUS_SURFACE_WIDTH.min(width), metrics::HEIGHT),
+            Parts::All | Parts::Titles => Size::new(width, metrics::HEIGHT),
+        };
+        let w = ui.create_window(kind, size);
         let view = ui.create(MenuBarView::new(state.clone()));
-        ui.add_child(view, cluster.view);
+        let cluster = (parts != Parts::Titles).then(|| {
+            let on_click = state.borrow().on_status.clone();
+            let cluster = crate::status::cluster(ui, crate::status::MENU_BAR, on_click);
+            let system = state.borrow().system.clone();
+            crate::status::update(ui, &cluster, &system, &text);
+            ui.add_child(view, cluster.view);
+            cluster
+        });
         let _ = ui.set(view, Prop::MaxWidth, Value::from(f32::INFINITY));
         let _ = ui.set(view, Prop::MaxHeight, Value::from(f32::INFINITY));
         ui.set_content(w, view);
@@ -196,16 +235,16 @@ pub fn update_status(ui: &mut Ui, state: &Shared) {
         (s.bars.clone(), s.hour24, s.system.clone())
     };
     let text = clock_text(&time::now(), hour24);
-    for (_, cluster) in bars {
-        crate::status::update(ui, &cluster, &system, &text);
+    for cluster in bars.iter().filter_map(|b| b.1.as_ref()) {
+        crate::status::update(ui, cluster, &system, &text);
     }
 }
 
 /// Marks a status item active in every bar (its panel is open).
 pub fn set_status_active(ui: &mut Ui, state: &Shared, kind: crate::status::Kind, active: bool) {
     let bars = state.borrow().bars.clone();
-    for (_, cluster) in bars {
-        crate::status::set_active(ui, &cluster, kind, active);
+    for cluster in bars.iter().filter_map(|b| b.1.as_ref()) {
+        crate::status::set_active(ui, cluster, kind, active);
     }
 }
 
@@ -478,15 +517,22 @@ impl vetro_lib::core::Widget for MenuBarView {
     fn place(&mut self, cx: &mut LayoutCx<'_>, size: Size) {
         if let Some(cluster) = cx.children().first().copied() {
             let s = cx.measure(cluster, Proposal::new(None, None));
-            cx.place(
-                cluster,
-                Rect::new(
-                    size.width - metrics::PADDING - s.width,
-                    0.0,
-                    s.width,
-                    s.height,
-                ),
+            let rect = Rect::new(
+                size.width - metrics::PADDING - s.width,
+                0.0,
+                s.width,
+                s.height,
             );
+            cx.place(cluster, rect);
+            // Alone in its surface, the cluster alone takes input.
+            if self.state.borrow().parts == Parts::Status {
+                let view = cx.id();
+                vetro_lib::platform::post(move |ui| {
+                    if let Some(w) = ui.window_of(view) {
+                        ui.set_input_region(w, Some(vec![rect]));
+                    }
+                });
+            }
         }
     }
 
@@ -546,6 +592,17 @@ impl vetro_lib::core::Widget for MenuBarView {
             }
             self.rects.push(item.translate(Point::new(-r.x, -r.y)));
             x += w;
+        }
+        // Without the status items the bar takes input over its titles only: the status
+        // items' surface lies over its trailing end.
+        if st.parts == Parts::Titles {
+            let region = vec![Rect::new(0.0, 0.0, x - r.x, r.height)];
+            let view = cx.id();
+            vetro_lib::platform::post(move |ui| {
+                if let Some(w) = ui.window_of(view) {
+                    ui.set_input_region(w, Some(region));
+                }
+            });
         }
     }
 

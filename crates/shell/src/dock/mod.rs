@@ -841,7 +841,7 @@ pub fn window_changed(
 ) {
     let now = ui.now;
     // The shell's own windows (its panels) are not apps of the Dock.
-    if open && app_id == crate::APP_ID {
+    if open && app_id.starts_with(crate::APP_ID) {
         return;
     }
     {

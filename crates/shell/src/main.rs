@@ -1,9 +1,17 @@
 //! Silica's desktop shell on Vetro (plan: silica-desktop#254 §2, docs on the vetro
-//! repository's `docs/shell-and-apps.md`). One process: it joins Ossido's shell channel
-//! (`SILICA_SHELL=1`, set by Ossido for the shell it starts) and runs the shell's modules.
+//! repository's `docs/shell-and-apps.md`). It joins Ossido's shell channel (`SILICA_SHELL=1`,
+//! set by Ossido for the shell components it starts) and runs the shell's modules.
 //!
-//! Modules so far: the lock screen. Next, in order: the menu bar, the Dock, Faro and the
-//! Launcher, notifications, Control Center, the switcher, the screenshot UI.
+//! `silica-shell --role ROLE` runs one part of the shell, as the reference system splits its
+//! shell into processes (silica-desktop#261); Ossido keeps each one running (`--keep-shell`)
+//! and restarts it alone when it dies. Roles: `wallpaper`, `menubar` (the mark and the app's
+//! menus), `controlcenter` (Control Center and the status items), `dock` (the Dock and the
+//! app switcher), `faro` (Faro and the Launcher), `notifications` (banners and Notification
+//! Center), `lock` (the lock screen, authentication, Gatekeeper and Force Quit) and
+//! `screenshot`. The roles talk through Ossido: shell commands (`faro.toggle`,
+//! `launcher.toggle`, `notifications.toggle`, ...) reach every component and each handles its
+//! own; a broadcast tells the status items that Notification Center is open. Without
+//! `--role` one process runs everything.
 //!
 //! `silica-shell --preview-lock PATH [W H]` renders the lock screen headless to a PNG.
 
@@ -31,14 +39,138 @@ use std::rc::Rc;
 
 use vetro_lib::core::Ui;
 use vetro_lib::core::app::{AppEvent, AppInfo};
-use vetro_lib::core::shell::ShellEvent;
+use vetro_lib::core::shell::{ShellEvent, ShellRequest};
 use vetro_lib::geom::Size;
 
-/// The app id of the shell.
+/// The app id of the shell (a role's process adds its name: `dev.silica.Shell.Dock`).
 pub const APP_ID: &str = "dev.silica.Shell";
+
+/// The broadcast that tells the status items Notification Center is open (`1`) or not.
+const CENTER_OPEN: &str = "shell.notifications.center";
+
+/// The part of the shell a process runs (silica-desktop#261).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Role {
+    /// Everything, in one process.
+    All,
+    Wallpaper,
+    MenuBar,
+    ControlCenter,
+    Dock,
+    Faro,
+    Notifications,
+    Lock,
+    Screenshot,
+}
+
+impl Role {
+    const EACH: [Role; 8] = [
+        Role::Wallpaper,
+        Role::MenuBar,
+        Role::ControlCenter,
+        Role::Dock,
+        Role::Faro,
+        Role::Notifications,
+        Role::Lock,
+        Role::Screenshot,
+    ];
+
+    /// The role's name on the command line.
+    fn name(self) -> &'static str {
+        match self {
+            Role::All => "all",
+            Role::Wallpaper => "wallpaper",
+            Role::MenuBar => "menubar",
+            Role::ControlCenter => "controlcenter",
+            Role::Dock => "dock",
+            Role::Faro => "faro",
+            Role::Notifications => "notifications",
+            Role::Lock => "lock",
+            Role::Screenshot => "screenshot",
+        }
+    }
+
+    fn parse(name: &str) -> Option<Role> {
+        std::iter::once(Role::All)
+            .chain(Role::EACH)
+            .find(|r| r.name() == name)
+    }
+
+    /// The role of this process: `--role NAME`, or everything.
+    fn from_args(args: &[String]) -> Result<Role, String> {
+        let Some(i) = args.iter().position(|a| a == "--role") else {
+            return Ok(Role::All);
+        };
+        let name = args.get(i + 1).map(String::as_str).unwrap_or_default();
+        Role::parse(name).ok_or_else(|| {
+            let names: Vec<&str> = Role::EACH.iter().map(|r| r.name()).collect();
+            format!("unknown role {name:?} (roles: {})", names.join(", "))
+        })
+    }
+
+    /// Whether this process runs `part`.
+    fn runs(self, part: Role) -> bool {
+        self == Role::All || self == part
+    }
+
+    /// The process's app id: one per role, so that the roles are separate apps.
+    fn app_id(self) -> String {
+        match self {
+            Role::All => APP_ID.to_string(),
+            r => {
+                let name = r.name();
+                let mut chars = name.chars();
+                let title: String = chars
+                    .next()
+                    .map(|c| c.to_ascii_uppercase())
+                    .into_iter()
+                    .chain(chars)
+                    .collect();
+                format!("{APP_ID}.{title}")
+            }
+        }
+    }
+}
+
+/// The open windows as the shell channel reports them: (window, app) and the focus order.
+#[derive(Default)]
+struct Windows {
+    list: Vec<(String, String)>,
+    focus: Vec<String>,
+}
+
+impl Windows {
+    fn changed(&mut self, id: &str, app: &str, open: bool) {
+        self.list.retain(|(w, _)| w != id);
+        if open {
+            // The shell's own windows (its panels) are not apps.
+            if !app.starts_with(APP_ID) {
+                self.list.push((id.to_string(), app.to_string()));
+            }
+        } else {
+            self.focus.retain(|f| f != id);
+        }
+    }
+
+    fn focused(&mut self, id: &str) {
+        self.focus.retain(|f| f != id);
+        self.focus.push(id.to_string());
+    }
+
+    /// The windows, the most recently focused last.
+    fn ordered(&self) -> Vec<(String, String)> {
+        let mut v = self.list.clone();
+        v.sort_by_key(|(id, _)| self.focus.iter().position(|f| f == id));
+        v
+    }
+}
 
 /// Everything the shell's modules share.
 struct Shell {
+    /// The part of the shell this process runs.
+    role: Role,
+    /// The open windows (the switcher, Force Quit).
+    windows: RefCell<Windows>,
     lock: lock::Shared,
     bar: menubar::Shared,
     dock: dock::Shared,
@@ -62,7 +194,7 @@ struct Shell {
 }
 
 impl Shell {
-    fn new() -> Shell {
+    fn new(role: Role) -> Shell {
         let lock = lock::LockState {
             user: lock::user_name(),
             hour24: true,
@@ -71,9 +203,16 @@ impl Shell {
         let bar = menubar::BarState {
             user: lock.user.clone(),
             hour24: true,
+            parts: match role {
+                Role::MenuBar => menubar::Parts::Titles,
+                Role::ControlCenter => menubar::Parts::Status,
+                _ => menubar::Parts::All,
+            },
             ..menubar::BarState::default()
         };
         Shell {
+            role,
+            windows: RefCell::default(),
             lock: Rc::new(RefCell::new(lock)),
             bar: Rc::new(RefCell::new(bar)),
             dock: Rc::new(RefCell::new(dock::DockState::default())),
@@ -97,7 +236,9 @@ impl Shell {
         for v in self.backgrounds.borrow().iter() {
             ui.request_paint(*v);
         }
-        dock::settings_changed(ui, &self.dock, settings);
+        if self.role.runs(Role::Dock) {
+            dock::settings_changed(ui, &self.dock, settings);
+        }
         notifications::settings_changed(&self.notes, settings);
         let mut l = self.lock.borrow_mut();
         l.wallpaper = choice;
@@ -132,92 +273,137 @@ impl Shell {
 
     /// The open windows (window, app), the most recently focused last.
     fn windows(&self) -> Vec<(String, String)> {
-        let d = self.dock.borrow();
-        let mut v: Vec<(String, String)> = d
-            .inputs
-            .windows
-            .iter()
-            .map(|w| (w.id.clone(), w.app.clone()))
-            .collect();
-        // The most recently focused last.
-        v.sort_by_key(|(id, _)| d.focus.iter().position(|f| f == id));
-        v
+        self.windows.borrow().ordered()
     }
 
-    /// Opens or closes Notification Center (the clock stays highlighted while it is open).
+    /// Opens or closes Notification Center (the clock stays highlighted while it is open:
+    /// in this process, or in the status items' through a broadcast).
     fn toggle_center(&self, ui: &mut Ui) {
         let bar = self.bar.clone();
-        menubar::set_status_active(ui, &bar, status::Kind::Clock, true);
+        let separate = self.role != Role::All;
+        let mark = move |ui: &mut Ui, open: bool| {
+            menubar::set_status_active(ui, &bar, status::Kind::Clock, open);
+            if separate {
+                let value = if open { "1" } else { "0" };
+                ui.shell(ShellRequest::Broadcast(CENTER_OPEN.into(), value.into()));
+            }
+        };
+        mark(ui, true);
         notifications::toggle_center(
             ui,
             &self.notes,
-            Some(Rc::new(move |ui: &mut Ui| {
-                menubar::set_status_active(ui, &bar, status::Kind::Clock, false)
-            })),
+            Some(Rc::new(move |ui: &mut Ui| mark(ui, false))),
         );
     }
 
+    /// Runs a shell command of another role: here, or through Ossido, which hands it to every
+    /// shell component.
+    fn command(&self, ui: &mut Ui, part: Role, id: &str) {
+        if self.role.runs(part) {
+            self.handle_command(ui, id);
+        } else {
+            ui.shell(ShellRequest::Execute(id.into()));
+        }
+    }
+
+    /// A shell command, if it is this process's to handle.
+    fn handle_command(&self, ui: &mut Ui, id: &str) {
+        let r = self.role;
+        match id {
+            "lock.now" if r.runs(Role::Lock) => lock::lock(ui, &self.lock),
+            "faro.toggle" if r.runs(Role::Faro) => faro::toggle(ui, &self.faro, faro::Mode::Faro),
+            "launcher.toggle" if r.runs(Role::Faro) => {
+                faro::toggle(ui, &self.faro, faro::Mode::Launcher)
+            }
+            "controlcenter.toggle" if r.runs(Role::ControlCenter) => self.toggle_cc(ui),
+            "notifications.toggle" if r.runs(Role::Notifications) => self.toggle_center(ui),
+            "screenshot.selection" if r.runs(Role::Screenshot) => {
+                screenshot::select(ui, &self.shots, false, false)
+            }
+            "screenshot.selection_clipboard" if r.runs(Role::Screenshot) => {
+                screenshot::select(ui, &self.shots, true, false)
+            }
+            "screenshot.toolbar" if r.runs(Role::Screenshot) => {
+                screenshot::toggle_bar(ui, &self.shots)
+            }
+            "app.force_quit_panel" if r.runs(Role::Lock) => {
+                let windows = self.windows();
+                dialogs::force_quit(ui, &self.dialogs, &windows);
+            }
+            s if s.starts_with("switcher.") && r.runs(Role::Dock) => {
+                let windows = self.windows();
+                switcher::command(ui, &self.switcher, s, &windows);
+            }
+            _ => tracing::debug!("shell command {id} not handled by {}", r.name()),
+        }
+    }
+
     fn event(&self, ui: &mut Ui, e: &AppEvent) {
+        let r = self.role;
         match e {
             AppEvent::Shell(ShellEvent::Broadcast { topic, value })
-                if topic == "session.locked" =>
+                if topic == "session.locked" && r.runs(Role::Lock) =>
             {
+                // A lock role started again while the session is locked hears it at once
+                // (Ossido repeats the last broadcasts) and takes the lock over (#252).
                 if value == "1" {
                     lock::lock(ui, &self.lock);
                 } else {
                     lock::forget(ui, &self.lock);
                 }
             }
-            AppEvent::Shell(ShellEvent::Broadcast { topic, value }) if topic == "screenshot" => {
+            AppEvent::Shell(ShellEvent::Broadcast { topic, value })
+                if topic == "screenshot" && r.runs(Role::Screenshot) =>
+            {
                 screenshot::captured(ui, &self.shots, value);
             }
-            AppEvent::Shell(ShellEvent::Command(id)) => match id.as_str() {
-                "lock.now" => lock::lock(ui, &self.lock),
-                "faro.toggle" => faro::toggle(ui, &self.faro, faro::Mode::Faro),
-                "launcher.toggle" => faro::toggle(ui, &self.faro, faro::Mode::Launcher),
-                "controlcenter.toggle" => self.toggle_cc(ui),
-                "notifications.toggle" => self.toggle_center(ui),
-                "screenshot.selection" => screenshot::select(ui, &self.shots, false, false),
-                "screenshot.selection_clipboard" => {
-                    screenshot::select(ui, &self.shots, true, false)
-                }
-                "screenshot.toolbar" => screenshot::toggle_bar(ui, &self.shots),
-                "app.force_quit_panel" => {
-                    let windows = self.windows();
-                    dialogs::force_quit(ui, &self.dialogs, &windows);
-                }
-                s if s.starts_with("switcher.") => {
-                    let windows = self.windows();
-                    switcher::command(ui, &self.switcher, s, &windows);
-                }
-                _ => tracing::debug!("shell command {id} not handled"),
-            },
+            AppEvent::Shell(ShellEvent::Broadcast { topic, value })
+                if topic == CENTER_OPEN && r == Role::ControlCenter =>
+            {
+                menubar::set_status_active(ui, &self.bar, status::Kind::Clock, value == "1");
+            }
+            AppEvent::Shell(ShellEvent::Command(id)) => self.handle_command(ui, id),
             AppEvent::Shell(ShellEvent::Toplevel {
                 identifier,
                 app_id,
                 title,
-            }) => dock::window_changed(ui, &self.dock, identifier, app_id, title, true),
+            }) => {
+                self.windows.borrow_mut().changed(identifier, app_id, true);
+                if r.runs(Role::Dock) {
+                    dock::window_changed(ui, &self.dock, identifier, app_id, title, true);
+                }
+            }
             AppEvent::Shell(ShellEvent::ToplevelClosed(identifier)) => {
-                dock::window_changed(ui, &self.dock, identifier, "", "", false);
+                self.windows.borrow_mut().changed(identifier, "", false);
+                if r.runs(Role::Dock) {
+                    dock::window_changed(ui, &self.dock, identifier, "", "", false);
+                }
             }
             AppEvent::Shell(ShellEvent::Focused(identifier)) => {
-                dock::focused(ui, &self.dock, identifier)
+                self.windows.borrow_mut().focused(identifier);
+                if r.runs(Role::Dock) {
+                    dock::focused(ui, &self.dock, identifier)
+                }
             }
             AppEvent::Shell(ShellEvent::AppMenu {
                 app_id,
                 serial,
                 json,
-            }) => menubar::set_app_menu(ui, &self.bar, app_id.clone(), *serial, json),
+            }) if r.runs(Role::MenuBar) => {
+                menubar::set_app_menu(ui, &self.bar, app_id.clone(), *serial, json)
+            }
             AppEvent::Shell(ShellEvent::Minimized {
                 identifier,
                 minimized,
-            }) => dock::minimized(ui, &self.dock, identifier, *minimized),
+            }) if r.runs(Role::Dock) => dock::minimized(ui, &self.dock, identifier, *minimized),
             AppEvent::Shell(ShellEvent::Thumbnail {
                 identifier,
                 width,
                 height,
                 rgba,
-            }) => dock::thumbnail(ui, &self.dock, identifier, *width, *height, rgba.clone()),
+            }) if r.runs(Role::Dock) => {
+                dock::thumbnail(ui, &self.dock, identifier, *width, *height, rgba.clone())
+            }
             AppEvent::OutputsChanged => {
                 fit_wallpapers(ui);
                 for v in self.backgrounds.borrow().iter() {
@@ -227,6 +413,41 @@ impl Shell {
             AppEvent::Quit => ui.request(vetro_lib::core::Request::Quit),
             _ => {}
         }
+    }
+}
+
+/// Opens the parts of the shell this process runs.
+fn open_parts(ui: &mut Ui, shell: &Rc<Shell>) {
+    let r = shell.role;
+    if r.runs(Role::Wallpaper) {
+        *shell.backgrounds.borrow_mut() = wallpaper::open_background(ui, &shell.wallpaper);
+    }
+    // The system's state: the status items and Control Center, the lock screen's items, Do
+    // Not Disturb for the banners.
+    if r.runs(Role::ControlCenter) || r.runs(Role::Lock) || r.runs(Role::Notifications) {
+        install_status(ui, shell);
+    }
+    if r.runs(Role::Notifications) {
+        notifications::start(ui, &shell.notes);
+    }
+    if r.runs(Role::Lock) {
+        dialogs::start(&shell.dialogs);
+    }
+    if r.runs(Role::MenuBar) || r.runs(Role::ControlCenter) {
+        menubar::open(ui, &shell.bar);
+    }
+    if r.runs(Role::ControlCenter) {
+        // The clock, each minute on the minute.
+        schedule_clock(ui, shell.clone());
+    }
+    if r.runs(Role::Dock) {
+        let s = Rc::downgrade(shell);
+        shell.dock.borrow_mut().on_launcher = Some(Rc::new(move |ui: &mut Ui| {
+            if let Some(s) = s.upgrade() {
+                s.command(ui, Role::Faro, "launcher.toggle");
+            }
+        }));
+        dock::open(ui, &shell.dock);
     }
 }
 
@@ -252,8 +473,8 @@ fn install_status(ui: &mut Ui, shell: &Rc<Shell>) {
             return;
         };
         match kind {
-            status::Kind::Search => faro::toggle(ui, &s.faro, faro::Mode::Faro),
-            status::Kind::Clock => s.toggle_center(ui),
+            status::Kind::Search => s.command(ui, Role::Faro, "faro.toggle"),
+            status::Kind::Clock => s.command(ui, Role::Notifications, "notifications.toggle"),
             _ => {
                 let Some(w) = ui.window_of(item) else {
                     return;
@@ -319,7 +540,7 @@ fn preview_lock(args: &[String]) -> Option<i32> {
         size: Size::new(w, h),
         scale: 1.0,
     }]);
-    let shell = Shell::new();
+    let shell = Shell::new(Role::Lock);
     shell.lock.borrow_mut().wallpaper = wallpaper::choice(&Default::default(), true);
     lock::lock(&mut ui, &shell.lock);
     let Some(win) = shell.lock.borrow().windows.first().copied() else {
@@ -352,10 +573,18 @@ fn main() {
         )
         .with_writer(std::io::stderr)
         .init();
-    let shell = Rc::new(Shell::new());
-    let r = vetro_lib::platform::run(APP_ID, move |ui| {
+    let role = match Role::from_args(&args) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("silica-shell: {e}");
+            std::process::exit(2);
+        }
+    };
+    let app_id = role.app_id();
+    let shell = Rc::new(Shell::new(role));
+    let r = vetro_lib::platform::run(&app_id.clone(), move |ui| {
         ui.set_app_info(AppInfo {
-            id: APP_ID.into(),
+            id: app_id,
             name: "Silica Shell".into(),
             version: env!("CARGO_PKG_VERSION").into(),
             copyright: String::new(),
@@ -384,20 +613,7 @@ fn main() {
             *shell.wallpaper.borrow_mut() = choice.clone();
             shell.lock.borrow_mut().wallpaper = choice;
         }
-        *shell.backgrounds.borrow_mut() = wallpaper::open_background(ui, &shell.wallpaper);
-        install_status(ui, &shell);
-        notifications::start(ui, &shell.notes);
-        dialogs::start(&shell.dialogs);
-        menubar::open(ui, &shell.bar);
-        {
-            let faro = shell.faro.clone();
-            shell.dock.borrow_mut().on_launcher = Some(Rc::new(move |ui: &mut Ui| {
-                faro::toggle(ui, &faro, faro::Mode::Launcher)
-            }));
-        }
-        dock::open(ui, &shell.dock);
-        // The menu bar's clock, each minute on the minute.
-        schedule_clock(ui, shell.clone());
+        open_parts(ui, &shell);
         // Start-up decodes large images and scales them down: give the freed memory back.
         ui.after(3.0, |_| vetro_lib::platform::trim_memory());
         ui.after(10.0, |_| vetro_lib::platform::trim_memory());
@@ -405,5 +621,58 @@ fn main() {
     if let Err(e) = r {
         eprintln!("silica-shell: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn roles_come_from_the_command_line() {
+        assert_eq!(Role::from_args(&args(&["silica-shell"])), Ok(Role::All));
+        assert_eq!(
+            Role::from_args(&args(&["silica-shell", "--role", "dock"])),
+            Ok(Role::Dock)
+        );
+        assert!(Role::from_args(&args(&["silica-shell", "--role", "finder"])).is_err());
+        assert!(Role::from_args(&args(&["silica-shell", "--role"])).is_err());
+        for r in Role::EACH {
+            assert_eq!(Role::parse(r.name()), Some(r));
+            assert!(r.app_id().starts_with(APP_ID));
+            assert_ne!(r.app_id(), APP_ID);
+        }
+        assert_eq!(
+            Role::ControlCenter.app_id(),
+            "dev.silica.Shell.Controlcenter"
+        );
+        assert_eq!(Role::All.app_id(), APP_ID);
+        assert!(Role::All.runs(Role::Dock));
+        assert!(Role::Dock.runs(Role::Dock));
+        assert!(!Role::Dock.runs(Role::Faro));
+    }
+
+    #[test]
+    fn windows_keep_the_focus_order_without_the_shell() {
+        let mut w = Windows::default();
+        w.changed("a", "org.gnome.Ptyxis", true);
+        w.changed("b", "dev.frascella.Mail", true);
+        w.changed("p", "dev.silica.Shell.Dock", true);
+        w.focused("b");
+        w.focused("a");
+        assert_eq!(
+            w.ordered(),
+            vec![
+                ("b".to_string(), "dev.frascella.Mail".to_string()),
+                ("a".to_string(), "org.gnome.Ptyxis".to_string()),
+            ]
+        );
+        w.changed("a", "", false);
+        assert_eq!(w.ordered().len(), 1);
+        assert!(!w.focus.contains(&"a".to_string()));
     }
 }

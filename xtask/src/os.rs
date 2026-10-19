@@ -1212,15 +1212,34 @@ fn silica_app_script() -> String {
 /// Mustache's Flutter bundle inside its app bundle, relative to the share.
 const MUSTACHE_BUNDLE_ASSETS: &str = "Applications/Mustache.app/Contents/app/flutter_assets";
 
+/// The Vetro shell's processes (`silica-shell --role`), in start order: the status items
+/// after the menu bar, over its trailing end.
+const VETRO_SHELL_ROLES: [&str; 8] = [
+    "wallpaper",
+    "menubar",
+    "controlcenter",
+    "dock",
+    "faro",
+    "notifications",
+    "lock",
+    "screenshot",
+];
+
 /// The session of the share: silica-session (silica-packages) with the share's paths. It is
 /// started by the hook in 50-dev.env, after the environment files were read.
 fn session_script(vetro: bool) -> String {
     let components = if vetro {
-        // The native shell (crates/shell on Vetro): one process with every shell surface.
-        vec![
-            "--keep-shell".to_owned(),
-            format!("{GUEST_RUN}/bin/silica-shell"),
-        ]
+        // The native shell (crates/shell on Vetro): one process per role, each kept running
+        // and restarted alone (silica-desktop#261).
+        VETRO_SHELL_ROLES
+            .iter()
+            .flat_map(|role| {
+                [
+                    "--keep-shell".to_owned(),
+                    format!("{GUEST_RUN}/bin/silica-shell --role {role}"),
+                ]
+            })
+            .collect()
     } else {
         crate::shell_component_args(
             &format!("{GUEST_RUN}/bin/silica-app"),
@@ -1369,7 +1388,14 @@ mod tests {
     #[test]
     fn the_vetro_session_keeps_the_native_shell() {
         let script = session_script(true);
-        assert!(script.contains("--keep-shell '/var/lib/silica-dev/bin/silica-shell'"));
+        // One kept process per role (#261).
+        assert_eq!(
+            script
+                .matches("--keep-shell '/var/lib/silica-dev/bin/silica-shell --role ")
+                .count(),
+            8
+        );
+        assert!(script.contains("--keep-shell '/var/lib/silica-dev/bin/silica-shell --role lock'"));
         assert!(!script.contains("--dart-arg shell"));
     }
 
