@@ -18,6 +18,7 @@ mod notifications;
 mod popmenu;
 mod stack;
 mod status;
+mod switcher;
 mod system;
 mod time;
 mod wallpaper;
@@ -46,6 +47,8 @@ struct Shell {
     faro: faro::Shared,
     /// Banners and Notification Center.
     notes: notifications::Shared,
+    /// The app switcher.
+    switcher: switcher::Shared,
     /// The desktop wallpaper and its surfaces.
     wallpaper: Rc<RefCell<Option<wallpaper::Choice>>>,
     backgrounds: RefCell<Vec<vetro_lib::core::ViewId>>,
@@ -71,6 +74,7 @@ impl Shell {
             cc: Rc::default(),
             faro: Rc::default(),
             notes: Rc::default(),
+            switcher: Rc::default(),
             wallpaper: Rc::new(RefCell::new(None)),
             backgrounds: RefCell::new(Vec::new()),
         }
@@ -146,6 +150,16 @@ impl Shell {
                 "launcher.toggle" => faro::toggle(ui, &self.faro, faro::Mode::Launcher),
                 "controlcenter.toggle" => self.toggle_cc(ui),
                 "notifications.toggle" => self.toggle_center(ui),
+                s if s.starts_with("switcher.") => {
+                    let windows: Vec<(String, String)> = self
+                        .dock
+                        .borrow()
+                        .windows
+                        .iter()
+                        .map(|(w, a, _)| (w.clone(), a.clone()))
+                        .collect();
+                    switcher::command(ui, &self.switcher, s, &windows);
+                }
                 _ => tracing::debug!("shell command {id} not handled"),
             },
             AppEvent::Shell(ShellEvent::Toplevel {
