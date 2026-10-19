@@ -14,6 +14,7 @@ mod faro;
 mod lock;
 mod menubar;
 mod motion;
+mod notifications;
 mod popmenu;
 mod stack;
 mod status;
@@ -43,6 +44,8 @@ struct Shell {
     cc: cc::Shared,
     /// Faro and the Launcher.
     faro: faro::Shared,
+    /// Banners and Notification Center.
+    notes: notifications::Shared,
     /// The desktop wallpaper and its surfaces.
     wallpaper: Rc<RefCell<Option<wallpaper::Choice>>>,
     backgrounds: RefCell<Vec<vetro_lib::core::ViewId>>,
@@ -67,6 +70,7 @@ impl Shell {
             system: Rc::default(),
             cc: Rc::default(),
             faro: Rc::default(),
+            notes: Rc::default(),
             wallpaper: Rc::new(RefCell::new(None)),
             backgrounds: RefCell::new(Vec::new()),
         }
@@ -112,6 +116,19 @@ impl Shell {
         );
     }
 
+    /// Opens or closes Notification Center (the clock stays highlighted while it is open).
+    fn toggle_center(&self, ui: &mut Ui) {
+        let bar = self.bar.clone();
+        menubar::set_status_active(ui, &bar, status::Kind::Clock, true);
+        notifications::toggle_center(
+            ui,
+            &self.notes,
+            Some(Rc::new(move |ui: &mut Ui| {
+                menubar::set_status_active(ui, &bar, status::Kind::Clock, false)
+            })),
+        );
+    }
+
     fn event(&self, ui: &mut Ui, e: &AppEvent) {
         match e {
             AppEvent::Shell(ShellEvent::Broadcast { topic, value })
@@ -128,6 +145,7 @@ impl Shell {
                 "faro.toggle" => faro::toggle(ui, &self.faro, faro::Mode::Faro),
                 "launcher.toggle" => faro::toggle(ui, &self.faro, faro::Mode::Launcher),
                 "controlcenter.toggle" => self.toggle_cc(ui),
+                "notifications.toggle" => self.toggle_center(ui),
                 _ => tracing::debug!("shell command {id} not handled"),
             },
             AppEvent::Shell(ShellEvent::Toplevel {
@@ -162,6 +180,7 @@ fn install_status(ui: &mut Ui, shell: &Rc<Shell>) {
         .push(Rc::new(move |ui: &mut Ui| {
             let state = s.system.borrow().state.clone();
             s.bar.borrow_mut().system = state.clone();
+            s.notes.borrow_mut().dnd = state.dnd;
             s.lock.borrow_mut().system = state;
             menubar::update_status(ui, &s.bar);
             lock::update_status(ui, &s.lock);
@@ -174,7 +193,7 @@ fn install_status(ui: &mut Ui, shell: &Rc<Shell>) {
         };
         match kind {
             status::Kind::Search => faro::toggle(ui, &s.faro, faro::Mode::Faro),
-            status::Kind::Clock => {}
+            status::Kind::Clock => s.toggle_center(ui),
             _ => {
                 let Some(w) = ui.window_of(item) else {
                     return;
@@ -293,6 +312,7 @@ fn main() {
         }
         *shell.backgrounds.borrow_mut() = wallpaper::open_background(ui, &shell.wallpaper);
         install_status(ui, &shell);
+        notifications::start(ui, &shell.notes);
         menubar::open(ui, &shell.bar);
         dock::open(ui, &shell.dock);
         // The menu bar's clock, each minute on the minute.

@@ -287,6 +287,12 @@ pub fn icon(entry: &DesktopEntry, dark: bool) -> Option<Image> {
     cached(&path)
 }
 
+/// The decoded icon `name` of the themes (or a path).
+pub fn icon_named(name: &str) -> Option<Image> {
+    let path = icon_file(name)?;
+    cached(&path)
+}
+
 fn cached(path: &Path) -> Option<Image> {
     let path = path.to_path_buf();
     ICONS.with(|c| {

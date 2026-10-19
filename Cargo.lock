@@ -2870,6 +2870,7 @@ dependencies = [
 name = "silica-shell"
 version = "0.0.0"
 dependencies = [
+ "futures-lite",
  "libvetro",
  "serde_json",
  "silica-control",

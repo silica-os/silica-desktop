@@ -19,6 +19,7 @@ skia-safe = { version = "0.153", default-features = false, features = ["binary-c
 serde_json = "1"
 tracing = "0.1"
 zbus = "5.19"
+futures-lite = "2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [lints]
