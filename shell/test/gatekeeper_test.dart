@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:silica_ui/silica_ui.dart';
 import 'package:silica_shell/l10n/l10n.dart';
 import 'package:silica_shell/system/desktop_entries.dart';
 import 'package:silica_shell/trust/gatekeeper_dialog.dart';
@@ -91,42 +92,75 @@ void main() {
     expect(GatekeeperRequest.fromArgs([1, 2, 3]), isNull);
   });
 
-  test('the texts say where the app came from and why it was blocked', () {
+  test('the texts of the four variants (kit Alerts/Gatekeeper)', () {
     final l10n = englishTexts;
-    final fromImage = gatekeeperTexts(
-      l10n,
-      request(1, 'confirm', origin: 'file:///home/u/Downloads/Hello%201.0.sxv'),
-    );
-    expect(fromImage.body, [
-      'It comes from the disk image “Hello 1.0”.',
-      'Developer: Example Ltd (identified).',
-    ]);
-    // Cancel is the default of a confirmation.
-    expect(fromImage.buttons.first, ('cancel', 'Cancel', true));
     final fromSite = gatekeeperTexts(
       l10n,
-      request(1, 'confirm', origin: 'https://apps.example.org/get'),
+      request(1, 'confirm', origin: 'https://lemon.example.org/get'),
     );
-    expect(fromSite.body.first, 'It was downloaded from apps.example.org.');
-    final saved = gatekeeperTexts(
-      l10n,
-      request(1, 'confirm', agent: 'org.mozilla.firefox'),
+    expect(fromSite.message, isNull);
+    expect(fromSite.detail, ['lemon.example.org', 'Developer: Example Ltd']);
+    // Open, then Cancel: the default is the trailing one.
+    expect(fromSite.buttons.map((b) => b.$1), ['open', 'cancel']);
+    expect(fromSite.buttons.last.$3, AmalfiPushButtonVariant.primary);
+    expect(fromSite.escape, 'cancel');
+    // A disk image origin names the image; no origin: the developer line only.
+    expect(
+      gatekeeperTexts(
+        l10n,
+        request(
+          1,
+          'confirm',
+          origin: 'file:///home/u/Downloads/Hello%201.0.sxv',
+        ),
+      ).detail.first,
+      'Hello 1.0.sxv',
     );
-    expect(saved.body.first, 'It was saved by org.mozilla.firefox.');
-    final unsigned = gatekeeperTexts(
-      l10n,
-      request(2, 'block', reason: 'unsigned', status: 'unsigned'),
+    expect(
+      gatekeeperTexts(
+        l10n,
+        request(1, 'confirm', status: 'self-signed'),
+      ).detail,
+      ['Developer: Example Ltd (self-signed)'],
     );
-    expect(unsigned.title, '“Hello” Not Opened');
-    expect(unsigned.body, hasLength(2));
-    final tampered = gatekeeperTexts(
-      l10n,
-      request(2, 'block', reason: 'tampered'),
-    );
-    // No Open Anyway for a modified app.
-    expect(tampered.body, hasLength(1));
+    // Every reason of a block says the same.
+    for (final reason in [
+      'unsigned',
+      'self-signed',
+      'tampered',
+      'invalid',
+      'policy',
+    ]) {
+      final t = gatekeeperTexts(l10n, request(2, 'block', reason: reason));
+      expect(t.title, '“Hello” Not Opened');
+      expect(
+        t.message,
+        'Silica cannot verify that “Hello” is free of malware or has not been modified.',
+      );
+      expect(t.buttons.map((b) => b.$1), ['trash', 'cancel']);
+    }
     final malware = gatekeeperTexts(l10n, request(3, 'malware'));
-    expect(malware.buttons.firstWhere((b) => b.$3).$1, 'trash');
+    expect(malware.buttons.last, (
+      'trash',
+      'Move to Trash',
+      AmalfiPushButtonVariant.destructive,
+    ));
+    expect(malware.escape, 'cancel');
+    final volume = gatekeeperTexts(l10n, request(4, 'volume'));
+    expect(volume.title, '“Hello” is running from a disk image.');
+    expect(volume.buttons.map((b) => b.$1), ['cancel', 'move']);
+  });
+
+  test('button widths and stacking follow the rule of the masters', () {
+    expect(gatekeeperButtonWidth(20), 72);
+    expect(gatekeeperButtonWidth(90.5), 116);
+    expect(gatekeeperButtonWidth(131), 156);
+    expect(gatekeeperStacks([72, 72]), isFalse);
+    expect(gatekeeperStacks([116, 72]), isFalse);
+    // Move to Applications and Not Now: 244, stacked (the Disk Image master).
+    expect(gatekeeperStacks([156, 80]), isTrue);
+    expect(gatekeeperStacks([156, 80, 8]), isTrue);
+    expect(gatekeeperStacks([180, 72]), isTrue);
   });
 
   testWidgets('the shell registers, shows the oldest prompt and answers', (

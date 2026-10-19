@@ -46,22 +46,39 @@ Without an answer within 10 minutes the choice is `cancel`.
 
 | Verdict | Alert | Choices |
 | --- | --- | --- |
-| `confirm` | "“Name” is an app downloaded from the Internet. Are you sure you want to open it?", the origin and the developer | Cancel (default), Open |
-| `block` | "“Name” Not Opened", "Silica cannot verify that this app is free of malware…" | Done (default), Move to Trash |
-| `malware` | "“Name” will damage your computer." | Move to Trash (default), Done |
+| `confirm` | "“Name” is an app downloaded from the Internet. Are you sure you want to open it?", the origin and the developer | Open, Cancel (default) |
+| `block` | "“Name” Not Opened", "Silica cannot verify that “Name” is free of malware or has not been modified." | Move to Trash, Done (default) |
+| `malware` | "“Name” will damage your computer.", "Its developer’s key was revoked. Move it to the Trash." | Done, Move to Trash (default, destructive) |
 
 - `open` on `confirm` removes the quarantine attribute and records the approval.
 - `trash` moves the app to the user's Trash (the freedesktop trash of its file system).
 - `block` records the app among the recently blocked: Settings › Privacy & Security shows
   "“Name” was blocked to protect Silica." with Open Anyway for one hour.
 
+## Move to Applications
+
+`SuggestMove(s path) → s` (silica-desktop#255): for an app bundle on an attached disk image
+(the daemon's record of attached volumes), the shell shows the alert `volume` through the
+same agent as the prompts (`PromptRequested` with the verdict `volume`): "“Name” is running from
+a disk image.", Move to Applications (the default, on top) and Not Now, stacked. On `move` the
+daemon copies the bundle into `/Applications` under its name, or the next free one ("Name
+2.app"), with the quarantine attribute (flag `0002`, agent `dev.frascella.Silica`, origin the
+image's `file://` URL), directly when the folder is writable and through the polkit helper
+otherwise (as Mustache installs); the app goes on running from the image. The result is
+`moved`, `cancel` or `failed: <reason>`; anything not a bundle on an attached image is
+`cancel` at once. The copy keeps the approval of the first launch (same id and developer key):
+it opens without asking again.
+
 `Blocked() → a(sst)` (path, name, time) lists them. `OpenAnyway(s path) → b` checks the polkit
 action `dev.silica.trust.override` (administrator password, `auth_admin`), records the approval
 and launches the app; it refuses a path that is not in the blocked list or was blocked more than
 an hour ago.
 
-The alert texts and layout are provisional until the Amalfi masters arrive (marked
-`PROVISIONAL(amalfi-gatekeeper)` in the code); the behaviour above is the reference's.
+Layout and texts are the Amalfi masters `Alerts/Gatekeeper/*` (`docs/design/amalfi/
+app-installation.md` § 1): the default button is always the trailing one (Return), Escape
+answers `cancel`. The Confirm detail names the origin's host (the image's file name for a disk
+image) and the developer (`(self-signed)`, or `unknown` for an AppImage); a block says the same
+for every reason. The behaviour above is the reference's.
 
 ## Approvals and cache
 

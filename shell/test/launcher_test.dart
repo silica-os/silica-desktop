@@ -218,7 +218,12 @@ void main() {
     final at = tester.getRect(dot);
     expect(at.right, lessThanOrEqualTo(name.left));
     expect((at.center.dy - name.center.dy).abs(), lessThan(2));
-    expect(at.width, newDotSize);
+    // Kit `Apps/Faro/Launcher Item/New`: an 8 pt dot, 4 before the name.
+    expect(at.size, const Size(8, 8));
+    expect(name.left - at.right, 4);
+    expect(newDotSize, 8);
+    // Read as "<name>, new".
+    expect(find.bySemanticsLabel('Fresh, new'), findsOneWidget);
   });
 
   testWidgets(

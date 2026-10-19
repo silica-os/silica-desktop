@@ -1,12 +1,11 @@
 // Gatekeeper's alerts (silica-desktop docs/spec/trust.md): silica-daemon's Trust1 asks the
-// shell to confirm the first launch of an app in quarantine, or to say that an app was blocked
-// (unsigned, unidentified developer, modified) or will damage the computer (revoked key). The
-// shell registers as Trust1's agent and draws the alert here, in the switcher layer, with the
-// layout of the system alert (as the authentication dialog). The behaviour is the reference's;
-// the texts are our own.
-//
-// PROVISIONAL(amalfi-gatekeeper): layout and buttons follow the authentication dialog's alert
-// until the Amalfi masters of the Gatekeeper alerts arrive from the design session.
+// shell to confirm the first launch of an app in quarantine, to say that an app was blocked
+// (unsigned, unidentified developer, modified, or not from Flathub) or will damage the computer
+// (revoked key), and to suggest moving an app started from a disk image to Applications. The
+// shell registers as Trust1's agent and draws the alert here, in the switcher layer. The
+// behaviour is the reference's; layout and texts are the Amalfi masters
+// `Alerts/Gatekeeper/{Confirm,Blocked,Malware,Disk Image}` (docs/design/amalfi/
+// app-installation.md § 1).
 
 import 'dart:async';
 
@@ -62,65 +61,144 @@ class GatekeeperRequest {
   }
 }
 
-/// What the alert says about where the app came from: a disk image, a website, an app.
-String? originLine(AppLocalizations l10n, GatekeeperRequest r) {
-  final origin = r.origin;
-  if (origin.startsWith('file://') && origin.endsWith('.sxv')) {
-    final name = Uri.decodeComponent(origin.split('/').last);
-    return l10n.gkFromImage(name.substring(0, name.length - '.sxv'.length));
+/// Where the app came from, for the Confirm detail: the host of a web origin, the file name
+/// of a disk image (a `file://` origin has no host), nothing otherwise.
+String? originLine(GatekeeperRequest r) {
+  final uri = Uri.tryParse(r.origin);
+  if (uri == null || r.origin.isEmpty) return null;
+  if (uri.scheme == 'file') {
+    final name = uri.pathSegments.where((p) => p.isNotEmpty).lastOrNull;
+    return name;
   }
-  final uri = Uri.tryParse(origin);
-  if (uri != null && (uri.scheme == 'https' || uri.scheme == 'http')) {
-    return l10n.gkFromSite(uri.host);
-  }
-  if (r.agent.isNotEmpty) return l10n.gkFromApp(r.agent);
-  return null;
+  return uri.host.isEmpty ? null : uri.host;
 }
 
-/// The texts of an alert: title, body lines, and the buttons as (choice, label, primary).
-({String title, List<String> body, List<(String, String, bool)> buttons})
+/// The alert's variant (kit `Alerts/Gatekeeper/<Variant>`).
+enum GatekeeperVariant { confirm, blocked, malware, diskImage }
+
+GatekeeperVariant variantOf(GatekeeperRequest r) => switch (r.verdict) {
+  'confirm' => GatekeeperVariant.confirm,
+  'malware' => GatekeeperVariant.malware,
+  'volume' => GatekeeperVariant.diskImage,
+  _ => GatekeeperVariant.blocked,
+};
+
+/// A button of an alert: the choice it answers, its label, its look.
+typedef GatekeeperButton = (
+  String choice,
+  String label,
+  AmalfiPushButtonVariant variant,
+);
+
+/// The texts of an alert: title, message, detail lines, the buttons left to right (the default
+/// one last) and the choice of Escape.
+({
+  String title,
+  String? message,
+  List<String> detail,
+  List<GatekeeperButton> buttons,
+  String escape,
+})
 gatekeeperTexts(AppLocalizations l10n, GatekeeperRequest r) {
   final name = r.name;
-  final developer = r.developer.isEmpty
-      ? null
-      : r.developerStatus == 'verified'
-      ? l10n.gkDeveloperVerified(r.developer)
-      : l10n.gkDeveloperSelfSigned(r.developer);
-  switch (r.verdict) {
-    case 'confirm':
+  const secondary = AmalfiPushButtonVariant.secondary;
+  const primary = AmalfiPushButtonVariant.primary;
+  switch (variantOf(r)) {
+    case GatekeeperVariant.confirm:
+      final developer = r.kind == 'appimage' || r.developer.isEmpty
+          ? l10n.gkDeveloperUnknown
+          : r.developerStatus == 'verified'
+          ? l10n.gkDeveloper(r.developer)
+          : l10n.gkDeveloperSelfSigned(r.developer);
       return (
         title: l10n.gkConfirmTitle(name),
-        body: [?originLine(l10n, r), ?developer],
-        // Cancel is the default: the safe answer (the reference's order).
-        buttons: [('cancel', l10n.cancel, true), ('open', l10n.gkOpen, false)],
+        message: null,
+        detail: [?originLine(r), developer],
+        // Cancel is the default: the safe answer.
+        buttons: [
+          ('open', l10n.gkOpen, secondary),
+          ('cancel', l10n.cancel, primary),
+        ],
+        escape: 'cancel',
       );
-    case 'malware':
+    case GatekeeperVariant.malware:
       return (
         title: l10n.gkMalwareTitle(name),
-        body: [l10n.gkMalwareBody],
+        message: l10n.gkMalwareBody,
+        detail: const [],
         buttons: [
-          ('cancel', l10n.gkDone, false),
-          ('trash', l10n.gkMoveToTrash, true),
+          ('cancel', l10n.gkDone, secondary),
+          ('trash', l10n.gkMoveToTrash, AmalfiPushButtonVariant.destructive),
         ],
+        escape: 'cancel',
       );
-    default:
-      final why = switch (r.reason) {
-        'unsigned' => l10n.gkBlockUnsigned(name),
-        'self-signed' => l10n.gkBlockSelfSigned(name),
-        'tampered' => l10n.gkBlockTampered(name),
-        _ => l10n.gkBlockInvalid(name),
-      };
-      final canOverride = r.reason == 'unsigned' || r.reason == 'self-signed';
+    case GatekeeperVariant.diskImage:
+      return (
+        title: l10n.gkVolumeTitle(name),
+        message: l10n.gkVolumeBody,
+        detail: const [],
+        buttons: [
+          ('cancel', l10n.gkNotNow, secondary),
+          ('move', l10n.gkMoveToApplications, primary),
+        ],
+        escape: 'cancel',
+      );
+    case GatekeeperVariant.blocked:
+      // One message for every reason (unsigned, self-signed, tampered, invalid, policy).
       return (
         title: l10n.gkBlockTitle(name),
-        body: [why, if (canOverride) l10n.gkBlockHint],
+        message: l10n.gkBlockBody(name),
+        detail: const [],
         buttons: [
-          ('trash', l10n.gkMoveToTrash, false),
-          ('cancel', l10n.gkDone, true),
+          ('trash', l10n.gkMoveToTrash, secondary),
+          ('cancel', l10n.gkDone, primary),
         ],
+        escape: 'cancel',
       );
   }
 }
+
+/// The measures of the Gatekeeper alerts (kit `Alerts/Gatekeeper/*`).
+abstract final class GatekeeperMetrics {
+  static const double width = 280;
+  static const EdgeInsets padding = EdgeInsets.fromLTRB(20, 24, 20, 20);
+  static const double icon = 56;
+  static const double gap = 16;
+  static const double textGap = 8;
+  static const double textBottom = 4;
+  static const double buttonGap = 8;
+  static const double buttonMin = 72;
+  static const double buttonPadding = 24;
+
+  /// The text block, and the widest row of buttons before they stack.
+  static const double content = 240;
+
+  /// The critical badge over the icon: a 24 × 20 disc at (40, 26) of the icon, the warning
+  /// glyph 16 at (4, 3) in it.
+  static const Rect badge = Rect.fromLTWH(40, 26, 24, 20);
+  static const double badgeGlyph = 16;
+}
+
+/// The width of an alert button whose label is [labelWidth] wide: `max(72, label + 24)` rounded
+/// up to 4. The label is first rounded up to the whole point with half a point of margin: the
+/// kit measures its text a little wider than the engine does ("Move to Trash" is 88.0 there,
+/// 87.5 here), and the masters' widths (72, 80, 116, 156) come out exact.
+double gatekeeperButtonWidth(double labelWidth) {
+  final raw =
+      (labelWidth + 0.5).ceilToDouble() + GatekeeperMetrics.buttonPadding;
+  final stepped = (raw / 4).ceil() * 4.0;
+  return stepped < GatekeeperMetrics.buttonMin
+      ? GatekeeperMetrics.buttonMin
+      : stepped;
+}
+
+/// Whether two buttons of these widths stack (each 240 wide, the default on top): when the pair
+/// is wider than 240.
+bool gatekeeperStacks(List<double> widths) =>
+    widths.length > 1 &&
+    widths.fold<double>(0, (a, w) => a + w) +
+            GatekeeperMetrics.buttonGap * (widths.length - 1) >
+        GatekeeperMetrics.content;
 
 /// Where the prompts come from: the daemon, or a fake in the tests.
 abstract class GatekeeperSource {
@@ -311,103 +389,187 @@ class GatekeeperAlert extends StatelessWidget {
   final IconSource? icon;
   final void Function(String choice) onChoice;
 
+  double _labelWidth(BuildContext context, String label) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: AmalfiPushButtonMetrics.labelStyle(
+          AmalfiControlSize.regular,
+          const Color(0xFF000000),
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return width;
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = l10nOf(context);
     final colors = AmalfiTheme.of(context).colors;
     final texts = gatekeeperTexts(l10n, request);
-    final primary = texts.buttons.firstWhere((b) => b.$3).$1;
+    final variant = variantOf(request);
+    final critical =
+        variant == GatekeeperVariant.blocked ||
+        variant == GatekeeperVariant.malware;
+    final defaultChoice = texts.buttons.last.$1;
+    final widths = [
+      for (final b in texts.buttons)
+        gatekeeperButtonWidth(_labelWidth(context, b.$2)),
+    ];
+    final stacked = gatekeeperStacks(widths);
+    Widget button(int i, double width) {
+      final (choice, label, look) = texts.buttons[i];
+      return SizedBox(
+        width: width,
+        child: AmalfiPushButton(
+          key: ValueKey('gatekeeper $choice'),
+          label: label,
+          variant: look,
+          onPressed: () => onChoice(choice),
+        ),
+      );
+    }
+
+    final buttons = stacked
+        ? Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // The default on top.
+              for (var i = texts.buttons.length - 1; i >= 0; i--) ...[
+                if (i < texts.buttons.length - 1)
+                  const SizedBox(height: GatekeeperMetrics.buttonGap),
+                button(i, GatekeeperMetrics.content),
+              ],
+            ],
+          )
+        : Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < texts.buttons.length; i++) ...[
+                if (i > 0) const SizedBox(width: GatekeeperMetrics.buttonGap),
+                button(i, widths[i]),
+              ],
+            ],
+          );
+    final iconBox = SizedBox.square(
+      dimension: GatekeeperMetrics.icon,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: switch (icon) {
+              final icon? => SilicaIcon(
+                icon,
+                side: GatekeeperMetrics.icon,
+                dark: AmalfiTheme.of(context).isDark,
+                besideApps: true,
+              ),
+              null => Center(
+                child: AmalfiGlyph(
+                  AmalfiGlyphs.lock,
+                  size: 40,
+                  color: colors.textSecondary,
+                ),
+              ),
+            },
+          ),
+          if (critical)
+            Positioned.fromRect(
+              key: const ValueKey('gatekeeper badge'),
+              rect: GatekeeperMetrics.badge,
+              child: AmalfiAlertSurface(
+                radius: GatekeeperMetrics.badge.height / 2,
+                shadow: false,
+                child: Center(
+                  child: AmalfiGlyph(
+                    AmalfiGlyphs.warning,
+                    size: GatekeeperMetrics.badgeGlyph,
+                    color: colors.paletteTerracotta,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+    final message = texts.message;
+    final textBlock = Padding(
+      key: const ValueKey('gatekeeper text'),
+      padding: const EdgeInsets.only(bottom: GatekeeperMetrics.textBottom),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Semantics(
+            header: true,
+            child: Text(
+              texts.title,
+              key: const ValueKey('gatekeeper title'),
+              style: AmalfiType.title3(color: colors.textPrimary),
+            ),
+          ),
+          if (message != null) ...[
+            const SizedBox(height: GatekeeperMetrics.textGap),
+            Text(
+              message,
+              key: const ValueKey('gatekeeper message'),
+              style: AmalfiType.callout(color: colors.textSecondary),
+            ),
+          ],
+          if (texts.detail.isNotEmpty) ...[
+            const SizedBox(height: GatekeeperMetrics.textGap),
+            Text(
+              texts.detail.join('\n'),
+              key: const ValueKey('gatekeeper detail'),
+              style: AmalfiType.callout(color: colors.textTertiary),
+            ),
+          ],
+        ],
+      ),
+    );
     return Focus(
       autofocus: true,
       onKeyEvent: (node, event) {
         if (event is! KeyDownEvent) return KeyEventResult.ignored;
         if (event.logicalKey == LogicalKeyboardKey.escape) {
-          onChoice('cancel');
+          onChoice(texts.escape);
           return KeyEventResult.handled;
         }
         if (event.logicalKey == LogicalKeyboardKey.enter ||
             event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-          onChoice(primary);
+          onChoice(defaultChoice);
           return KeyEventResult.handled;
         }
         return KeyEventResult.ignored;
       },
-      child: SizedBox(
-        width: AmalfiAlertMetrics.width,
-        child: AmalfiGlass(
-          material: AmalfiMaterials.thick,
-          radius: AmalfiAlertMetrics.radius,
-          kind: AmalfiGlassKind.sheet,
-          child: Padding(
-            padding: AmalfiAlertMetrics.padding,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Center(
-                  child: SizedBox.square(
-                    dimension: AmalfiAlertMetrics.icon,
-                    child: switch (icon) {
-                      final icon? => SilicaIcon(
-                        icon,
-                        side: AmalfiAlertMetrics.icon,
-                        dark: false,
-                        besideApps: true,
-                      ),
-                      null => Center(
-                        child: AmalfiGlyph(
-                          request.verdict == 'confirm'
-                              ? AmalfiGlyphs.lock
-                              : AmalfiGlyphs.warning,
-                          size: 40,
-                          color: colors.textSecondary,
-                        ),
-                      ),
-                    },
-                  ),
-                ),
-                const SizedBox(height: AmalfiAlertMetrics.gap),
-                Text(
-                  texts.title,
-                  key: const ValueKey('gatekeeper title'),
-                  textAlign: TextAlign.center,
-                  style: AmalfiType.title3(color: colors.textPrimary),
-                ),
-                for (final line in texts.body) ...[
-                  const SizedBox(height: AmalfiAlertMetrics.gap),
-                  Text(
-                    line,
-                    textAlign: TextAlign.center,
-                    style: AmalfiType.callout(color: colors.textSecondary),
-                  ),
+      child: Semantics(
+        scopesRoute: true,
+        namesRoute: true,
+        explicitChildNodes: true,
+        label: texts.title,
+        child: SizedBox(
+          key: const ValueKey('gatekeeper alert'),
+          width: GatekeeperMetrics.width,
+          child: AmalfiAlertSurface(
+            radius: AmalfiAlertMetrics.radius,
+            child: Padding(
+              padding: GatekeeperMetrics.padding,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(child: iconBox),
+                  const SizedBox(height: GatekeeperMetrics.gap),
+                  textBlock,
+                  const SizedBox(height: GatekeeperMetrics.gap),
+                  Center(child: buttons),
                 ],
-                const SizedBox(height: AmalfiAlertMetrics.gap),
-                Center(
-                  child: Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: AmalfiAlertMetrics.buttonGap,
-                    runSpacing: AmalfiAlertMetrics.buttonGap,
-                    children: [
-                      for (final (choice, label, isPrimary) in texts.buttons)
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(
-                            minWidth: AmalfiAlertMetrics.buttonMinWidth,
-                          ),
-                          child: AmalfiPushButton(
-                            key: ValueKey('gatekeeper $choice'),
-                            label: label,
-                            variant: isPrimary && choice == 'trash'
-                                ? AmalfiPushButtonVariant.destructive
-                                : isPrimary
-                                ? AmalfiPushButtonVariant.primary
-                                : AmalfiPushButtonVariant.secondary,
-                            onPressed: () => onChoice(choice),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),

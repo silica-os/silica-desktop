@@ -3048,7 +3048,11 @@ class _DockState extends State<Dock> with TickerProviderStateMixin {
             place: true,
           )
         : item.missing
-        ? _drawn((body) => MissingAppIcon(side: body), side, place: false)
+        ? _drawn(
+            (body) => MissingAppIcon(side: body, name: item.label),
+            side,
+            place: false,
+          )
         : source == null
         ? const SizedBox.shrink()
         : _drawn(
@@ -3448,29 +3452,59 @@ class _LabelShadow extends CustomPainter {
       old.width != width || old.height != height || old.shadows != shadows;
 }
 
-/// The icon of a pinned app that is no longer installed: a question mark on a grey tile.
-// PROVISIONAL(amalfi-gatekeeper): until the Amalfi master of the Dock's question mark.
+/// The icon of a pinned app that is no longer installed (kit `Dock/Tile/Missing`): in the icon
+/// canvas of [side] (60 at the default size), a 48/60 squircle (radius 12/60, smoothing 0.6)
+/// with a 1 pt inner border and the `question` symbol (28/60, Semibold, `Text/Tertiary`).
+/// Never a running dot; the label keeps the app's remembered name.
 class MissingAppIcon extends StatelessWidget {
-  const MissingAppIcon({super.key, required this.side});
+  const MissingAppIcon({super.key, required this.side, this.name = ''});
 
   final double side;
 
+  /// The remembered name, for the screen reader ("<name>, not installed").
+  final String name;
+
+  /// The squircle's side and radius, and the symbol's size, at the canvas of 60.
+  static const double tile = 48;
+  static const double radius = 12;
+  static const double symbol = 28;
+  static const double canvas = 60;
+
   @override
   Widget build(BuildContext context) {
-    final colors = AmalfiTheme.of(context).colors;
-    return SizedBox.square(
-      dimension: side,
-      child: DecoratedBox(
-        key: const ValueKey('dock missing app'),
-        decoration: ShapeDecoration(
-          color: colors.surfaceControlPressed,
-          shape: AmalfiSmoothBorder(radius: side * 0.225),
-        ),
+    final theme = AmalfiTheme.of(context);
+    final dark = theme.isDark;
+    final k = side / canvas;
+    return Semantics(
+      label: name.isEmpty ? null : l10nOf(context).dockNotInstalled(name),
+      child: SizedBox.square(
+        dimension: side,
         child: Center(
-          child: AmalfiSymbol(
-            'question',
-            size: side * 0.5,
-            color: colors.textSecondary,
+          child: SizedBox.square(
+            key: const ValueKey('dock missing app'),
+            dimension: tile * k,
+            child: DecoratedBox(
+              decoration: ShapeDecoration(
+                color: dark ? const Color(0xFF3A3C42) : const Color(0xFFE6E8EC),
+                shape: AmalfiSmoothBorder(
+                  radius: radius * k,
+                  side: BorderSide(
+                    color: dark
+                        ? const Color(0x1AFFFFFF)
+                        : const Color(0x14000000),
+                    strokeAlign: BorderSide.strokeAlignInside,
+                  ),
+                ),
+              ),
+              child: Center(
+                child: AmalfiSymbol(
+                  'question',
+                  weight: AmalfiSymbolWeight.semibold,
+                  size: symbol * k,
+                  color: theme.colors.textTertiary,
+                ),
+              ),
+            ),
           ),
         ),
       ),

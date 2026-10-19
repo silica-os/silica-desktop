@@ -1,6 +1,5 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
-
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -1237,67 +1236,14 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String gkFromImage(String image) {
-    return 'It comes from the disk image “$image”.';
-  }
-
-  @override
-  String gkFromSite(String site) {
-    return 'It was downloaded from $site.';
-  }
-
-  @override
-  String gkFromApp(String agent) {
-    return 'It was saved by $agent.';
-  }
-
-  @override
-  String gkDeveloperVerified(String developer) {
-    return 'Developer: $developer (identified).';
-  }
-
-  @override
-  String gkDeveloperSelfSigned(String developer) {
-    return 'Developer: $developer (not identified).';
-  }
-
-  @override
   String gkBlockTitle(String app) {
     return '“$app” Not Opened';
   }
 
   @override
-  String gkBlockUnsigned(String app) {
-    return 'Silica cannot verify that “$app” is free of malware: it is not signed by its developer.';
-  }
-
-  @override
-  String gkBlockSelfSigned(String app) {
-    return 'Silica cannot verify that “$app” is free of malware: its developer is not identified.';
-  }
-
-  @override
-  String gkBlockTampered(String app) {
-    return '“$app” was modified after its developer signed it, or it is damaged.';
-  }
-
-  @override
-  String gkBlockInvalid(String app) {
-    return '“$app” is not a valid app.';
-  }
-
-  @override
-  String get gkBlockHint =>
-      'If you trust it, you can open it from Privacy & Security in Settings.';
-
-  @override
   String gkMalwareTitle(String app) {
     return '“$app” will damage your computer.';
   }
-
-  @override
-  String get gkMalwareBody =>
-      'Its developer’s key was revoked. You should move it to the Trash.';
 
   @override
   String get gkOpen => 'Open';
@@ -1307,4 +1253,51 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get gkMoveToTrash => 'Move to Trash';
+
+  @override
+  String gkDeveloper(String developer) {
+    return 'Developer: $developer';
+  }
+
+  @override
+  String gkDeveloperSelfSigned(String developer) {
+    return 'Developer: $developer (self-signed)';
+  }
+
+  @override
+  String get gkDeveloperUnknown => 'Developer: unknown';
+
+  @override
+  String gkBlockBody(String app) {
+    return 'Silica cannot verify that “$app” is free of malware or has not been modified.';
+  }
+
+  @override
+  String get gkMalwareBody =>
+      'Its developer’s key was revoked. Move it to the Trash.';
+
+  @override
+  String gkVolumeTitle(String app) {
+    return '“$app” is running from a disk image.';
+  }
+
+  @override
+  String get gkVolumeBody =>
+      'Move it to Applications to keep it after the disk image is ejected.';
+
+  @override
+  String get gkMoveToApplications => 'Move to Applications';
+
+  @override
+  String get gkNotNow => 'Not Now';
+
+  @override
+  String dockNotInstalled(String name) {
+    return '$name, not installed';
+  }
+
+  @override
+  String launcherNewApp(String name) {
+    return '$name, new';
+  }
 }

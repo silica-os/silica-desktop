@@ -1,6 +1,5 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
-
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -1239,67 +1238,14 @@ class AppLocalizationsIt extends AppLocalizations {
   }
 
   @override
-  String gkFromImage(String image) {
-    return 'Proviene dall’immagine disco “$image”.';
-  }
-
-  @override
-  String gkFromSite(String site) {
-    return 'È stata scaricata da $site.';
-  }
-
-  @override
-  String gkFromApp(String agent) {
-    return 'È stata salvata da $agent.';
-  }
-
-  @override
-  String gkDeveloperVerified(String developer) {
-    return 'Sviluppatore: $developer (identificato).';
-  }
-
-  @override
-  String gkDeveloperSelfSigned(String developer) {
-    return 'Sviluppatore: $developer (non identificato).';
-  }
-
-  @override
   String gkBlockTitle(String app) {
     return '“$app” non è stata aperta';
   }
 
   @override
-  String gkBlockUnsigned(String app) {
-    return 'Silica non può verificare che “$app” sia priva di malware: non è firmata dal suo sviluppatore.';
-  }
-
-  @override
-  String gkBlockSelfSigned(String app) {
-    return 'Silica non può verificare che “$app” sia priva di malware: il suo sviluppatore non è identificato.';
-  }
-
-  @override
-  String gkBlockTampered(String app) {
-    return '“$app” è stata modificata dopo la firma dello sviluppatore, oppure è danneggiata.';
-  }
-
-  @override
-  String gkBlockInvalid(String app) {
-    return '“$app” non è un’app valida.';
-  }
-
-  @override
-  String get gkBlockHint =>
-      'Se ti fidi, puoi aprirla da Privacy e sicurezza nelle Impostazioni.';
-
-  @override
   String gkMalwareTitle(String app) {
     return '“$app” danneggerà il computer.';
   }
-
-  @override
-  String get gkMalwareBody =>
-      'La chiave del suo sviluppatore è stata revocata. Ti conviene spostarla nel Cestino.';
 
   @override
   String get gkOpen => 'Apri';
@@ -1309,4 +1255,51 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get gkMoveToTrash => 'Sposta nel Cestino';
+
+  @override
+  String gkDeveloper(String developer) {
+    return 'Sviluppatore: $developer';
+  }
+
+  @override
+  String gkDeveloperSelfSigned(String developer) {
+    return 'Sviluppatore: $developer (autofirmata)';
+  }
+
+  @override
+  String get gkDeveloperUnknown => 'Sviluppatore: sconosciuto';
+
+  @override
+  String gkBlockBody(String app) {
+    return 'Silica non può verificare che “$app” sia priva di malware o non sia stata modificata.';
+  }
+
+  @override
+  String get gkMalwareBody =>
+      'La chiave del suo sviluppatore è stata revocata. Spostala nel Cestino.';
+
+  @override
+  String gkVolumeTitle(String app) {
+    return '“$app” è in esecuzione da un’immagine disco.';
+  }
+
+  @override
+  String get gkVolumeBody =>
+      'Spostala in Applicazioni per tenerla dopo l’espulsione dell’immagine disco.';
+
+  @override
+  String get gkMoveToApplications => 'Sposta in Applicazioni';
+
+  @override
+  String get gkNotNow => 'Non ora';
+
+  @override
+  String dockNotInstalled(String name) {
+    return '$name, non installata';
+  }
+
+  @override
+  String launcherNewApp(String name) {
+    return '$name, nuova';
+  }
 }
