@@ -167,13 +167,28 @@ pub fn at(unix: i64, offset: i64) -> LocalTime {
     }
 }
 
+/// The local zone's UTC offset at `unix` seconds.
+pub fn offset_at(unix: i64) -> i64 {
+    zone_file()
+        .and_then(|d| offset_in_tzif(&d, unix))
+        .unwrap_or(0)
+}
+
 /// The local time now.
 pub fn now() -> LocalTime {
+    local_at(unix_now())
+}
+
+/// The local time at `unix` seconds.
+pub fn local_at(unix: i64) -> LocalTime {
+    at(unix, offset_at(unix))
+}
+
+/// The epoch seconds of today's local midnight.
+pub fn midnight_unix() -> i64 {
     let unix = unix_now();
-    let offset = zone_file()
-        .and_then(|d| offset_in_tzif(&d, unix))
-        .unwrap_or(0);
-    at(unix, offset)
+    let offset = offset_at(unix);
+    (unix + offset).div_euclid(86_400) * 86_400 - offset
 }
 
 impl LocalTime {

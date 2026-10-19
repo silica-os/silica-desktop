@@ -98,6 +98,7 @@ impl Shell {
             ui.request_paint(*v);
         }
         dock::settings_changed(ui, &self.dock, settings);
+        notifications::settings_changed(&self.notes, settings);
         let mut l = self.lock.borrow_mut();
         l.wallpaper = choice;
         if let Some(h) = settings
