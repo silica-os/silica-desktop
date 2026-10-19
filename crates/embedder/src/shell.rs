@@ -61,6 +61,9 @@ pub struct ShellLink {
     serial: std::cell::Cell<u64>,
     /// The frontmost app's menus, as last sent to Dart (`appMenu`).
     app_menu: Value,
+    /// The states Ossido announced (`broadcast`), kept for `states`: the ones sent before Dart
+    /// listened (a shell started again while the session is locked) would be lost.
+    states: std::collections::BTreeMap<String, String>,
     /// The popup menu whose rows are arriving.
     popup: Option<PopupBuild>,
 }
@@ -90,6 +93,7 @@ impl ShellLink {
             thumbnails: std::cell::RefCell::new(Vec::new()),
             serial: std::cell::Cell::new(0),
             app_menu: Value::Null,
+            states: std::collections::BTreeMap::new(),
             popup: None,
         }
     }
@@ -164,6 +168,13 @@ impl ShellLink {
         self.focused = identifier;
         serde_json::to_vec(&json!({ "method": "focused", "args": self.focused }))
             .unwrap_or_default()
+    }
+
+    /// Ossido announced a state (at most 64 topics, like Ossido keeps).
+    pub fn remember_state(&mut self, topic: &str, value: &str) {
+        if self.states.contains_key(topic) || self.states.len() < 64 {
+            self.states.insert(topic.to_owned(), value.to_owned());
+        }
     }
 
     /// The frontmost app's menus changed (`menu::shell_message`): kept for `appMenu`, the
@@ -337,6 +348,7 @@ impl ShellLink {
             Some("thumbnail") => success(json!(self.request_thumbnail(&text("id")))),
             Some("focused") => success(json!(self.focused)),
             Some("appMenu") => success(self.app_menu.clone()),
+            Some("states") => success(json!(self.states)),
             Some("activate") => {
                 let sent = self.manager.as_ref().is_some_and(|manager| {
                     manager.activate(text("id"));
@@ -476,5 +488,18 @@ mod tests {
         assert_eq!(args["rows"][0]["label"], "Copy");
         // Taken: a second end finds nothing.
         assert!(link.end_popup_menu(4).is_none());
+    }
+
+    #[test]
+    fn the_states_announced_before_dart_listened_are_kept_for_it() {
+        let mut link = ShellLink::new(None, None);
+        link.remember_state("session.locked", "1");
+        link.remember_state("session.locked", "0");
+        link.remember_state("screensaver.active", "");
+        assert_eq!(
+            link.states.get("session.locked").map(String::as_str),
+            Some("0")
+        );
+        assert_eq!(link.states.len(), 2);
     }
 }

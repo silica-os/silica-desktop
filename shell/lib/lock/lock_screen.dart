@@ -158,6 +158,8 @@ class _LockControllerState extends State<LockController> {
     super.initState();
     ShellChannel.instance.states.addListener(_changed);
     _changed();
+    // A shell started again with the session locked missed `session.locked`: pull the states.
+    unawaited(ShellChannel.instance.refresh());
   }
 
   @override

@@ -357,6 +357,31 @@ void main() {
     expect(asked, 1);
   });
 
+  testWidgets('a shell that missed session.locked pulls the states and asks', (
+    tester,
+  ) async {
+    var asked = 0;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      ShellChannel.channel,
+      (call) async => call.method == 'states' ? {'session.locked': '1'} : null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        ShellChannel.channel,
+        null,
+      ),
+    );
+    await pumpSaver(
+      tester,
+      take: () async {
+        asked++;
+        return true;
+      },
+    );
+    await tester.pump();
+    expect(asked, 1);
+  });
+
   testWidgets('the right password releases the lock through the embedder', (
     tester,
   ) async {

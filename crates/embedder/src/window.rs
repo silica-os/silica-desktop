@@ -3508,6 +3508,7 @@ impl SessionLockHandler for App {
     fn locked(&mut self, _: &Connection, qh: &QueueHandle<Self>, session_lock: SessionLock) {
         let Some(output) = self.output_state.outputs().next() else {
             warn!("session lock: no output");
+            self.release_lock();
             return;
         };
         let size = self
@@ -3521,6 +3522,7 @@ impl SessionLockHandler for App {
                 )
             });
         let Some(engine) = &self.engine else {
+            self.release_lock();
             return;
         };
         let id = self.next_view;
@@ -3534,12 +3536,14 @@ impl SessionLockHandler for App {
             && let Err(err) = gl.add_view(id, view.surface.wl_surface(), view.physical())
         {
             warn!("lock view: {err}");
+            self.release_lock();
             return;
         }
         if let Some(vulkan) = engine.vulkan()
             && let Err(err) = vulkan.add_view(id, view.surface.wl_surface())
         {
             warn!("lock view: {err}");
+            self.release_lock();
             return;
         }
         self.glass.insert(
@@ -4347,11 +4351,14 @@ impl wayland_client::Dispatch<SilicaShellManagerV1, ()> for App {
                 height,
             } => app.shell.thumbnail_ready(&identifier, width, height),
             // The state announced by a shell component (Control Center open…).
-            Event::Broadcast { topic, value } => serde_json::to_vec(&serde_json::json!({
+            Event::Broadcast { topic, value } => {
+                app.shell.remember_state(&topic, &value);
+                serde_json::to_vec(&serde_json::json!({
                 "method": "broadcast",
                 "args": { "topic": topic, "value": value },
             }))
-            .unwrap_or_default(),
+                .unwrap_or_default()
+            }
             // A press outside the open menu or panel ended it (#149).
             // With several layers in this engine, the view whose transient ended.
             Event::Dismissed { surface } => serde_json::to_vec(&serde_json::json!({

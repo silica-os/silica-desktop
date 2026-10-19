@@ -365,6 +365,10 @@ fn a_locked_session_draws_and_feeds_only_the_lock_surface_and_stays_locked() {
     let mut again = LockerProcess::start(&ossido.wayland, true);
     assert!(again.wait_for("LOCKED!"));
     assert_eq!(lock_info(&ossido)["locker"], true);
+    // Its lock surface is mapped: the black screen is white again (silica-desktop#252).
+    wait_until("the new lock surface is drawn", || {
+        pixel(&screenshot(&ossido), 40, 60) == [255, 255, 255, 255]
+    });
     again.say("unlock");
     assert!(again.wait_for("UNLOCKED"));
     wait_until("the session is unlocked", || {

@@ -267,6 +267,15 @@ class ShellChannel {
       appMenu.value = AppMenuState.fromJson(
         await channel.invokeMethod<Object?>('appMenu'),
       );
+      final pulled = await channel.invokeMethod<Object?>('states');
+      if (pulled is Map) {
+        // The states announced before Dart listened (a shell started again with the
+        // session locked): what Ossido said is the latest.
+        states.value = {
+          ...states.value,
+          for (final entry in pulled.entries) '${entry.key}': '${entry.value}',
+        };
+      }
     } on MissingPluginException {
       // Outside Silica.
     }
