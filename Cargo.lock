@@ -2873,6 +2873,7 @@ dependencies = [
  "libvetro",
  "serde_json",
  "silica-control",
+ "silica-protocols",
  "skia-safe",
  "tracing",
  "tracing-subscriber",

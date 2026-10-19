@@ -8,6 +8,7 @@
 //! `silica-shell --preview-lock PATH [W H]` renders the lock screen headless to a PNG.
 
 mod lock;
+mod menubar;
 mod time;
 mod wallpaper;
 
@@ -25,6 +26,10 @@ pub const APP_ID: &str = "dev.silica.Shell";
 /// Everything the shell's modules share.
 struct Shell {
     lock: lock::Shared,
+    bar: menubar::Shared,
+    /// The desktop wallpaper and its surfaces.
+    wallpaper: Rc<RefCell<Option<wallpaper::Choice>>>,
+    backgrounds: RefCell<Vec<vetro_lib::core::ViewId>>,
 }
 
 impl Shell {
@@ -34,21 +39,35 @@ impl Shell {
             hour24: true,
             ..lock::LockState::default()
         };
+        let bar = menubar::BarState {
+            user: lock.user.clone(),
+            hour24: true,
+            ..menubar::BarState::default()
+        };
         Shell {
             lock: Rc::new(RefCell::new(lock)),
+            bar: Rc::new(RefCell::new(bar)),
+            wallpaper: Rc::new(RefCell::new(None)),
+            backgrounds: RefCell::new(Vec::new()),
         }
     }
 
     /// The settings changed (or arrived): the wallpaper and the clock format follow them.
-    fn settings_changed(&self, ui: &Ui, settings: &vetro_lib::services::settings::SettingsMap) {
+    fn settings_changed(&self, ui: &mut Ui, settings: &vetro_lib::services::settings::SettingsMap) {
         let dark = ui.appearance.dark;
+        let choice = wallpaper::choice(settings, dark);
+        *self.wallpaper.borrow_mut() = choice.clone();
+        for v in self.backgrounds.borrow().iter() {
+            ui.request_paint(*v);
+        }
         let mut l = self.lock.borrow_mut();
-        l.wallpaper = wallpaper::choice(settings, dark);
+        l.wallpaper = choice;
         if let Some(h) = settings
             .get("menubar.clock.hour24")
             .and_then(vetro_lib::services::settings::SettingValue::as_bool)
         {
             l.hour24 = h;
+            self.bar.borrow_mut().hour24 = h;
         }
     }
 
@@ -66,10 +85,24 @@ impl Shell {
             AppEvent::Shell(ShellEvent::Command(id)) if id == "lock.now" => {
                 lock::lock(ui, &self.lock);
             }
+            AppEvent::Shell(ShellEvent::AppMenu {
+                app_id,
+                serial,
+                json,
+            }) => menubar::set_app_menu(ui, &self.bar, app_id.clone(), *serial, json),
             AppEvent::Quit => ui.request(vetro_lib::core::Request::Quit),
             _ => {}
         }
     }
+}
+
+/// Updates the clock at the next minute, and again after that.
+fn schedule_clock(ui: &mut Ui, shell: Rc<Shell>) {
+    let wait = 60.0 - f64::from(time::now().second.min(59));
+    ui.after(wait, move |ui| {
+        menubar::tick_clock(ui, &shell.bar);
+        schedule_clock(ui, shell.clone());
+    });
 }
 
 fn preview_lock(args: &[String]) -> Option<i32> {
@@ -150,6 +183,15 @@ fn main() {
             std::mem::forget(sub);
         }
         ui.connect_shell();
+        if shell.wallpaper.borrow().is_none() {
+            let choice = wallpaper::choice(&Default::default(), ui.appearance.dark);
+            *shell.wallpaper.borrow_mut() = choice.clone();
+            shell.lock.borrow_mut().wallpaper = choice;
+        }
+        *shell.backgrounds.borrow_mut() = wallpaper::open_background(ui, &shell.wallpaper);
+        menubar::open(ui, &shell.bar);
+        // The menu bar's clock, each minute on the minute.
+        schedule_clock(ui, shell.clone());
     });
     if let Err(e) = r {
         eprintln!("silica-shell: {e}");

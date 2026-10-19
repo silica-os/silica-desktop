@@ -129,6 +129,91 @@ pub fn fill_rect(w: f32, h: f32, area: Rect) -> Rect {
     )
 }
 
+/// The desktop's background surface (one per output): the wallpaper, filling the screen.
+pub struct BackgroundView {
+    /// The choice to draw (shared with the shell's settings).
+    pub choice: std::rc::Rc<std::cell::RefCell<Option<Choice>>>,
+}
+
+impl vetro_lib::core::Widget for BackgroundView {
+    fn kind(&self) -> &'static str {
+        "Wallpaper"
+    }
+
+    fn measure(
+        &mut self,
+        _cx: &mut vetro_lib::core::LayoutCx<'_>,
+        p: vetro_lib::core::Proposal,
+    ) -> vetro_lib::geom::Size {
+        p.replacing_unspecified(vetro_lib::geom::Size::new(1920.0, 1200.0))
+    }
+
+    fn paint(&mut self, cx: &mut vetro_lib::core::PaintCx<'_>) {
+        use vetro_lib::shape::Shape;
+        use vetro_lib::style::Style;
+        let r = cx.bounds();
+        let fallback = Color::rgb(0x1b, 0x1c, 0x1f);
+        match self.choice.borrow().as_ref() {
+            Some(Choice::Image(path)) => match image(path) {
+                Some(img) => {
+                    let to = fill_rect(img.width() as f32, img.height() as f32, r);
+                    cx.rec.push_clip(r, Shape::RECT);
+                    cx.rec.image("Wallpaper", to, img, 1.0);
+                    cx.rec.pop();
+                }
+                None => cx
+                    .rec
+                    .layer("Wallpaper", r, Shape::RECT, Style::fill(fallback)),
+            },
+            Some(Choice::Color(c)) => cx.rec.layer("Wallpaper", r, Shape::RECT, Style::fill(*c)),
+            None => cx
+                .rec
+                .layer("Wallpaper", r, Shape::RECT, Style::fill(fallback)),
+        }
+    }
+}
+
+/// Opens the background surfaces; returns their views (repainted when the choice changes).
+pub fn open_background(
+    ui: &mut vetro_lib::core::Ui,
+    choice: &std::rc::Rc<std::cell::RefCell<Option<Choice>>>,
+) -> Vec<vetro_lib::core::ViewId> {
+    use vetro_lib::core::window::{Edges, KeyboardMode, Layer};
+    use vetro_lib::core::{Prop, Value, WindowKind};
+    let outputs: Vec<(Option<String>, vetro_lib::geom::Size)> = if ui.outputs().is_empty() {
+        vec![(None, vetro_lib::geom::Size::new(1920.0, 1200.0))]
+    } else {
+        ui.outputs()
+            .iter()
+            .map(|o| (Some(o.name.clone()), o.size))
+            .collect()
+    };
+    let mut views = Vec::new();
+    for (name, size) in outputs {
+        let w = ui.create_window(
+            WindowKind::Shell {
+                layer: Layer::Background,
+                anchor: Edges::TOP | Edges::BOTTOM | Edges::LEFT | Edges::RIGHT,
+                exclusive: -1,
+                margin: [0; 4],
+                keyboard: KeyboardMode::None,
+                namespace: "wallpaper".into(),
+                output: name,
+            },
+            size,
+        );
+        let v = ui.create(BackgroundView {
+            choice: choice.clone(),
+        });
+        let _ = ui.set(v, Prop::MaxWidth, Value::from(f32::INFINITY));
+        let _ = ui.set(v, Prop::MaxHeight, Value::from(f32::INFINITY));
+        ui.set_content(w, v);
+        ui.show_window(w);
+        views.push(v);
+    }
+    views
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
