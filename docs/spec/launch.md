@@ -52,7 +52,7 @@ they are.
 | | |
 | --- | --- |
 | Namespaces | `--unshare-all --share-net` when `network = true` (otherwise no network), `--die-with-parent`, `--new-session` |
-| `/usr` | the runtime's files, read-only: the image's `/usr` for `dev.silica.Platform//1`, `/var/lib/flatpak/runtime/<name>/x86_64/<branch>/active/files` (or the user installation) for a Flatpak runtime, nothing but the loader for `none` |
+| `/usr` | the runtime's files, read-only: for `dev.silica.Platform//1` the Flatpak runtime of that name when it is installed (built from `data/flatpak/dev.silica.Platform.yml`, `cargo xtask platform-runtime --build`; its embedder `/usr/libexec/silica/silica-app` starts the app, and `SILICA_ASSETS` and `SILICA_ICONS_DIR` are bound at their paths), else the image's `/usr`, `/var/lib/flatpak/runtime/<name>/x86_64/<branch>/active/files` (or the user installation) for a Flatpak runtime, nothing but the loader for `none` |
 | `/lib`, `/lib64`, `/bin`, `/sbin` | links into `/usr`, as in Fedora and the freedesktop runtime |
 | `/etc` | the runtime's `etc` (the image's `/etc` read-only for `dev.silica.Platform`), with the host's `passwd`, `group`, `resolv.conf`, `hosts`, `localtime`, `machine-id` |
 | `/app` | the bundle's `Contents/`, read-only |

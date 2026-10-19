@@ -1,0 +1,81 @@
+# dev.silica.Platform//1 as a Flatpak runtime (silica-desktop#258; silica-os docs/app-bundles.md
+# § 2): what a Flutter app bundle needs on any distribution, on top of the freedesktop runtime.
+# Its files are the image's /usr on Silica OS when this runtime is not installed: silica-launch
+# prefers the installed runtime (docs/spec/launch.md).
+#
+#   cargo xtask platform-runtime          writes generated-cargo-sources.json (from Cargo.lock)
+#   cargo xtask platform-runtime --build  and runs flatpak-builder into target/flatpak/repo
+#
+# Contents: the Silica embedder (/usr/libexec/silica/silica-embedder) and its launcher
+# silica-app, the Flutter release engine (/usr/lib/silica/engine), on
+# org.freedesktop.Platform 24.08 (Mesa through its GL extension, fonts, Wayland, Vulkan loader,
+# xkbcommon). After silica-desktop#254: libvetro and Skia instead of the engine.
+id: dev.silica.Sdk
+id-platform: dev.silica.Platform
+branch: '1'
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+build-runtime: true
+separate-locales: false
+inherit-extensions:
+  - org.freedesktop.Platform.GL
+  - org.freedesktop.Platform.GL32
+  - org.freedesktop.Platform.Timezones
+  - org.freedesktop.Platform.VAAPI.Intel
+  - org.freedesktop.Platform.codecs-extra
+platform-extensions:
+  - org.freedesktop.Platform.Locale
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+cleanup-platform:
+  - /include
+  - /lib/pkgconfig
+  - /share/pkgconfig
+modules:
+  # The Flutter engine in release mode, built once per Flutter version (silica-packages
+  # docs/engine.md) and published as a release asset there.
+  - name: flutter-engine
+    buildsystem: simple
+    build-commands:
+      - install -Dm 0644 libflutter_engine.so /usr/lib/silica/engine/libflutter_engine.so
+      - install -Dm 0644 icudtl.dat /usr/lib/silica/engine/icudtl.dat
+      - install -Dm 0644 LICENSE /usr/share/licenses/silica-flutter-engine/LICENSE
+      - install -Dm 0644 NOTICES /usr/share/licenses/silica-flutter-engine/NOTICES
+    sources:
+      - type: archive
+        url: https://github.com/silica-os/silica-packages/releases/download/engine-3.47.7/silica-flutter-engine-deb287481e3ce9468f3434937ced4240a70539ca-x86_64.tar.zst
+        sha256: 38433f4a30355a14463c680f095ee312c52c36f60d81282d0b325297b115a44e
+        only-arches:
+          - x86_64
+
+  # The embedder, from this source tree, with the crates vendored offline.
+  - name: silica-embedder
+    buildsystem: simple
+    build-options:
+      env:
+        CARGO_HOME: /run/build/silica-embedder/cargo
+        CARGO_NET_OFFLINE: 'true'
+    build-commands:
+      - cargo build --release --offline --locked -p silica-embedder
+      - install -Dm 0755 target/release/silica-embedder /usr/libexec/silica/silica-embedder
+      - install -Dm 0755 silica-app /usr/libexec/silica/silica-app
+      - install -Dm 0644 LICENSE-MIT /usr/share/licenses/silica-embedder/LICENSE-MIT
+      - install -Dm 0644 LICENSE-APACHE /usr/share/licenses/silica-embedder/LICENSE-APACHE
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - target
+          - shell/build
+          - .git
+      - generated-cargo-sources.json
+      - type: inline
+        dest-filename: silica-app
+        contents: |
+          #!/bin/sh
+          # silica-app: the embedder with the runtime's release engine (as on Silica OS).
+          exec /usr/libexec/silica/silica-embedder --engine /usr/lib/silica/engine \
+            --renderer "${SILICA_RENDERER:-vulkan}" "$@"

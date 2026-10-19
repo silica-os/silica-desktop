@@ -4,3 +4,4 @@
 
 # Spectrograms rendered by tools/sounds/synth.py --spectrograms (inspection only).
 /tools/sounds/candidates/*.png
+/data/flatpak/generated-cargo-sources.json

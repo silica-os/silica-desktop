@@ -128,7 +128,20 @@ pub fn resolve_runtime(runtime: &Runtime, session: &Session) -> Result<RuntimeFi
         Runtime::None => Ok(RuntimeFiles::None),
         Runtime::Ref { name, branch } if name == silica_apps::info::PLATFORM => {
             if branch == "1" {
-                Ok(RuntimeFiles::Host)
+                // The Flatpak runtime when it is installed (silica-desktop#258), else the
+                // image's own /usr, which is the platform on Silica OS.
+                Ok(
+                    installed_runtime(session, name, branch).map_or(RuntimeFiles::Host, |files| {
+                        RuntimeFiles::Flatpak {
+                            files,
+                            gl: installed_runtime(
+                                session,
+                                "org.freedesktop.Platform.GL.default",
+                                "24.08",
+                            ),
+                        }
+                    }),
+                )
             } else {
                 Err(format!(
                     "{name}//{branch} is not this Silica's platform (it provides branch 1)"
@@ -136,19 +149,7 @@ pub fn resolve_runtime(runtime: &Runtime, session: &Session) -> Result<RuntimeFi
             }
         }
         Runtime::Ref { name, branch } => {
-            let find = |name: &str, branch: &str| {
-                session
-                    .flatpak_dirs
-                    .iter()
-                    .map(|d| {
-                        d.join("runtime")
-                            .join(name)
-                            .join("x86_64")
-                            .join(branch)
-                            .join("active/files")
-                    })
-                    .find(|p| p.is_dir())
-            };
+            let find = |name: &str, branch: &str| installed_runtime(session, name, branch);
             let files = find(name, branch).ok_or_else(|| {
                 format!("the runtime {name}//{branch} is not installed (flatpak install flathub {name}//{branch})")
             })?;
@@ -157,6 +158,24 @@ pub fn resolve_runtime(runtime: &Runtime, session: &Session) -> Result<RuntimeFi
         }
     }
 }
+
+/// The files of an installed Flatpak runtime (the user's installation first).
+fn installed_runtime(session: &Session, name: &str, branch: &str) -> Option<PathBuf> {
+    session
+        .flatpak_dirs
+        .iter()
+        .map(|d| {
+            d.join("runtime")
+                .join(name)
+                .join("x86_64")
+                .join(branch)
+                .join("active/files")
+        })
+        .find(|p| p.is_dir())
+}
+
+/// The embedder inside the Flatpak runtime of the Silica platform.
+pub const RUNTIME_EMBEDDER: &str = "/usr/libexec/silica/silica-app";
 
 /// The command that starts the app inside (`/app` is the bundle's `Contents/`) or outside
 /// (`contents` given) the sandbox.
@@ -361,6 +380,13 @@ pub fn bwrap_args(sb: &Sandbox<'_>) -> Vec<String> {
                     Path::new("/usr/lib/x86_64-linux-gnu/GL/default"),
                 );
             }
+            // Silica's shared assets and icons (SILICA_ASSETS, SILICA_ICONS_DIR), which apps read
+            // where the session says, also when the runtime is not the image's /usr.
+            for key in ["SILICA_ASSETS", "SILICA_ICONS_DIR"] {
+                if let Some(path) = sb.session.env.get(key).filter(|p| p.starts_with('/')) {
+                    bind(&mut a, "--ro-bind-try", Path::new(path), Path::new(path));
+                }
+            }
             for file in [
                 "passwd",
                 "group",
@@ -521,10 +547,17 @@ pub fn bwrap_args(sb: &Sandbox<'_>) -> Vec<String> {
     }
     a.extend(["--chdir".to_owned(), s(home)]);
     a.push("--".to_owned());
+    // The embedder is the runtime's own when the platform is a Flatpak runtime.
+    let embedder = match &sb.runtime {
+        RuntimeFiles::Flatpak { .. } if sb.info.runtime.is_platform() => {
+            PathBuf::from(RUNTIME_EMBEDDER)
+        }
+        _ => sb.session.embedder.clone(),
+    };
     a.extend(app_command(
         sb.info,
         Path::new("/app"),
-        &sb.session.embedder,
+        &embedder,
         sb.targets,
     ));
     a
@@ -777,6 +810,42 @@ mod tests {
             resolve_runtime(&fd, &sess),
             Ok(RuntimeFiles::Flatpak { files, gl: None })
         );
+        // The platform as an installed Flatpak runtime is preferred to the image's /usr.
+        let silica = root.join("runtime/dev.silica.Platform/x86_64/1/active/files");
+        std::fs::create_dir_all(&silica).unwrap();
+        assert_eq!(
+            resolve_runtime(&platform, &sess),
+            Ok(RuntimeFiles::Flatpak {
+                files: silica.clone(),
+                gl: None
+            })
+        );
+        let i = info("", "flutter", "dev.silica.Platform//1", "");
+        sess.env.insert(
+            "SILICA_ASSETS".into(),
+            "/usr/share/silica/silica.assets".into(),
+        );
+        let sb = Sandbox {
+            info: &i,
+            contents: Path::new("/A/Hello.app/Contents"),
+            runtime: RuntimeFiles::Flatpak {
+                files: silica.clone(),
+                gl: None,
+            },
+            session: &sess,
+            info_file: Path::new("/i"),
+            bus_socket: None,
+            registry: None,
+            targets: &[],
+            app_file: None,
+        };
+        let args = bwrap_args(&sb);
+        let dash = args.iter().position(|a| a == "--").unwrap();
+        assert_eq!(args[dash + 1], RUNTIME_EMBEDDER);
+        assert!(pairs(&args, "--ro-bind-try").contains(&(
+            "/usr/share/silica/silica.assets".into(),
+            "/usr/share/silica/silica.assets".into()
+        )));
         let missing = Runtime::parse("org.kde.Platform//6.8").unwrap();
         assert!(
             resolve_runtime(&missing, &sess)

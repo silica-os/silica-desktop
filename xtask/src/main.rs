@@ -22,6 +22,7 @@ mod bench_glass;
 mod flutter;
 mod install;
 mod os;
+mod platform_runtime;
 mod silica_assets;
 mod vm;
 
@@ -83,8 +84,11 @@ fn main() -> ExitCode {
         Some("install-portal") => install::install_portal(),
         Some("vm") => vm::vm(args.get(1..).unwrap_or_default()),
         Some("os") => os::os(args.get(1..).unwrap_or_default()),
+        Some("platform-runtime") => {
+            platform_runtime::platform_runtime(args.get(1..).unwrap_or_default())
+        }
         _ => Err(
-            "usage: cargo xtask <ci|layers|assets [check]|unsafe|run|vm|os|engine|bindings|keymap|bundle|install-app|install-portal> [arguments]"
+            "usage: cargo xtask <ci|layers|assets [check]|unsafe|run|vm|os|engine|bindings|keymap|bundle|install-app|install-portal|platform-runtime> [arguments]"
                 .to_owned(),
         ),
     };
