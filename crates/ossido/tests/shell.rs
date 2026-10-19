@@ -464,6 +464,19 @@ fn clicking_a_window_raises_only_that_window() {
     // The reference: a click raises the window under it, not the rest of its app.
     let ossido = Headless::start("shell-click");
     let _windows = three_windows(&ossido);
+    // Apart from the others: the cascade can place windows of different apps on top of each
+    // other, which would leave no point of "first" to click.
+    let first = windows(&ossido)
+        .into_iter()
+        .find(|w| w.title.as_deref() == Some("first"))
+        .unwrap();
+    ossido
+        .client()
+        .call(
+            silica_control::commands::WINDOW_MOVE,
+            json!({"id": first.id, "x": 700, "y": 450}),
+        )
+        .unwrap();
     // A point of "first" that no other window covers.
     let list = windows(&ossido);
     let frame = |title: &str| {
