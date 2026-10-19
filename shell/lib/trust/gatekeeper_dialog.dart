@@ -90,8 +90,8 @@ typedef GatekeeperButton = (
   AmalfiPushButtonVariant variant,
 );
 
-/// The texts of an alert: title, message, detail lines, the buttons left to right (the default
-/// one last) and the choice of Escape.
+/// The texts of an alert: title, message, detail lines, the buttons top to bottom (the default
+/// first, the Escape one last: components.md "Alerts (binding)") and the choice of Escape.
 ({
   String title,
   String? message,
@@ -116,8 +116,8 @@ gatekeeperTexts(AppLocalizations l10n, GatekeeperRequest r) {
         detail: [?originLine(r), developer],
         // Cancel is the default: the safe answer.
         buttons: [
-          ('open', l10n.gkOpen, secondary),
           ('cancel', l10n.cancel, primary),
+          ('open', l10n.gkOpen, secondary),
         ],
         escape: 'cancel',
       );
@@ -127,8 +127,8 @@ gatekeeperTexts(AppLocalizations l10n, GatekeeperRequest r) {
         message: l10n.gkMalwareBody,
         detail: const [],
         buttons: [
-          ('cancel', l10n.gkDone, secondary),
           ('trash', l10n.gkMoveToTrash, AmalfiPushButtonVariant.destructive),
+          ('cancel', l10n.gkDone, secondary),
         ],
         escape: 'cancel',
       );
@@ -138,8 +138,8 @@ gatekeeperTexts(AppLocalizations l10n, GatekeeperRequest r) {
         message: l10n.gkVolumeBody,
         detail: const [],
         buttons: [
-          ('cancel', l10n.gkNotNow, secondary),
           ('move', l10n.gkMoveToApplications, primary),
+          ('cancel', l10n.gkNotNow, secondary),
         ],
         escape: 'cancel',
       );
@@ -150,8 +150,8 @@ gatekeeperTexts(AppLocalizations l10n, GatekeeperRequest r) {
         message: l10n.gkBlockBody(name),
         detail: const [],
         buttons: [
-          ('trash', l10n.gkMoveToTrash, secondary),
           ('cancel', l10n.gkDone, primary),
+          ('trash', l10n.gkMoveToTrash, secondary),
         ],
         escape: 'cancel',
       );
@@ -165,12 +165,12 @@ abstract final class GatekeeperMetrics {
   static const double icon = 56;
   static const double gap = 16;
   static const double textGap = 8;
-  static const double textBottom = 4;
-  static const double buttonGap = 8;
-  static const double buttonMin = 72;
-  static const double buttonPadding = 24;
 
-  /// The text block, and the widest row of buttons before they stack.
+  /// Text → buttons.
+  static const double buttonsGap = 20;
+  static const double buttonGap = 8;
+
+  /// The text block and every button (one per row, 240 × 28).
   static const double content = 240;
 
   /// The critical badge over the icon: a 24 × 20 disc at (40, 26) of the icon, the warning
@@ -178,27 +178,6 @@ abstract final class GatekeeperMetrics {
   static const Rect badge = Rect.fromLTWH(40, 26, 24, 20);
   static const double badgeGlyph = 16;
 }
-
-/// The width of an alert button whose label is [labelWidth] wide: `max(72, label + 24)` rounded
-/// up to 4. The label is first rounded up to the whole point with half a point of margin: the
-/// kit measures its text a little wider than the engine does ("Move to Trash" is 88.0 there,
-/// 87.5 here), and the masters' widths (72, 80, 116, 156) come out exact.
-double gatekeeperButtonWidth(double labelWidth) {
-  final raw =
-      (labelWidth + 0.5).ceilToDouble() + GatekeeperMetrics.buttonPadding;
-  final stepped = (raw / 4).ceil() * 4.0;
-  return stepped < GatekeeperMetrics.buttonMin
-      ? GatekeeperMetrics.buttonMin
-      : stepped;
-}
-
-/// Whether two buttons of these widths stack (each 240 wide, the default on top): when the pair
-/// is wider than 240.
-bool gatekeeperStacks(List<double> widths) =>
-    widths.length > 1 &&
-    widths.fold<double>(0, (a, w) => a + w) +
-            GatekeeperMetrics.buttonGap * (widths.length - 1) >
-        GatekeeperMetrics.content;
 
 /// Where the prompts come from: the daemon, or a fake in the tests.
 abstract class GatekeeperSource {
@@ -389,24 +368,6 @@ class GatekeeperAlert extends StatelessWidget {
   final IconSource? icon;
   final void Function(String choice) onChoice;
 
-  double _labelWidth(BuildContext context, String label) {
-    final painter = TextPainter(
-      text: TextSpan(
-        text: label,
-        style: AmalfiPushButtonMetrics.labelStyle(
-          AmalfiControlSize.regular,
-          const Color(0xFF000000),
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-      textScaler: MediaQuery.textScalerOf(context),
-      maxLines: 1,
-    )..layout();
-    final width = painter.width;
-    painter.dispose();
-    return width;
-  }
-
   @override
   Widget build(BuildContext context) {
     final l10n = l10nOf(context);
@@ -416,46 +377,25 @@ class GatekeeperAlert extends StatelessWidget {
     final critical =
         variant == GatekeeperVariant.blocked ||
         variant == GatekeeperVariant.malware;
-    final defaultChoice = texts.buttons.last.$1;
-    final widths = [
-      for (final b in texts.buttons)
-        gatekeeperButtonWidth(_labelWidth(context, b.$2)),
-    ];
-    final stacked = gatekeeperStacks(widths);
-    Widget button(int i, double width) {
-      final (choice, label, look) = texts.buttons[i];
-      return SizedBox(
-        width: width,
-        child: AmalfiPushButton(
-          key: ValueKey('gatekeeper $choice'),
-          label: label,
-          variant: look,
-          onPressed: () => onChoice(choice),
-        ),
-      );
-    }
-
-    final buttons = stacked
-        ? Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // The default on top.
-              for (var i = texts.buttons.length - 1; i >= 0; i--) ...[
-                if (i < texts.buttons.length - 1)
-                  const SizedBox(height: GatekeeperMetrics.buttonGap),
-                button(i, GatekeeperMetrics.content),
-              ],
-            ],
-          )
-        : Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (var i = 0; i < texts.buttons.length; i++) ...[
-                if (i > 0) const SizedBox(width: GatekeeperMetrics.buttonGap),
-                button(i, widths[i]),
-              ],
-            ],
-          );
+    final defaultChoice = texts.buttons.first.$1;
+    // One button per row, 240 wide, the default on top (components.md "Alerts (binding)").
+    final buttons = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < texts.buttons.length; i++) ...[
+          if (i > 0) const SizedBox(height: GatekeeperMetrics.buttonGap),
+          SizedBox(
+            width: GatekeeperMetrics.content,
+            child: AmalfiPushButton(
+              key: ValueKey('gatekeeper ${texts.buttons[i].$1}'),
+              label: texts.buttons[i].$2,
+              variant: texts.buttons[i].$3,
+              onPressed: () => onChoice(texts.buttons[i].$1),
+            ),
+          ),
+        ],
+      ],
+    );
     final iconBox = SizedBox.square(
       dimension: GatekeeperMetrics.icon,
       child: Stack(
@@ -498,9 +438,8 @@ class GatekeeperAlert extends StatelessWidget {
       ),
     );
     final message = texts.message;
-    final textBlock = Padding(
+    final textBlock = KeyedSubtree(
       key: const ValueKey('gatekeeper text'),
-      padding: const EdgeInsets.only(bottom: GatekeeperMetrics.textBottom),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
@@ -510,6 +449,7 @@ class GatekeeperAlert extends StatelessWidget {
             child: Text(
               texts.title,
               key: const ValueKey('gatekeeper title'),
+              textAlign: TextAlign.center,
               style: AmalfiType.title3(color: colors.textPrimary),
             ),
           ),
@@ -518,6 +458,7 @@ class GatekeeperAlert extends StatelessWidget {
             Text(
               message,
               key: const ValueKey('gatekeeper message'),
+              textAlign: TextAlign.center,
               style: AmalfiType.callout(color: colors.textSecondary),
             ),
           ],
@@ -526,6 +467,7 @@ class GatekeeperAlert extends StatelessWidget {
             Text(
               texts.detail.join('\n'),
               key: const ValueKey('gatekeeper detail'),
+              textAlign: TextAlign.center,
               style: AmalfiType.callout(color: colors.textTertiary),
             ),
           ],
@@ -566,7 +508,7 @@ class GatekeeperAlert extends StatelessWidget {
                   Center(child: iconBox),
                   const SizedBox(height: GatekeeperMetrics.gap),
                   textBlock,
-                  const SizedBox(height: GatekeeperMetrics.gap),
+                  const SizedBox(height: GatekeeperMetrics.buttonsGap),
                   Center(child: buttons),
                 ],
               ),

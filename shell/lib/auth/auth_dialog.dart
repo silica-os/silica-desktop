@@ -409,17 +409,21 @@ class AuthDialogState extends State<AuthDialog>
                     ),
                   ),
                   const SizedBox(height: AmalfiAlertMetrics.gap),
+                  // The binding alert anatomy (components.md "Alerts (binding)"): centred
+                  // text, title → message 8, the default button first, one per row.
                   Text(
                     title,
                     key: const ValueKey('auth title'),
+                    textAlign: TextAlign.center,
                     style: AmalfiType.title3(color: colors.textPrimary),
                   ),
-                  const SizedBox(height: AmalfiAlertMetrics.gap),
+                  const SizedBox(height: 8),
                   Text(
                     [
                       if (message.isNotEmpty) _sentence(message),
                       _error ? l10n.authUnavailable : l10n.authPrompt,
                     ].join(' '),
+                    textAlign: TextAlign.center,
                     style: AmalfiType.callout(color: colors.textSecondary),
                   ),
                   const SizedBox(height: AmalfiAlertMetrics.gap),
@@ -440,35 +444,23 @@ class AuthDialogState extends State<AuthDialog>
                     width: double.infinity,
                     onSubmitted: (_) => _submit(),
                   ),
-                  const SizedBox(height: AmalfiAlertMetrics.gap),
-                  Center(
-                    child: Wrap(
-                      alignment: WrapAlignment.center,
-                      spacing: AmalfiAlertMetrics.buttonGap,
-                      runSpacing: AmalfiAlertMetrics.buttonGap,
-                      children: [
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(
-                            minWidth: AmalfiAlertMetrics.buttonMinWidth,
-                          ),
-                          child: AmalfiPushButton(
-                            key: const ValueKey('auth cancel'),
-                            label: l10n.cancel,
-                            onPressed: widget.onCancel,
-                          ),
-                        ),
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(
-                            minWidth: AmalfiAlertMetrics.buttonMinWidth,
-                          ),
-                          child: AmalfiPushButton(
-                            key: const ValueKey('auth allow'),
-                            label: l10n.authAllow,
-                            variant: AmalfiPushButtonVariant.primary,
-                            onPressed: _busy ? null : _submit,
-                          ),
-                        ),
-                      ],
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: 240,
+                    child: AmalfiPushButton(
+                      key: const ValueKey('auth allow'),
+                      label: l10n.authAllow,
+                      variant: AmalfiPushButtonVariant.primary,
+                      onPressed: _busy ? null : _submit,
+                    ),
+                  ),
+                  const SizedBox(height: AmalfiAlertMetrics.buttonGap),
+                  SizedBox(
+                    width: 240,
+                    child: AmalfiPushButton(
+                      key: const ValueKey('auth cancel'),
+                      label: l10n.cancel,
+                      onPressed: widget.onCancel,
                     ),
                   ),
                 ],

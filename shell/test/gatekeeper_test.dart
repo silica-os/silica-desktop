@@ -100,9 +100,9 @@ void main() {
     );
     expect(fromSite.message, isNull);
     expect(fromSite.detail, ['lemon.example.org', 'Developer: Example Ltd']);
-    // Open, then Cancel: the default is the trailing one.
-    expect(fromSite.buttons.map((b) => b.$1), ['open', 'cancel']);
-    expect(fromSite.buttons.last.$3, AmalfiPushButtonVariant.primary);
+    // Cancel, then Open: the default comes first.
+    expect(fromSite.buttons.map((b) => b.$1), ['cancel', 'open']);
+    expect(fromSite.buttons.first.$3, AmalfiPushButtonVariant.primary);
     expect(fromSite.escape, 'cancel');
     // A disk image origin names the image; no origin: the developer line only.
     expect(
@@ -137,10 +137,10 @@ void main() {
         t.message,
         'Silica cannot verify that “Hello” is free of malware or has not been modified.',
       );
-      expect(t.buttons.map((b) => b.$1), ['trash', 'cancel']);
+      expect(t.buttons.map((b) => b.$1), ['cancel', 'trash']);
     }
     final malware = gatekeeperTexts(l10n, request(3, 'malware'));
-    expect(malware.buttons.last, (
+    expect(malware.buttons.first, (
       'trash',
       'Move to Trash',
       AmalfiPushButtonVariant.destructive,
@@ -148,19 +148,7 @@ void main() {
     expect(malware.escape, 'cancel');
     final volume = gatekeeperTexts(l10n, request(4, 'volume'));
     expect(volume.title, '“Hello” is running from a disk image.');
-    expect(volume.buttons.map((b) => b.$1), ['cancel', 'move']);
-  });
-
-  test('button widths and stacking follow the rule of the masters', () {
-    expect(gatekeeperButtonWidth(20), 72);
-    expect(gatekeeperButtonWidth(90.5), 116);
-    expect(gatekeeperButtonWidth(131), 156);
-    expect(gatekeeperStacks([72, 72]), isFalse);
-    expect(gatekeeperStacks([116, 72]), isFalse);
-    // Move to Applications and Not Now: 244, stacked (the Disk Image master).
-    expect(gatekeeperStacks([156, 80]), isTrue);
-    expect(gatekeeperStacks([156, 80, 8]), isTrue);
-    expect(gatekeeperStacks([180, 72]), isTrue);
+    expect(volume.buttons.map((b) => b.$1), ['move', 'cancel']);
   });
 
   testWidgets('the shell registers, shows the oldest prompt and answers', (
