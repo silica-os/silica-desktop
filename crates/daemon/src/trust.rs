@@ -12,6 +12,7 @@ use event_listener::Event;
 use futures_lite::future;
 use silica_apps::info::Info;
 use silica_bundle::quarantine;
+pub use silica_bundle::trust::{BundleFacts, Policy, Verdict, decide_bundle};
 use silica_bundle::trust::{DeveloperStatus, Integrity, Roots, verify_bundle};
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::Value;
@@ -33,68 +34,6 @@ fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
-}
-
-/// The verdict on an app.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Verdict {
-    Allow,
-    Confirm,
-    Block,
-    Malware,
-}
-
-impl Verdict {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Verdict::Allow => "allow",
-            Verdict::Confirm => "confirm",
-            Verdict::Block => "block",
-            Verdict::Malware => "malware",
-        }
-    }
-}
-
-/// `security.appSources`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Policy {
-    Trusted,
-    Anywhere,
-}
-
-/// What the decision is made of, for a bundle.
-#[derive(Clone, Debug)]
-pub struct BundleFacts {
-    pub integrity: Integrity,
-    pub developer: DeveloperStatus,
-    pub quarantined: bool,
-    pub approved: bool,
-}
-
-/// The decision table of docs/spec/trust.md for bundles: the verdict and, for a block, why.
-pub fn decide_bundle(facts: &BundleFacts, policy: Policy) -> (Verdict, &'static str) {
-    match &facts.integrity {
-        Integrity::Invalid(_) => return (Verdict::Block, "invalid"),
-        Integrity::Tampered(_) => return (Verdict::Block, "tampered"),
-        Integrity::Unsigned | Integrity::Valid => {}
-    }
-    if facts.developer == DeveloperStatus::Revoked {
-        return (Verdict::Malware, "revoked");
-    }
-    if facts.approved {
-        return (Verdict::Allow, "");
-    }
-    let unsigned = facts.integrity == Integrity::Unsigned;
-    match (facts.developer, policy) {
-        (_, Policy::Trusted) if unsigned => (Verdict::Block, "unsigned"),
-        (DeveloperStatus::SelfSigned, Policy::Trusted) => (Verdict::Block, "self-signed"),
-        (DeveloperStatus::Verified, _) | (DeveloperStatus::SelfSigned, Policy::Anywhere)
-            if !facts.quarantined && !unsigned =>
-        {
-            (Verdict::Allow, "")
-        }
-        _ => (Verdict::Confirm, ""),
-    }
 }
 
 // ------------------------------------------------------------------------------- the store
@@ -476,6 +415,8 @@ struct State {
     store: Store,
     prompts: BTreeMap<u32, Prompt>,
     next: u32,
+    /// The bus name of the shell that draws the alerts (`RegisterAgent`).
+    agent: Option<String>,
 }
 
 struct Shared {
@@ -719,6 +660,7 @@ impl Trust {
                     store,
                     prompts: BTreeMap::new(),
                     next: 1,
+                    agent: None,
                 }),
                 answered: Event::new(),
             }),
@@ -782,6 +724,7 @@ impl Trust {
     async fn prompt(
         &self,
         path: &str,
+        #[zbus(connection)] connection: &Connection,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
     ) -> fdo::Result<String> {
         let shared = Arc::clone(&self.shared);
@@ -792,6 +735,22 @@ impl Trust {
         }
         if a.verdict == Verdict::Block {
             self.shared.note_blocked(&a);
+        }
+        // Nobody to ask (no shell, or it went away): not opened, at once.
+        let agent = self.shared.state().agent.clone();
+        let present = match agent {
+            Some(name) => match zbus::names::BusName::try_from(name.as_str()) {
+                Ok(bus_name) => fdo::DBusProxy::new(connection)
+                    .await?
+                    .name_has_owner(bus_name)
+                    .await
+                    .unwrap_or(false),
+                Err(_) => false,
+            },
+            None => false,
+        };
+        if !present {
+            return Ok("cancel".to_owned());
         }
         let id = {
             let mut state = self.shared.state();
@@ -850,6 +809,15 @@ impl Trust {
             _ => "cancel",
         };
         Ok(choice.to_owned())
+    }
+
+    /// The shell registers as the one that draws the alerts; prompts fail at once without it.
+    fn register_agent(&self, #[zbus(header)] header: zbus::message::Header<'_>) -> fdo::Result<()> {
+        let sender = header
+            .sender()
+            .ok_or_else(|| fdo::Error::Failed("no sender".to_owned()))?;
+        self.shared.state().agent = Some(sender.to_string());
+        Ok(())
     }
 
     /// The shell's answer to a prompt.
@@ -953,79 +921,6 @@ impl Trust {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn facts(integrity: Integrity, developer: DeveloperStatus, q: bool, ok: bool) -> BundleFacts {
-        BundleFacts {
-            integrity,
-            developer,
-            quarantined: q,
-            approved: ok,
-        }
-    }
-
-    #[test]
-    fn the_decision_table() {
-        use DeveloperStatus::*;
-        use Policy::*;
-        let d = |f: BundleFacts, p| decide_bundle(&f, p).0;
-        let t = || Integrity::Tampered("x".into());
-        // Verified: allowed, confirmed when in quarantine.
-        assert_eq!(
-            d(facts(Integrity::Valid, Verified, false, false), Trusted),
-            Verdict::Allow
-        );
-        assert_eq!(
-            d(facts(Integrity::Valid, Verified, true, false), Trusted),
-            Verdict::Confirm
-        );
-        assert_eq!(
-            d(facts(Integrity::Valid, Verified, true, true), Trusted),
-            Verdict::Allow
-        );
-        // Self-signed: blocked under trusted, quarantined or not, unless approved.
-        assert_eq!(
-            d(facts(Integrity::Valid, SelfSigned, false, false), Trusted),
-            Verdict::Block
-        );
-        assert_eq!(
-            d(facts(Integrity::Valid, SelfSigned, true, false), Trusted),
-            Verdict::Block
-        );
-        assert_eq!(
-            d(facts(Integrity::Valid, SelfSigned, true, true), Trusted),
-            Verdict::Allow
-        );
-        assert_eq!(
-            d(facts(Integrity::Valid, SelfSigned, true, false), Anywhere),
-            Verdict::Confirm
-        );
-        assert_eq!(
-            d(facts(Integrity::Valid, SelfSigned, false, false), Anywhere),
-            Verdict::Allow
-        );
-        // Unsigned.
-        assert_eq!(
-            decide_bundle(&facts(Integrity::Unsigned, Unsigned, false, false), Trusted),
-            (Verdict::Block, "unsigned")
-        );
-        assert_eq!(
-            d(facts(Integrity::Unsigned, Unsigned, false, false), Anywhere),
-            Verdict::Confirm
-        );
-        assert_eq!(
-            d(facts(Integrity::Unsigned, Unsigned, false, true), Trusted),
-            Verdict::Allow
-        );
-        // Tampered and revoked never open, approved or not, whatever the policy.
-        assert_eq!(
-            d(facts(t(), Unsigned, false, true), Anywhere),
-            Verdict::Block
-        );
-        assert_eq!(
-            d(facts(Integrity::Valid, Revoked, false, true), Anywhere),
-            Verdict::Malware
-        );
-    }
 
     #[test]
     fn the_store_round_trips_and_refuses_damage() {

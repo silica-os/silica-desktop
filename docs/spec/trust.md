@@ -36,9 +36,10 @@ tampered and revoked stay as they are.
 `Prompt(s path) → s choice` assesses again and, for anything but `allow`, asks the shell to
 show the alert and waits for the answer (like `Authentication1`): it emits
 `PromptRequested(u id, s verdict, a{sv} info)`; the shell draws the alert and calls
-`Answer(u id, s choice)`. `Pending() → a(usa{sv})` lists the open prompts (a shell that
-restarts shows them again). Without an answer within 10 minutes, or without a shell, the choice
-is `cancel`.
+`Answer(u id, s choice)`. The shell calls `RegisterAgent()` when it starts; without a
+registered shell that still owns its bus name, a prompt is answered `cancel` at once.
+`Pending() → a(usa{sv})` lists the open prompts (a shell that restarts shows them again).
+Without an answer within 10 minutes the choice is `cancel`.
 
 | Verdict | Alert | Choices |
 | --- | --- | --- |

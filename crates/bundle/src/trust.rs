@@ -73,6 +73,68 @@ impl Verification {
     }
 }
 
+/// The verdict on an app.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    Allow,
+    Confirm,
+    Block,
+    Malware,
+}
+
+impl Verdict {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Verdict::Allow => "allow",
+            Verdict::Confirm => "confirm",
+            Verdict::Block => "block",
+            Verdict::Malware => "malware",
+        }
+    }
+}
+
+/// `security.appSources`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Policy {
+    Trusted,
+    Anywhere,
+}
+
+/// What the decision is made of, for a bundle.
+#[derive(Clone, Debug)]
+pub struct BundleFacts {
+    pub integrity: Integrity,
+    pub developer: DeveloperStatus,
+    pub quarantined: bool,
+    pub approved: bool,
+}
+
+/// The decision table of docs/spec/trust.md for bundles: the verdict and, for a block, why.
+pub fn decide_bundle(facts: &BundleFacts, policy: Policy) -> (Verdict, &'static str) {
+    match &facts.integrity {
+        Integrity::Invalid(_) => return (Verdict::Block, "invalid"),
+        Integrity::Tampered(_) => return (Verdict::Block, "tampered"),
+        Integrity::Unsigned | Integrity::Valid => {}
+    }
+    if facts.developer == DeveloperStatus::Revoked {
+        return (Verdict::Malware, "revoked");
+    }
+    if facts.approved {
+        return (Verdict::Allow, "");
+    }
+    let unsigned = facts.integrity == Integrity::Unsigned;
+    match (facts.developer, policy) {
+        (_, Policy::Trusted) if unsigned => (Verdict::Block, "unsigned"),
+        (DeveloperStatus::SelfSigned, Policy::Trusted) => (Verdict::Block, "self-signed"),
+        (DeveloperStatus::Verified, _) | (DeveloperStatus::SelfSigned, Policy::Anywhere)
+            if !facts.quarantined && !unsigned =>
+        {
+            (Verdict::Allow, "")
+        }
+        _ => (Verdict::Confirm, ""),
+    }
+}
+
 /// The CA keys and the revoked key ids.
 #[derive(Clone, Debug, Default)]
 pub struct Roots {
@@ -285,6 +347,79 @@ pub fn verify_bundle(bundle: &Path, roots: &Roots) -> Verification {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn facts(integrity: Integrity, developer: DeveloperStatus, q: bool, ok: bool) -> BundleFacts {
+        BundleFacts {
+            integrity,
+            developer,
+            quarantined: q,
+            approved: ok,
+        }
+    }
+
+    #[test]
+    fn the_decision_table() {
+        use DeveloperStatus::*;
+        use Policy::*;
+        let d = |f: BundleFacts, p| decide_bundle(&f, p).0;
+        let t = || Integrity::Tampered("x".into());
+        // Verified: allowed, confirmed when in quarantine.
+        assert_eq!(
+            d(facts(Integrity::Valid, Verified, false, false), Trusted),
+            Verdict::Allow
+        );
+        assert_eq!(
+            d(facts(Integrity::Valid, Verified, true, false), Trusted),
+            Verdict::Confirm
+        );
+        assert_eq!(
+            d(facts(Integrity::Valid, Verified, true, true), Trusted),
+            Verdict::Allow
+        );
+        // Self-signed: blocked under trusted, quarantined or not, unless approved.
+        assert_eq!(
+            d(facts(Integrity::Valid, SelfSigned, false, false), Trusted),
+            Verdict::Block
+        );
+        assert_eq!(
+            d(facts(Integrity::Valid, SelfSigned, true, false), Trusted),
+            Verdict::Block
+        );
+        assert_eq!(
+            d(facts(Integrity::Valid, SelfSigned, true, true), Trusted),
+            Verdict::Allow
+        );
+        assert_eq!(
+            d(facts(Integrity::Valid, SelfSigned, true, false), Anywhere),
+            Verdict::Confirm
+        );
+        assert_eq!(
+            d(facts(Integrity::Valid, SelfSigned, false, false), Anywhere),
+            Verdict::Allow
+        );
+        // Unsigned.
+        assert_eq!(
+            decide_bundle(&facts(Integrity::Unsigned, Unsigned, false, false), Trusted),
+            (Verdict::Block, "unsigned")
+        );
+        assert_eq!(
+            d(facts(Integrity::Unsigned, Unsigned, false, false), Anywhere),
+            Verdict::Confirm
+        );
+        assert_eq!(
+            d(facts(Integrity::Unsigned, Unsigned, false, true), Trusted),
+            Verdict::Allow
+        );
+        // Tampered and revoked never open, approved or not, whatever the policy.
+        assert_eq!(
+            d(facts(t(), Unsigned, false, true), Anywhere),
+            Verdict::Block
+        );
+        assert_eq!(
+            d(facts(Integrity::Valid, Revoked, false, true), Anywhere),
+            Verdict::Malware
+        );
+    }
 
     pub fn tmp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("trust-{name}-{}", std::process::id()));

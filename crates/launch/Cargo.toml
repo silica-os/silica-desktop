@@ -1,0 +1,25 @@
+[package]
+name = "silica-launch"
+description = "Starts Silica app bundles and AppImages: the trust check and the bubblewrap sandbox"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "silica-launch"
+path = "src/main.rs"
+
+[dependencies]
+getrandom = "0.3"
+silica-apps = { path = "../apps" }
+silica-bundle = { path = "../bundle" }
+zbus = "5.19"
+
+[dev-dependencies]
+async-io = "2"
+silica-daemon = { path = "../daemon" }

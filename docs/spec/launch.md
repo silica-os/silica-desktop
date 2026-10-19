@@ -62,21 +62,26 @@ they are.
 D-Bus goes through `xdg-dbus-proxy` with `--filter`: the app owns `<id>` and `<id>.*`, talks to
 `org.freedesktop.portal.*`, `org.freedesktop.Notifications`, `org.a11y.Bus`, the names in
 `talk`, and `dev.frascella.Silica` for `Settings1.Get`/`GetAll`, `Thumbnails1`, `Share1` and
-`Sound1` only (`--call` rules), and sees broadcasts of the portal and of Settings1. The proxy is
-started by `silica-launch` with a sync pipe (`--fd`), so the app starts only once the proxy is
-ready, and exits with the app.
+`Sound1` and `System1.State` only (`--call` rules), and sees broadcasts of the portal, of
+Settings1 and of System1. The proxy writes a byte on its standard output when it is ready
+(`--fd=1`): the app starts only then. `silica-launch` stays the parent of the proxy and of
+`bwrap`, waits for the app, then stops the proxy it started and removes the instance folder
+(`$XDG_RUNTIME_DIR/silica-launch/<instance>/`, which holds `info` and the proxy socket); if
+`silica-launch` itself is killed, the proxy sees its pipe close and exits, and `bwrap`'s
+`--die-with-parent` ends the app.
 
 Files the app needs are reached through the portals: the Open and Save dialogs (Silica's
 FileChooser backend, which also marks saved files with the quarantine attribute), the document
-portal for files opened from Mustache (the URIs of the launch are exported to it first, so the
-app gets `/run/user/<uid>/doc/<id>/<name>` paths), OpenURI, Notifications, Screenshot.
+portal (`$XDG_RUNTIME_DIR/doc/by-app/<id>` is the sandbox's `doc/`), OpenURI, Notifications,
+Screenshot. The files of the launch itself (opened from Mustache or the Dock) are bound
+read-write at their own paths, so the app gets the path it was asked to open.
 
 A bundle started from a disk image (`location = volume`) runs the same way (its `Contents/` is
 already read-only), and the shell shows the "Move to Applications" suggestion (`trust.md`).
 
 ## Exit status
 
-0 the app was started (`silica-launch` execs `bwrap`, which exits with the app); 2 usage; 3
+the app's own exit status once it ends (0 for a clean exit); 2 usage; 3
 refused by the trust check or by the user; 4 not found or not a valid bundle; 5 the sandbox
 could not be set up (missing `bwrap` or `xdg-dbus-proxy`, missing runtime: the error names
 it).

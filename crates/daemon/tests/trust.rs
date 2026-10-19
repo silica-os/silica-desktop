@@ -62,6 +62,7 @@ trait Trust1 {
     fn assess(&self, path: &str) -> zbus::Result<(String, HashMap<String, OwnedValue>)>;
     fn prompt(&self, path: &str) -> zbus::Result<String>;
     fn answer(&self, id: u32, choice: &str) -> zbus::Result<()>;
+    fn register_agent(&self) -> zbus::Result<()>;
     fn blocked(&self) -> zbus::Result<Vec<(String, String, u64)>>;
     fn open_anyway(&self, path: &str) -> zbus::Result<bool>;
     #[zbus(signal)]
@@ -173,6 +174,9 @@ fn verdicts_prompts_and_approvals() {
         );
         assert_eq!(trust.assess("/usr/bin/true").await.unwrap().0, "allow");
 
+        // Without a shell to ask, a prompt is answered at once.
+        assert_eq!(trust.prompt(&path(&verified)).await.unwrap(), "cancel");
+        trust.register_agent().await.unwrap();
         // The prompt of the verified app: a stand-in shell answers Open.
         let mut requests = trust.receive_prompt_requested().await.unwrap();
         let shell = async {
