@@ -164,12 +164,9 @@ void main() {
     );
     final rest = layout(items, width: 1280, height: 300);
     final icon = Offset(rest.center(0), 300 - bottomGap - backgroundHeight / 2);
-    // Click: activates.
-    await tester.tapAt(icon);
-    await tester.pump(const Duration(milliseconds: 50));
-    expect(log, ['attiva Terminal']);
-    // Right click: the menu above the icon, the tip of its 6 pt arrow where the label's is
-    // (anchored to the icon, #248).
+    // Right click first: the menu above the icon, the tip of its 6 pt arrow where the label's
+    // is (anchored to the icon, #248). Before any click, so no launch bounce (timed by the
+    // wall clock) moves the icon while the test measures (#251).
     await tester.tapAt(icon, buttons: kSecondaryButton);
     await tester.pump();
     expect(find.text('Apri Terminal'), findsOneWidget);
@@ -187,6 +184,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 200));
     expect(find.text('Apri Terminal'), findsNothing);
+    expect(log, isEmpty);
+    // Click: activates.
+    await tester.tapAt(icon);
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(log, ['attiva Terminal']);
     // Long press on the second icon: the menu appears after ~530 ms.
     final second = Offset(rest.center(1), icon.dy);
     final gesture = await tester.startGesture(second);
