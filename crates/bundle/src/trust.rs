@@ -96,6 +96,10 @@ impl Verdict {
 /// `security.appSources`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Policy {
+    /// Only Flathub's apps (and the system's): every bundle and AppImage is blocked until the
+    /// user opens it anyway.
+    Flathub,
+    /// Flathub and identified developers (the default).
     Trusted,
     Anywhere,
 }
@@ -123,6 +127,10 @@ pub fn decide_bundle(facts: &BundleFacts, policy: Policy) -> (Verdict, &'static 
         return (Verdict::Allow, "");
     }
     let unsigned = facts.integrity == Integrity::Unsigned;
+    if policy == Policy::Flathub {
+        // Whatever its signature: not from Flathub (Open Anyway approves it, as above).
+        return (Verdict::Block, "policy");
+    }
     match (facts.developer, policy) {
         (_, Policy::Trusted) if unsigned => (Verdict::Block, "unsigned"),
         (DeveloperStatus::SelfSigned, Policy::Trusted) => (Verdict::Block, "self-signed"),
@@ -408,6 +416,15 @@ mod tests {
         );
         assert_eq!(
             d(facts(Integrity::Unsigned, Unsigned, false, true), Trusted),
+            Verdict::Allow
+        );
+        // Flathub only: every bundle is blocked, the verified ones too, unless approved.
+        assert_eq!(
+            decide_bundle(&facts(Integrity::Valid, Verified, false, false), Flathub),
+            (Verdict::Block, "policy")
+        );
+        assert_eq!(
+            d(facts(Integrity::Valid, Verified, true, true), Flathub),
             Verdict::Allow
         );
         // Tampered and revoked never open, approved or not, whatever the policy.

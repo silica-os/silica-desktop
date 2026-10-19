@@ -217,6 +217,10 @@ pub struct UpdatesConfig {
     pub runtime_dir: PathBuf,
     pub ca_dir: PathBuf,
     pub revocation_lists: Vec<PathBuf>,
+    /// The Settings store (`updates.autoCheck`, `updates.autoInstall`).
+    pub settings_dir: Option<PathBuf>,
+    /// `/sys/class`: power supplies and network interfaces (the daily check's conditions).
+    pub sys_class: PathBuf,
 }
 
 impl UpdatesConfig {
@@ -236,6 +240,8 @@ impl UpdatesConfig {
             ),
             ca_dir: trust.ca_dir,
             revocation_lists: trust.revocation_lists,
+            settings_dir: trust.settings_dir,
+            sys_class: PathBuf::from("/sys/class"),
         }
     }
 }
@@ -574,52 +580,279 @@ type UpdateTuple = (
     HashMap<String, Value<'static>>,
 );
 
+/// How often the background check runs (docs/spec/updates.md, silica-desktop#256).
+pub const CHECK_EVERY_SECS: u64 = 24 * 60 * 60;
+/// How often the background thread looks whether a check is due and possible.
+const LOOK_EVERY: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+/// The first look after the daemon starts (the session settles first).
+const FIRST_LOOK: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Whether the computer runs on mains power: a `Mains` supply online, or no battery at all (a
+/// desktop or a virtual machine).
+pub fn on_ac(sys_class: &Path) -> bool {
+    let Ok(read) = std::fs::read_dir(sys_class.join("power_supply")) else {
+        return true;
+    };
+    let mut battery = false;
+    for supply in read.flatten().map(|e| e.path()) {
+        let kind = std::fs::read_to_string(supply.join("type")).unwrap_or_default();
+        let online = std::fs::read_to_string(supply.join("online")).unwrap_or_default();
+        match kind.trim() {
+            "Mains" | "USB" if online.trim() == "1" => return true,
+            "Battery" => battery = true,
+            _ => {}
+        }
+    }
+    !battery
+}
+
+/// Whether a network is up: an interface other than loopback whose link is up.
+pub fn online(sys_class: &Path) -> bool {
+    let Ok(read) = std::fs::read_dir(sys_class.join("net")) else {
+        return false;
+    };
+    read.flatten().any(|e| {
+        e.file_name() != "lo"
+            && std::fs::read_to_string(e.path().join("operstate"))
+                .is_ok_and(|s| matches!(s.trim(), "up" | "unknown"))
+            && std::fs::read_to_string(e.path().join("carrier")).is_ok_and(|s| s.trim() == "1")
+    })
+}
+
+/// Whether the daily check is due: never done, a day ago or more, or in the future (the clock
+/// moved back).
+pub fn due(last: Option<u64>, now: u64) -> bool {
+    last.is_none_or(|last| last > now || now - last >= CHECK_EVERY_SECS)
+}
+
+/// A boolean of the Settings store (`settings.bin`), or `default`.
+fn setting_bool(settings_dir: Option<&Path>, key: &str, default: bool) -> bool {
+    settings_dir
+        .and_then(|dir| std::fs::read(dir.join("settings.bin")).ok())
+        .map(|bytes| crate::settings::decode(&bytes))
+        .and_then(|values| match values.get(key) {
+            Some(crate::settings::Setting::Bool(b)) => Some(*b),
+            _ => None,
+        })
+        .unwrap_or(default)
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// The notification of a background check: title and body, in the session's language.
+pub fn notification_text(
+    found: usize,
+    installed: Option<usize>,
+    italian: bool,
+) -> (String, String) {
+    let title = if italian {
+        "Aggiornamento software"
+    } else {
+        "Software Update"
+    };
+    let body = match (installed, italian) {
+        (Some(n), false) => format!(
+            "{n} update{} installed. Open Settings › General › Software Update for the rest.",
+            if n == 1 { "" } else { "s" }
+        ),
+        (Some(n), true) => format!(
+            "{n} aggiornament{} installat{}. Il resto è in Impostazioni › Generali › Aggiornamento software.",
+            if n == 1 { "o" } else { "i" },
+            if n == 1 { "o" } else { "i" }
+        ),
+        (None, false) => format!(
+            "{found} update{} available in Settings › General › Software Update.",
+            if found == 1 { " is" } else { "s are" }
+        ),
+        (None, true) => format!(
+            "{found} aggiornament{} in Impostazioni › Generali › Aggiornamento software.",
+            if found == 1 {
+                "o disponibile"
+            } else {
+                "i disponibili"
+            }
+        ),
+    };
+    (title.to_owned(), body)
+}
+
+fn notify(title: &str, body: &str) {
+    let Ok(bus) = zbus::blocking::Connection::session() else {
+        return;
+    };
+    let hints: HashMap<&str, Value<'_>> =
+        HashMap::from([("desktop-entry", Value::from("dev.frascella.Settings"))]);
+    let _ = bus.call_method(
+        Some("org.freedesktop.Notifications"),
+        "/org/freedesktop/Notifications",
+        Some("org.freedesktop.Notifications"),
+        "Notify",
+        &(
+            title,
+            0u32,
+            "",
+            title,
+            body,
+            Vec::<&str>::new(),
+            hints,
+            -1i32,
+        ),
+    );
+}
+
+impl Updates {
+    /// Starts the background check: every 15 minutes it looks whether a check is due (once a
+    /// day, `updates.autoCheck`), the computer is on mains power and online; then it checks,
+    /// keeps what it found for `Update`, and posts a notification. With `updates.autoInstall`
+    /// it installs what it found first (but the system image, which needs the administrator's
+    /// password: it is only announced).
+    pub fn start_daily(&self) {
+        let config = self.config.clone();
+        let state = Arc::clone(&self.state);
+        let _ = std::thread::Builder::new()
+            .name("updates-daily".to_owned())
+            .spawn(move || {
+                std::thread::sleep(FIRST_LOOK);
+                loop {
+                    daily_tick(&config, &state);
+                    std::thread::sleep(LOOK_EVERY);
+                }
+            });
+    }
+}
+
+/// One look of the background check.
+fn daily_tick(config: &UpdatesConfig, state: &Mutex<State>) {
+    let settings = config.settings_dir.as_deref();
+    if !setting_bool(settings, "updates.autoCheck", true) {
+        return;
+    }
+    let stamp = config.cache.join("last-check");
+    let last = std::fs::read_to_string(&stamp)
+        .ok()
+        .and_then(|t| t.trim().parse().ok());
+    let now = now_secs();
+    if !due(last, now) || !on_ac(&config.sys_class) || !online(&config.sys_class) {
+        return;
+    }
+    let found = check_all(config);
+    let _ = std::fs::create_dir_all(&config.cache);
+    let _ = std::fs::write(&stamp, now.to_string());
+    {
+        let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
+        s.found = found.iter().map(|a| (a.id.clone(), a.clone())).collect();
+    }
+    if found.is_empty() {
+        return;
+    }
+    let italian = std::env::var("LANG").is_ok_and(|l| l.starts_with("it"));
+    let installed = setting_bool(settings, "updates.autoInstall", false).then(|| {
+        found
+            .iter()
+            .filter(|a| a.kind != "system")
+            .filter(|a| !record(state, &a.id, install(config, a)).starts_with("failed"))
+            .count()
+    });
+    let (title, body) = notification_text(found.len(), installed, italian);
+    notify(&title, &body);
+}
+
+/// Looks for updates of every source (blocking: network and commands).
+fn check_all(config: &UpdatesConfig) -> Vec<Available> {
+    let mut found = Vec::new();
+    for app in registry(config).apps() {
+        let result = match app.kind {
+            Kind::Bundle => check_bundle(app),
+            Kind::AppImage => check_appimage(app),
+            _ => Ok(None),
+        };
+        match result {
+            Ok(Some(a)) => found.push(a),
+            Ok(None) => {}
+            Err(e) => eprintln!("silica-daemon: updates: {}: {e}", app.id),
+        }
+    }
+    found.extend(check_flatpak());
+    found.extend(check_system());
+    found
+}
+
+/// Installs one update (blocking): the outcome, and the staged bundle when its app runs.
+fn install(
+    config: &UpdatesConfig,
+    found: &Available,
+) -> Result<(String, Option<(PathBuf, PathBuf)>), String> {
+    match found.kind {
+        "bundle" => update_bundle(config, found),
+        "appimage" => update_appimage(found).map(|r| (r, None)),
+        "flatpak" => {
+            let installation = found
+                .details
+                .get("installation")
+                .cloned()
+                .unwrap_or_else(|| "--system".to_owned());
+            run(
+                "flatpak",
+                &["update", "--noninteractive", "-y", &installation, &found.id],
+            )
+            .map(|()| ("installed".to_owned(), None))
+        }
+        "system" => run("pkexec", &["bootc", "upgrade"]).map(|()| ("staged".to_owned(), None)),
+        other => Err(format!("unknown kind {other}")),
+    }
+}
+
+/// Keeps the outcome of an install in the state; the result string of `Update`.
+fn record(
+    state: &Mutex<State>,
+    id: &str,
+    result: Result<(String, Option<(PathBuf, PathBuf)>), String>,
+) -> String {
+    let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
+    match result {
+        Ok((outcome, staged)) => {
+            if let Some(staged) = staged {
+                state.staged.insert(id.to_owned(), staged);
+            }
+            state.found.remove(id);
+            outcome
+        }
+        Err(e) => format!("failed: {e}"),
+    }
+}
+
+fn update_tuple(a: Available) -> UpdateTuple {
+    let mut details: HashMap<String, Value<'static>> = a
+        .details
+        .into_iter()
+        .map(|(k, v)| (k, Value::from(v)))
+        .collect();
+    details.insert("size".to_owned(), Value::from(a.size));
+    (
+        a.id,
+        a.kind.to_owned(),
+        a.name,
+        a.current,
+        a.available,
+        details,
+    )
+}
+
 #[interface(name = "dev.frascella.Silica.Updates1")]
 impl Updates {
     /// Looks for updates of every source.
     async fn check(&self) -> Vec<UpdateTuple> {
         let config = self.config.clone();
-        let found = blocking::unblock(move || {
-            let mut found = Vec::new();
-            for app in registry(&config).apps() {
-                let result = match app.kind {
-                    Kind::Bundle => check_bundle(app),
-                    Kind::AppImage => check_appimage(app),
-                    _ => Ok(None),
-                };
-                match result {
-                    Ok(Some(a)) => found.push(a),
-                    Ok(None) => {}
-                    Err(e) => eprintln!("silica-daemon: updates: {}: {e}", app.id),
-                }
-            }
-            found.extend(check_flatpak());
-            found.extend(check_system());
-            found
-        })
-        .await;
+        let found = blocking::unblock(move || check_all(&config)).await;
         self.finish_staged();
         let mut state = self.state();
         state.found = found.iter().map(|a| (a.id.clone(), a.clone())).collect();
-        found
-            .into_iter()
-            .map(|a| {
-                let mut details: HashMap<String, Value<'static>> = a
-                    .details
-                    .into_iter()
-                    .map(|(k, v)| (k, Value::from(v)))
-                    .collect();
-                details.insert("size".to_owned(), Value::from(a.size));
-                (
-                    a.id,
-                    a.kind.to_owned(),
-                    a.name,
-                    a.current,
-                    a.available,
-                    details,
-                )
-            })
-            .collect()
+        drop(state);
+        found.into_iter().map(update_tuple).collect()
     }
 
     /// Installs the update of `id` found by the last `Check`: `installed`, `pending_restart`
@@ -634,41 +867,8 @@ impl Updates {
         })?;
         let _ = Self::progress(&emitter, id, 0.0).await;
         let config = self.config.clone();
-        let result = blocking::unblock(
-            move || -> Result<(String, Option<(PathBuf, PathBuf)>), String> {
-                match found.kind {
-                    "bundle" => update_bundle(&config, &found),
-                    "appimage" => update_appimage(&found).map(|r| (r, None)),
-                    "flatpak" => {
-                        let installation = found
-                            .details
-                            .get("installation")
-                            .cloned()
-                            .unwrap_or_else(|| "--system".to_owned());
-                        run(
-                            "flatpak",
-                            &["update", "--noninteractive", "-y", &installation, &found.id],
-                        )
-                        .map(|()| ("installed".to_owned(), None))
-                    }
-                    "system" => {
-                        run("pkexec", &["bootc", "upgrade"]).map(|()| ("staged".to_owned(), None))
-                    }
-                    other => Err(format!("unknown kind {other}")),
-                }
-            },
-        )
-        .await;
-        let outcome = match result {
-            Ok((outcome, staged)) => {
-                if let Some(staged) = staged {
-                    self.state().staged.insert(id.to_owned(), staged);
-                }
-                self.state().found.remove(id);
-                outcome
-            }
-            Err(e) => format!("failed: {e}"),
-        };
+        let result = blocking::unblock(move || install(&config, &found)).await;
+        let outcome = record(&self.state, id, result);
         let _ = Self::progress(&emitter, id, 1.0).await;
         let _ = Self::finished(&emitter, id, &outcome).await;
         Ok(outcome)
@@ -804,6 +1004,60 @@ mod tests {
         assert!(running(&root, "dev.example.Hello"));
         assert!(!running(&root, "dev.example.Gone"));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_daily_check_waits_for_power_network_and_its_day() {
+        let root = std::env::temp_dir().join(format!("updates-daily-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let put = |rel: &str, text: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        // No supplies, no interfaces: on AC (a desktop), offline.
+        assert!(on_ac(&root));
+        assert!(!online(&root));
+        put("power_supply/BAT0/type", "Battery\n");
+        assert!(!on_ac(&root));
+        put("power_supply/AC/type", "Mains\n");
+        put("power_supply/AC/online", "0\n");
+        assert!(!on_ac(&root));
+        put("power_supply/AC/online", "1\n");
+        assert!(on_ac(&root));
+        put("net/lo/operstate", "unknown\n");
+        put("net/lo/carrier", "1\n");
+        assert!(!online(&root));
+        put("net/eth0/operstate", "down\n");
+        put("net/eth0/carrier", "0\n");
+        assert!(!online(&root));
+        put("net/eth0/operstate", "up\n");
+        put("net/eth0/carrier", "1\n");
+        assert!(online(&root));
+        let day = CHECK_EVERY_SECS;
+        assert!(due(None, 1000));
+        assert!(!due(Some(1000), 1000 + day - 1));
+        assert!(due(Some(1000), 1000 + day));
+        assert!(due(Some(5000), 1000));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_notification_says_what_was_found_or_installed() {
+        assert_eq!(
+            notification_text(1, None, false).1,
+            "1 update is available in Settings › General › Software Update."
+        );
+        assert_eq!(
+            notification_text(3, Some(2), false).1,
+            "2 updates installed. Open Settings › General › Software Update for the rest."
+        );
+        assert_eq!(notification_text(2, None, true).0, "Aggiornamento software");
+        assert!(
+            notification_text(1, Some(1), true)
+                .1
+                .starts_with("1 aggiornamento installato.")
+        );
     }
 
     #[test]

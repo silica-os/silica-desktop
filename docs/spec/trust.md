@@ -7,9 +7,10 @@ Decides whether an app may open, and shows the alerts that ask the user.
 
 ## Policy
 
-`security.appSources` in Settings1: `trusted` (the default) or `anywhere`. The Settings pane
-offers only `trusted` ("Flathub and identified developers"); `anywhere` is set from the command
-line (`silica-cli settings set security.appSources anywhere`) and then shows in the pop-up as
+`security.appSources` in Settings1: `flathub`, `trusted` (the default) or `anywhere`. The
+Settings pane offers `flathub` ("Flathub": only Flatpak apps and the system's apps open) and
+`trusted` ("Flathub and identified developers"); `anywhere` is set from the command line
+(`silica-cli settings set security.appSources anywhere`) and then shows in the pop-up as
 "Anywhere", as on the reference.
 
 ## Verdicts
@@ -24,12 +25,14 @@ line (`silica-cli settings set security.appSources anywhere`) and then shows in 
 | `malware` | the developer key is revoked |
 
 With the policy `anywhere`, unsigned and self-signed bundles are `confirm` instead of `block`;
-tampered and revoked stay as they are.
+tampered and revoked stay as they are. With the policy `flathub`, every bundle and AppImage the
+user has not approved is `block` (reason `policy`), the verified ones too; Open Anyway still
+approves one, as on the reference.
 
 `info`: `name`, `id`, `developer` (`s`), `developer_status` (`verified`, `self-signed`,
 `unsigned`, `revoked`), `origin` (`s`, from the quarantine attribute), `agent` (`s`),
 `quarantined` (`b`), `reason` (`s`, for `block`: `unsigned`, `self-signed`, `tampered`,
-`invalid`), `kind` (`s`).
+`invalid`, `policy`), `kind` (`s`).
 
 ## Prompts
 

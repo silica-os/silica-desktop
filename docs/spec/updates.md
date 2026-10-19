@@ -1,6 +1,6 @@
 # Software update: `dev.frascella.Silica.Updates1`
 
-Status: implemented (silica-os#3), `crates/daemon/src/updates.rs`.
+Status: implemented (silica-os#3, silica-desktop#256), `crates/daemon/src/updates.rs`.
 
 One service for the three ways software changes: app bundles (their own feed), Flatpak apps
 and runtimes, and the system image (bootc). Settings › General › Software Update shows them
@@ -77,6 +77,26 @@ Object `/dev/frascella/Silica/Updates1`.
 | `Progress(s id, d fraction)` | signal | |
 | `Finished(s id, s result)` | signal | `result` as above, or `failed: <reason>` |
 
-Settings checks when Software Update opens and with Check Now; nothing installs without the
-user's click. Daily checks in the background and automatic installs come later (tracked in an
-issue of silica-desktop).
+Settings checks when Software Update opens and with Check Now.
+
+## Background checks and automatic installs
+
+Two Settings1 keys, shown as toggles in Settings › General › Software Update:
+
+| Key | Default | |
+| --- | --- | --- |
+| `updates.autoCheck` | `true` | check once a day in the background |
+| `updates.autoInstall` | `false` | install what the background check finds (the toggle is off while `autoCheck` is) |
+
+The daemon looks every 15 minutes (the first time 2 minutes after it starts) whether a check is
+due: the last one (`~/.cache/silica/updates/last-check`, unix seconds) is a day old or more, or
+in the future. It checks only on mains power (a `Mains` or `USB` supply online in
+`/sys/class/power_supply`, or no battery at all) and online (an interface other than loopback
+with its link up). What it finds is kept for `Update` as after a `Check`. Then:
+
+- without `autoInstall`: a notification, "N updates available in Settings › General › Software
+  Update" (the notification names Settings as its `desktop-entry`);
+- with `autoInstall`: every update but the system image is installed (bundles of a running app
+  wait for it to quit, as with `Update`), then a notification says how many were installed. The
+  system image needs the administrator's password (`pkexec bootc upgrade`): it is announced,
+  never installed in the background.

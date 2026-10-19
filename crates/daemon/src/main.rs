@@ -91,10 +91,10 @@ async fn run(address: Option<String>, replace: bool) -> zbus::Result<()> {
         .at(VOLUMES_PATH, Volumes::new(VolumesConfig::from_env()))
         .await?;
     // Software update: bundle feeds, AppImages, Flatpak, the system image.
-    connection
-        .object_server()
-        .at(UPDATES_PATH, Updates::new(UpdatesConfig::from_env()))
-        .await?;
+    let updates = Updates::new(UpdatesConfig::from_env());
+    // The daily check in the background (Settings › Software Update).
+    updates.start_daily();
+    connection.object_server().at(UPDATES_PATH, updates).await?;
     let system = SystemService::serve(
         connection.clone(),
         SystemConfig {

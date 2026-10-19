@@ -359,6 +359,7 @@ pub fn read_policy(settings_dir: Option<&Path>) -> Policy {
         .and_then(|values| values.get("security.appSources").cloned());
     match value {
         Some(crate::settings::Setting::Text(text)) if text == "anywhere" => Policy::Anywhere,
+        Some(crate::settings::Setting::Text(text)) if text == "flathub" => Policy::Flathub,
         _ => Policy::Trusted,
     }
 }
@@ -595,12 +596,13 @@ impl Shared {
                 .approval
                 .as_ref()
                 .is_some_and(|ap| self.state().store.approvals.contains(ap));
-            a.verdict = if approved {
-                Verdict::Allow
-            } else {
-                Verdict::Confirm
+            // Not yet approved: confirmed, or blocked when only Flathub's apps may open.
+            let flathub = read_policy(self.config.settings_dir.as_deref()) == Policy::Flathub;
+            (a.verdict, a.reason) = match (approved, flathub) {
+                (true, _) => (Verdict::Allow, ""),
+                (false, true) => (Verdict::Block, "policy"),
+                (false, false) => (Verdict::Confirm, ""),
             };
-            a.reason = "";
             return a;
         }
         a
@@ -987,6 +989,12 @@ mod tests {
         );
         std::fs::write(dir.join("settings.bin"), crate::settings::encode(&values)).unwrap();
         assert_eq!(read_policy(Some(&dir)), Policy::Anywhere);
+        values.insert(
+            "security.appSources".to_owned(),
+            crate::settings::Setting::Text("flathub".into()),
+        );
+        std::fs::write(dir.join("settings.bin"), crate::settings::encode(&values)).unwrap();
+        assert_eq!(read_policy(Some(&dir)), Policy::Flathub);
         assert_eq!(read_policy(None), Policy::Trusted);
         let _ = std::fs::remove_dir_all(&dir);
     }

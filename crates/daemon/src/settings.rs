@@ -142,9 +142,9 @@ const SHOT_MODE: &[&str] = &["screen", "window", "selection"];
 const TITLE_BAR: &[&str] = &["zoom", "minimize", "none"];
 const MOUSE_SECONDARY: &[&str] = &["right", "left"];
 const TOUCHPAD_SECONDARY: &[&str] = &["twoFinger", "bottomRight", "bottomLeft"];
-/// Where apps may come from (docs/spec/trust.md): Settings offers `trusted`; `anywhere` is set
-/// from the command line.
-const APP_SOURCES: &[&str] = &["trusted", "anywhere"];
+/// Where apps may come from (docs/spec/trust.md): Settings offers `flathub` and `trusted`;
+/// `anywhere` is set from the command line.
+const APP_SOURCES: &[&str] = &["flathub", "trusted", "anywhere"];
 /// What a hot corner does (`hotcorners.*`): Ossido runs the matching catalog command.
 pub const HOT_CORNER_ACTIONS: &[&str] = &[
     "none",
@@ -165,6 +165,9 @@ pub const KEYS: &[KeyDef] = &[
         Kind::Enum(APP_SOURCES),
         Dflt::Text("trusted"),
     ),
+    // Software Update (docs/spec/updates.md): the daily check, and installing what it finds.
+    k("updates.autoCheck", Kind::Bool, Dflt::Bool(true)),
+    k("updates.autoInstall", Kind::Bool, Dflt::Bool(false)),
     k("dock.magnify", Kind::Bool, Dflt::Bool(false)),
     k("dock.recents", Kind::Bool, Dflt::Bool(false)),
     k("dock.autohide", Kind::Bool, Dflt::Bool(false)),
