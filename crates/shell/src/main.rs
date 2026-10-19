@@ -9,6 +9,7 @@
 
 mod apps;
 mod cc;
+mod dialogs;
 mod dock;
 mod faro;
 mod lock;
@@ -52,6 +53,8 @@ struct Shell {
     switcher: switcher::Shared,
     /// Screenshots.
     shots: screenshot::Shared,
+    /// Gatekeeper, authentication and Force Quit.
+    dialogs: dialogs::Shared,
     /// The desktop wallpaper and its surfaces.
     wallpaper: Rc<RefCell<Option<wallpaper::Choice>>>,
     backgrounds: RefCell<Vec<vetro_lib::core::ViewId>>,
@@ -79,6 +82,7 @@ impl Shell {
             notes: Rc::default(),
             switcher: Rc::default(),
             shots: Rc::default(),
+            dialogs: Rc::default(),
             wallpaper: Rc::new(RefCell::new(None)),
             backgrounds: RefCell::new(Vec::new()),
         }
@@ -124,6 +128,16 @@ impl Shell {
         );
     }
 
+    /// The open windows (window, app), the most recently focused last.
+    fn windows(&self) -> Vec<(String, String)> {
+        self.dock
+            .borrow()
+            .windows
+            .iter()
+            .map(|(w, a, _)| (w.clone(), a.clone()))
+            .collect()
+    }
+
     /// Opens or closes Notification Center (the clock stays highlighted while it is open).
     fn toggle_center(&self, ui: &mut Ui) {
         let bar = self.bar.clone();
@@ -162,14 +176,12 @@ impl Shell {
                     screenshot::select(ui, &self.shots, true, false)
                 }
                 "screenshot.toolbar" => screenshot::toggle_bar(ui, &self.shots),
+                "app.force_quit_panel" => {
+                    let windows = self.windows();
+                    dialogs::force_quit(ui, &self.dialogs, &windows);
+                }
                 s if s.starts_with("switcher.") => {
-                    let windows: Vec<(String, String)> = self
-                        .dock
-                        .borrow()
-                        .windows
-                        .iter()
-                        .map(|(w, a, _)| (w.clone(), a.clone()))
-                        .collect();
+                    let windows = self.windows();
                     switcher::command(ui, &self.switcher, s, &windows);
                 }
                 _ => tracing::debug!("shell command {id} not handled"),
@@ -339,6 +351,7 @@ fn main() {
         *shell.backgrounds.borrow_mut() = wallpaper::open_background(ui, &shell.wallpaper);
         install_status(ui, &shell);
         notifications::start(ui, &shell.notes);
+        dialogs::start(&shell.dialogs);
         menubar::open(ui, &shell.bar);
         dock::open(ui, &shell.dock);
         // The menu bar's clock, each minute on the minute.

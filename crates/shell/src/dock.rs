@@ -828,6 +828,10 @@ pub fn window_changed(
     open: bool,
 ) {
     let now = ui.now;
+    // The shell's own windows (its panels) are not apps of the Dock.
+    if open && app_id == crate::APP_ID {
+        return;
+    }
     {
         let mut s = state.borrow_mut();
         let pos = s.windows.iter().position(|(w, _, _)| w == identifier);
@@ -1150,6 +1154,7 @@ fn confirm_empty_trash(ui: &mut Ui, state: &Shared) {
     if let Some(win) = ui.window_mut(w) {
         win.opaque = false;
         win.title = "Empty Trash".into();
+        win.decorated = false;
     }
     ui.set_content(w, a);
     ui.show_window(w);

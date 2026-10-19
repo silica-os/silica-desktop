@@ -706,11 +706,14 @@ impl State {
             return;
         }
         pending.waiting.set(false);
-        let Some(parent) = parent_of(window).and_then(|parent| self.window_for(&parent)) else {
-            return;
+        // A modal dialog without a parent (a system alert) is centred on the screen.
+        let parent = parent_of(window).and_then(|parent| self.window_for(&parent));
+        let parent_frame = match &parent {
+            Some(p) => self.window_frame(p),
+            None => Some(self.usable_area()),
         };
         let (Some(parent_frame), Some(frame), Some(location)) = (
-            self.window_frame(&parent),
+            parent_frame,
             self.window_frame(window),
             self.space.element_location(window),
         ) else {
@@ -721,7 +724,9 @@ impl State {
         pending.placed.set(Some((size, at)));
         self.space.map_element(window.clone(), at, false);
         // A sheet follows its parent from where it was centred.
-        if let Some(modal) = window.user_data().get::<Modal>() {
+        if let Some(parent) = parent
+            && let Some(modal) = window.user_data().get::<Modal>()
+        {
             modal.1.set(self.space.element_location(&parent));
         }
     }
