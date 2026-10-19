@@ -393,6 +393,40 @@ pub(crate) fn icon_job(
         .map(|p| (p, false))
 }
 
+/// The icon of an app bundle (a `Name.app` folder with `Contents/Info.toml`): its own app icon
+/// (`Contents/Resources/icon`), in the icon style of the flags, as file managers show apps.
+/// None for anything else (and for a bundle without an icon: it gets the folder icon).
+pub(crate) fn bundle_icon(
+    app_icons: &AppIcons,
+    uri: &str,
+    size_px: u32,
+    scale: f64,
+    flags: u32,
+) -> Answer {
+    let path = uri_to_path(uri)?;
+    if !path.extension().is_some_and(|e| e == "app") || !path.join("Contents/Info.toml").is_file() {
+        return None;
+    }
+    let folder = path.join("Contents/Resources/icon");
+    if !folder.is_dir() {
+        return None;
+    }
+    let appearance = (flags >> ICON_APPEARANCE_SHIFT) & 7;
+    let accent = flags >> ICON_ACCENT_SHIFT;
+    if let Some(png) = app_icons.icon(
+        &folder.to_string_lossy(),
+        size_px,
+        scale,
+        appearance,
+        accent,
+    ) {
+        return Some((png, false));
+    }
+    // A bundle with only a flat icon.png.
+    let png = folder.join("icon.png");
+    png.is_file().then_some((png, false))
+}
+
 /// A fixed set of threads that render thumbnails.
 struct Pool {
     jobs: SyncSender<Job>,
@@ -425,7 +459,9 @@ impl Pool {
                                 size_px,
                                 scale,
                                 flags,
-                            } => icon_job(&root, icons.as_deref(), uri, *size_px, *scale, *flags),
+                            } => bundle_icon(&app_icons, uri, *size_px, *scale, *flags).or_else(
+                                || icon_job(&root, icons.as_deref(), uri, *size_px, *scale, *flags),
+                            ),
                             Request::AppIcon {
                                 app,
                                 size_px,
@@ -596,6 +632,29 @@ impl Thumbnails {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn app_bundles_get_their_app_icon() {
+        let root = std::env::temp_dir().join(format!("bundle-icon-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let bundle = root.join("Hello.app");
+        fs::create_dir_all(bundle.join("Contents/Resources/icon")).unwrap();
+        fs::write(bundle.join("Contents/Info.toml"), "x").unwrap();
+        fs::write(bundle.join("Contents/Resources/icon/icon.png"), "png").unwrap();
+        fs::create_dir_all(root.join("Plain.app")).unwrap();
+        let icons = AppIcons::new(root.join("cache"), crate::icons::apps::Dirs::default());
+        let uri = |p: &Path| format!("file://{}", p.display());
+        assert_eq!(
+            bundle_icon(&icons, &uri(&bundle), 64, 1.0, 0),
+            Some((bundle.join("Contents/Resources/icon/icon.png"), false))
+        );
+        // A folder named .app without Info.toml is a folder.
+        assert_eq!(
+            bundle_icon(&icons, &uri(&root.join("Plain.app")), 64, 1.0, 0),
+            None
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
     use super::*;
 
     fn tmp(name: &str) -> PathBuf {

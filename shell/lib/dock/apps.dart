@@ -184,6 +184,17 @@ Item _appItem(
   fixed: fixed,
 );
 
+/// The item of a pinned app that is no longer installed: named after the last part of its id.
+Item missingItem(String id) {
+  final last = id.split('.').last;
+  return Item.app(
+    last.isEmpty ? id : last,
+    id: id,
+    pinned: true,
+    missing: true,
+  );
+}
+
 /// The Dock items for these apps and these windows.
 List<Item> dockItems(
   Map<String, DesktopEntry> entries,
@@ -225,7 +236,15 @@ List<Item> dockItems(
     }
     if (shown.contains(id)) continue;
     final entry = entries[id];
-    if (entry == null) continue;
+    if (entry == null) {
+      // Pinned but gone (moved to the Trash, its disk image ejected): a question mark until
+      // it is installed again; its menu removes it.
+      if (entries.isNotEmpty) {
+        items.add(missingItem(id));
+        shown.add(id);
+      }
+      continue;
+    }
     items.add(
       _appItem(
         entry,

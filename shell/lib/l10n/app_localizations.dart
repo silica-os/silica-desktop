@@ -2335,6 +2335,108 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Now Playing'**
   String get statusNowPlaying;
+
+  /// Gatekeeper: first launch of an app in quarantine
+  ///
+  /// In en, this message translates to:
+  /// **'“{app}” is an app downloaded from the Internet. Are you sure you want to open it?'**
+  String gkConfirmTitle(String app);
+
+  /// Gatekeeper: where a quarantined app came from (a disk image)
+  ///
+  /// In en, this message translates to:
+  /// **'It comes from the disk image “{image}”.'**
+  String gkFromImage(String image);
+
+  /// Gatekeeper: where a quarantined app came from (a website)
+  ///
+  /// In en, this message translates to:
+  /// **'It was downloaded from {site}.'**
+  String gkFromSite(String site);
+
+  /// Gatekeeper: the app that saved a quarantined app
+  ///
+  /// In en, this message translates to:
+  /// **'It was saved by {agent}.'**
+  String gkFromApp(String agent);
+
+  /// Gatekeeper: an identified developer
+  ///
+  /// In en, this message translates to:
+  /// **'Developer: {developer} (identified).'**
+  String gkDeveloperVerified(String developer);
+
+  /// Gatekeeper: a developer Silica does not know
+  ///
+  /// In en, this message translates to:
+  /// **'Developer: {developer} (not identified).'**
+  String gkDeveloperSelfSigned(String developer);
+
+  /// Gatekeeper: an app that was blocked
+  ///
+  /// In en, this message translates to:
+  /// **'“{app}” Not Opened'**
+  String gkBlockTitle(String app);
+
+  /// Gatekeeper: blocked because unsigned
+  ///
+  /// In en, this message translates to:
+  /// **'Silica cannot verify that “{app}” is free of malware: it is not signed by its developer.'**
+  String gkBlockUnsigned(String app);
+
+  /// Gatekeeper: blocked because the developer is unknown
+  ///
+  /// In en, this message translates to:
+  /// **'Silica cannot verify that “{app}” is free of malware: its developer is not identified.'**
+  String gkBlockSelfSigned(String app);
+
+  /// Gatekeeper: blocked because the files changed
+  ///
+  /// In en, this message translates to:
+  /// **'“{app}” was modified after its developer signed it, or it is damaged.'**
+  String gkBlockTampered(String app);
+
+  /// Gatekeeper: blocked because it is not a valid bundle
+  ///
+  /// In en, this message translates to:
+  /// **'“{app}” is not a valid app.'**
+  String gkBlockInvalid(String app);
+
+  /// Gatekeeper: where Open Anyway is
+  ///
+  /// In en, this message translates to:
+  /// **'If you trust it, you can open it from Privacy & Security in Settings.'**
+  String get gkBlockHint;
+
+  /// Gatekeeper: an app whose developer key was revoked
+  ///
+  /// In en, this message translates to:
+  /// **'“{app}” will damage your computer.'**
+  String gkMalwareTitle(String app);
+
+  /// Gatekeeper: body of the revoked-key alert
+  ///
+  /// In en, this message translates to:
+  /// **'Its developer’s key was revoked. You should move it to the Trash.'**
+  String get gkMalwareBody;
+
+  /// Gatekeeper: open the app
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get gkOpen;
+
+  /// Gatekeeper: close the alert
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get gkDone;
+
+  /// Gatekeeper: move the app to the Trash
+  ///
+  /// In en, this message translates to:
+  /// **'Move to Trash'**
+  String get gkMoveToTrash;
 }
 
 class _AppLocalizationsDelegate

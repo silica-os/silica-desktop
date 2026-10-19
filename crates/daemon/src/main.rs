@@ -4,10 +4,14 @@ use std::process::ExitCode;
 
 use futures_lite::{StreamExt, future};
 use silica_daemon::actions::{ACTIONS_PATH, Actions};
+use silica_daemon::apps::{AppsConfig, AppsService};
 use silica_daemon::settings::{SETTINGS_PATH, Settings};
 use silica_daemon::share::{SHARE_PATH, Share};
 use silica_daemon::sound::{SOUND_PATH, Sound, SoundConfig};
 use silica_daemon::thumbnails::{THUMBNAILS_PATH, Thumbnails};
+use silica_daemon::trust::{TRUST_PATH, Trust, TrustConfig};
+use silica_daemon::updates::{UPDATES_PATH, Updates, UpdatesConfig};
+use silica_daemon::volumes::{VOLUMES_PATH, Volumes, VolumesConfig};
 use silica_daemon::{
     AuthConfig, AuthService, ClipboardService, Daemon, SystemConfig, SystemService,
 };
@@ -73,12 +77,37 @@ async fn run(address: Option<String>, replace: bool) -> zbus::Result<()> {
         },
     )
     .await?;
+    // Gatekeeper: the verdicts on app bundles and AppImages, and their alerts.
+    connection
+        .object_server()
+        .at(
+            TRUST_PATH,
+            Trust::new(TrustConfig::from_env(system_bus.clone())),
+        )
+        .await?;
+    // Disk images (.sxv): verified, mounted with FUSE, ejected.
+    connection
+        .object_server()
+        .at(VOLUMES_PATH, Volumes::new(VolumesConfig::from_env()))
+        .await?;
+    // Software update: bundle feeds, AppImages, Flatpak, the system image.
+    connection
+        .object_server()
+        .at(UPDATES_PATH, Updates::new(UpdatesConfig::from_env()))
+        .await?;
     let system = SystemService::serve(
         connection.clone(),
         SystemConfig {
             system_bus,
             ..SystemConfig::default()
         },
+    )
+    .await?;
+    // Launch Services: the app registry, kept current, for the shell, the apps and the rest of
+    // the daemon (app icons, the Share menu).
+    let apps = AppsService::serve(
+        connection.clone(),
+        AppsConfig::from_env(&|k| std::env::var(k).ok()),
     )
     .await?;
     // Faro's clipboard and actions scopes.
@@ -125,7 +154,10 @@ async fn run(address: Option<String>, replace: bool) -> zbus::Result<()> {
     future::or(
         future::or(
             future::or(
-                future::or(future::or(daemon.run(), system.run()), clipboard.run()),
+                future::or(
+                    future::or(future::or(daemon.run(), system.run()), clipboard.run()),
+                    apps.run(),
+                ),
                 auth.run(),
             ),
             lost,

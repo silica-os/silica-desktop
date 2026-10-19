@@ -102,3 +102,8 @@ says otherwise. Labels are in English.
 | [misc.md](misc.md) | Shared panel material, alerts, context menus, launch bounce, system panels |
 | [icon-geometry.md](icon-geometry.md) | Icon sizes, mask, shadow and edge light |
 | [inventory-shell.md](inventory-shell.md) | Inventory of shell features with their status in Silica |
+| [launch-services.md](launch-services.md) | The app registry (`Apps1`): sources, watching, associations |
+| [launch.md](launch.md) | `silica-launch`: the trust check and the bubblewrap sandbox of app bundles |
+| [trust.md](trust.md) | Gatekeeper (`Trust1`): signatures, quarantine, verdicts, Open Anyway |
+| [volumes.md](volumes.md) | Disk images (`Volumes1`): verifying, mounting and ejecting `.sxv` files |
+| [updates.md](updates.md) | Software update (`Updates1`): bundle feeds, Flatpak, bootc |

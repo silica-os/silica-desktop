@@ -1230,4 +1230,81 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get statusNowPlaying => 'Now Playing';
+
+  @override
+  String gkConfirmTitle(String app) {
+    return '“$app” is an app downloaded from the Internet. Are you sure you want to open it?';
+  }
+
+  @override
+  String gkFromImage(String image) {
+    return 'It comes from the disk image “$image”.';
+  }
+
+  @override
+  String gkFromSite(String site) {
+    return 'It was downloaded from $site.';
+  }
+
+  @override
+  String gkFromApp(String agent) {
+    return 'It was saved by $agent.';
+  }
+
+  @override
+  String gkDeveloperVerified(String developer) {
+    return 'Developer: $developer (identified).';
+  }
+
+  @override
+  String gkDeveloperSelfSigned(String developer) {
+    return 'Developer: $developer (not identified).';
+  }
+
+  @override
+  String gkBlockTitle(String app) {
+    return '“$app” Not Opened';
+  }
+
+  @override
+  String gkBlockUnsigned(String app) {
+    return 'Silica cannot verify that “$app” is free of malware: it is not signed by its developer.';
+  }
+
+  @override
+  String gkBlockSelfSigned(String app) {
+    return 'Silica cannot verify that “$app” is free of malware: its developer is not identified.';
+  }
+
+  @override
+  String gkBlockTampered(String app) {
+    return '“$app” was modified after its developer signed it, or it is damaged.';
+  }
+
+  @override
+  String gkBlockInvalid(String app) {
+    return '“$app” is not a valid app.';
+  }
+
+  @override
+  String get gkBlockHint =>
+      'If you trust it, you can open it from Privacy & Security in Settings.';
+
+  @override
+  String gkMalwareTitle(String app) {
+    return '“$app” will damage your computer.';
+  }
+
+  @override
+  String get gkMalwareBody =>
+      'Its developer’s key was revoked. You should move it to the Trash.';
+
+  @override
+  String get gkOpen => 'Open';
+
+  @override
+  String get gkDone => 'Done';
+
+  @override
+  String get gkMoveToTrash => 'Move to Trash';
 }

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The file types of Silica's app distribution (silica-os docs/app-bundles.md). -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-silica-volume">
+    <comment>Silica disk image</comment>
+    <comment xml:lang="it">Immagine disco di Silica</comment>
+    <magic priority="80">
+      <match type="string" value="SILICAXV" offset="0"/>
+    </magic>
+    <glob pattern="*.sxv"/>
+  </mime-type>
+  <mime-type type="application/x-silica-app-archive">
+    <comment>Silica app archive</comment>
+    <comment xml:lang="it">Archivio di app di Silica</comment>
+    <sub-class-of type="application/zip"/>
+    <glob pattern="*.silicaapp"/>
+  </mime-type>
+</mime-info>

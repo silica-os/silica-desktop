@@ -735,6 +735,10 @@ fn deploy(args: &[String]) -> Result<()> {
             "silica-portal",
             "--package",
             "silica-cli",
+            "--package",
+            "silica-launch",
+            "--package",
+            "silica-bundle",
         ]))?;
         flutter::bundle_release("shell")?;
         for app in &apps {
@@ -751,6 +755,10 @@ fn deploy(args: &[String]) -> Result<()> {
         "silica-portal",
         "silica-cli",
         "silica-action",
+        "silica-launch",
+        "silica-bundle",
+        "silica-quarantine",
+        "silica-applications-helper",
     ] {
         replace_file(&release.join(binary), &share.join("bin").join(binary))?;
     }
@@ -793,14 +801,27 @@ fn deploy(args: &[String]) -> Result<()> {
         }
         swap_dir(&staged, &share.join("icons"))?;
     }
+    // Apps with an Info.toml template become signed bundles in the guest's stand-in for
+    // /usr/Applications; the others keep their desktop entry.
+    let dev_key = dev_release_key(&work)?;
+    let bundles = share.join("Applications");
     for app in &apps {
-        deploy_app(app, &share)?;
+        if app.join("linux/Info.toml.in").is_file() {
+            deploy_bundle(app, &bundles, &dev_key)?;
+        } else {
+            deploy_app(app, &share)?;
+        }
     }
+    write(
+        &share.join("trust/developer-ca/dev-release.pub"),
+        &dev_key.public().to_file(),
+    )?;
     write_executable(&share.join("bin/silica-app"), &silica_app_script())?;
     write_executable(&share.join("session.sh"), &session_script())?;
 
     sync_to_guest_disk()?;
     prepare_guest_bus(&share)?;
+    prepare_guest_image()?;
 
     eprintln!("xtask: restarting the session in the guest");
     restart_session()?;
@@ -983,6 +1004,93 @@ fn deploy_app(app: &Path, share: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The key the development VM's own bundles are signed with (made once, kept in the work
+/// folder); the guest lists its public half as a developer CA key, as the image does with the
+/// release key.
+fn dev_release_key(work: &Path) -> Result<silica_bundle::minisign::SecretKey> {
+    use silica_bundle::minisign::SecretKey;
+    let path = work.join("dev-release.key");
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        return SecretKey::parse(&text).map_err(|e| format!("{}: {e}", path.display()));
+    }
+    let key = SecretKey::generate()?;
+    write(&path, &key.to_file())?;
+    Ok(key)
+}
+
+/// An app as a signed bundle (silica-os docs/app-bundles.md): `<app>/linux/Info.toml.in` with
+/// its release Flutter bundle and icon, into `bundles/<Name>.app`.
+fn deploy_bundle(
+    app: &Path,
+    bundles: &Path,
+    key: &silica_bundle::minisign::SecretKey,
+) -> Result<()> {
+    std::fs::create_dir_all(bundles).map_err(|e| format!("{}: {e}", bundles.display()))?;
+    // The icon is compiled next to the release bundle first (as for desktop entries).
+    crate::app_icon::bundle_icon(app, &app.join("build/release"))?;
+    let version = crate::flutter::pubspec_version(app).unwrap_or_else(|| "0.0.0".to_owned());
+    let build = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(1, |d| d.as_secs());
+    let parts = silica_bundle::assemble::Parts {
+        info: app.join("linux/Info.toml.in"),
+        substitutions: vec![
+            ("VERSION".to_owned(), version),
+            ("BUILD".to_owned(), build.to_string()),
+            ("DEVELOPER_KEY".to_owned(), key.public().to_base64()),
+        ],
+        flutter: Some(app.join("build/release")),
+        ..silica_bundle::assemble::Parts::default()
+    };
+    let bundle = silica_bundle::assemble::assemble(&parts, bundles)?;
+    silica_bundle::trust::sign_bundle(&bundle, key, None)?;
+    eprintln!("xtask: bundle {}", bundle.display());
+    Ok(())
+}
+
+/// What the image will ship for app bundles (silica-os docs/app-bundles.md § 7), put in place in
+/// the running guest: /usr is read-only, so through a transient `bootc usr-overlay` (gone at the
+/// next boot, made again by the next deploy). The developer CA key of the development builds,
+/// the polkit action of Open Anyway, the MIME type of disk images, and the tools.
+fn prepare_guest_image() -> Result<()> {
+    let policy = include_str!("../../data/polkit/dev.silica.trust.override.policy");
+    let policy_check = policy.trim_end().replace('\'', "");
+    let mime = include_str!("../../data/mime/silica-bundles.xml");
+    let script = format!(
+        r#"set -e
+if ! touch /usr/.silica-dev-w 2>/dev/null; then bootc usr-overlay >/dev/null; fi
+rm -f /usr/.silica-dev-w
+install -d /usr/share/silica/trust/developer-ca /usr/share/polkit-1/actions /usr/share/mime/packages
+install -m 0644 {GUEST_RUN}/trust/developer-ca/dev-release.pub /usr/share/silica/trust/developer-ca/
+# The /Applications helper where the polkit action expects it (pkexec runs only that path).
+install -d /usr/libexec/silica
+install -m 0755 {GUEST_RUN}/bin/silica-applications-helper /usr/libexec/silica/
+P=/usr/share/polkit-1/actions/dev.silica.applications.policy
+if [ -f $P ] && ! grep -q policykit.exec.path $P; then
+  sed -i 's|</defaults>|</defaults>\n    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/silica/silica-applications-helper</annotate>|' $P
+fi
+if [ "$(cat /usr/share/polkit-1/actions/dev.silica.trust.override.policy 2>/dev/null)" != '{policy_check}' ]; then
+cat > /usr/share/polkit-1/actions/dev.silica.trust.override.policy <<'POLICY'
+{policy}POLICY
+# polkitd reads its actions at start.
+systemctl try-restart polkit
+fi
+cat > /usr/share/mime/packages/silica-bundles.xml <<'MIME'
+{mime}MIME
+# Slow on the overlay (minutes): in the background, only when the package is newer.
+(nice -n 19 update-mime-database -n /usr/share/mime >/dev/null 2>&1 &)
+for tool in bwrap xdg-dbus-proxy mkfs.erofs erofsfuse; do
+  command -v $tool >/dev/null || echo "missing in the guest: $tool (dnf install bubblewrap xdg-dbus-proxy erofs-utils erofs-fuse)"
+done
+"#
+    );
+    let out = ssh_output(&script)?;
+    if !out.trim().is_empty() {
+        eprintln!("xtask: {}", out.trim());
+    }
+    Ok(())
+}
+
 /// Replaces `to` with a copy of `from` (a new file renamed over the old one: running programs
 /// keep theirs).
 fn replace_file(from: &Path, to: &Path) -> Result<()> {
@@ -1095,6 +1203,8 @@ echo "silica-session (dev): $(date)"
 export SILICA_RENDERER="${{SILICA_RENDERER:-vulkan}}"
 export XDG_CURRENT_DESKTOP=Silica XDG_SESSION_DESKTOP=silica XDG_SESSION_TYPE=wayland
 export PATH="$D/bin:/usr/libexec/silica:$PATH"
+# The platform of app bundles includes the share (its embedder and engine): silica-launch binds it.
+export SILICA_PLATFORM_EXTRA="$D"
 # The share's .desktop entries (deployed apps) come before the installed ones.
 export XDG_DATA_DIRS="$D/share:${{XDG_DATA_DIRS:-/usr/local/share:/usr/share}}"
 [ -d "$D/icons" ] && export SILICA_ICONS_DIR="$D/icons"
@@ -1104,13 +1214,13 @@ export XDG_DATA_DIRS="$D/share:${{XDG_DATA_DIRS:-/usr/local/share:/usr/share}}"
 export XCURSOR_THEME=Adwaita XCURSOR_SIZE=24
 # Reads the engine and the apps once, in the background, so that the first launch of each does
 # not wait for the disk (a cold launch takes 1 to 2 s more than a warm one).
-(nice -n 19 find "$D/engine" "$D/apps" "$D/bin" -type f -exec cat {{}} + >/dev/null 2>&1 &)
+(nice -n 19 find "$D/engine" "$D/apps" "$D/Applications" "$D/bin" -type f -exec cat {{}} + >/dev/null 2>&1 &)
 
 set -- \
 {spawn}
 if [ -n "$DBUS_SESSION_BUS_ADDRESS" ]; then
   set -- "$@" \
-    --spawn "dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE XDG_DATA_DIRS XCURSOR_THEME XCURSOR_SIZE SILICA_ICONS_DIR SILICA_ASSETS SILICA_RENDERER PATH && systemctl --user start silica-session.target" \
+    --spawn "dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE XDG_DATA_DIRS XCURSOR_THEME XCURSOR_SIZE SILICA_ICONS_DIR SILICA_ASSETS SILICA_RENDERER SILICA_PLATFORM_EXTRA PATH && systemctl --user start silica-session.target" \
     --spawn "silica-daemon --replace"
 else
   set -- --session-bus "$@"

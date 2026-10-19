@@ -482,7 +482,7 @@ fn write_editor(s: &Setup, extra: &str) -> PathBuf {
     write(
         &s.root.join("home/.local/share/applications/editor.desktop"),
         format!(
-            "[Desktop Entry]\nName=Editor\nX-Silica-Icon={}\nMimeType=text/plain;\n{extra}",
+            "[Desktop Entry]\nType=Application\nExec=x\nName=Editor\nX-Silica-Icon={}\nMimeType=text/plain;\n{extra}",
             app_dir.display()
         ),
     );
@@ -564,12 +564,12 @@ fn a_handler_without_a_usable_icon_leaves_the_file_unknown() {
     let apps = s.root.join("home/.local/share/applications");
     write(
         &apps.join("viewer.desktop"),
-        "[Desktop Entry]\nName=Viewer\nIcon=viewer\nMimeType=text/plain;\n",
+        "[Desktop Entry]\nType=Application\nExec=x\nName=Viewer\nIcon=viewer\nMimeType=text/plain;\n",
     );
     write(
         &apps.join("broken.desktop"),
         format!(
-            "[Desktop Entry]\nName=Broken\nX-Silica-Icon={}\nMimeType=image/x-nothing;\n",
+            "[Desktop Entry]\nType=Application\nExec=x\nName=Broken\nX-Silica-Icon={}\nMimeType=image/x-nothing;\n",
             s.root.join("no-such-folder").display()
         ),
     );
@@ -768,7 +768,7 @@ fn editor_for(s: &Setup, types: &str, extra: &str) -> PathBuf {
     write(
         &s.root.join("home/.local/share/applications/editor.desktop"),
         format!(
-            "[Desktop Entry]\nName=Editor\nX-Silica-Icon={}\nMimeType={types}\n{extra}",
+            "[Desktop Entry]\nType=Application\nExec=x\nName=Editor\nX-Silica-Icon={}\nMimeType={types}\n{extra}",
             app_dir.display()
         ),
     );
@@ -807,7 +807,7 @@ fn the_glyph_follows_the_precedence_from_the_full_icon_down_to_the_unknown_exten
     fs::remove_file(s.root.join("home/.local/share/applications/editor.desktop")).unwrap();
     write(
         &s.root.join("home/.local/share/applications/other.desktop"),
-        "[Desktop Entry]\nName=Other\nIcon=other\nMimeType=application/zip;\n",
+        "[Desktop Entry]\nType=Application\nExec=x\nName=Other\nIcon=other\nMimeType=application/zip;\n",
     );
     let icons = reload(&s, "third");
     assert_eq!(look(&icons, &zip), Glyph::System("archive".to_owned()));
@@ -905,7 +905,7 @@ fn a_preview_and_a_thumbnailer_beat_every_icon() {
     write(
         &s.root.join("home/.local/share/applications/editor.desktop"),
         format!(
-            "[Desktop Entry]\nName=Editor\nX-Silica-Icon={}\nMimeType=application/x-sdoc;\n\
+            "[Desktop Entry]\nType=Application\nExec=x\nName=Editor\nX-Silica-Icon={}\nMimeType=application/x-sdoc;\n\
              X-Silica-Document-Icons=application/x-sdoc=doc;\n",
             app.display()
         ),

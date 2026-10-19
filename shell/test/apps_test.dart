@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' show Locale;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:silica_ui/silica_ui.dart'
+    show SilicaDBus, SilicaInstalledApp, SilicaInstalledAppKind;
 import 'package:silica_shell/l10n/app_localizations.dart';
 import 'package:silica_shell/dock/apps.dart';
 import 'package:silica_shell/dock/model.dart';
@@ -121,6 +124,42 @@ void main() {
     expect(items[0].windows, ['b']);
     expect(items[1].windows, ['a']);
     expect(items[2].kind, ItemKind.separator);
+  });
+
+  test('a pinned app that is gone is a question mark until it comes back', () {
+    const editor = DesktopEntry(id: 'editor', name: 'Editor', exec: 'editor');
+    final items = dockItems(
+      {'editor': editor},
+      ['editor', 'dev.example.Hello'],
+      const [],
+    );
+    final missing = items.firstWhere((i) => i.id == 'dev.example.Hello');
+    expect(missing.missing, isTrue);
+    expect(missing.label, 'Hello');
+    expect(missing.command, isNull);
+    expect(items.firstWhere((i) => i.id == 'editor').missing, isFalse);
+    // Installed again: a normal item.
+    const hello = DesktopEntry(
+      id: 'dev.example.Hello',
+      name: 'Hello',
+      exec: 'hello',
+    );
+    final back = dockItems(
+      {'editor': editor, 'dev.example.Hello': hello},
+      ['editor', 'dev.example.Hello'],
+      const [],
+    );
+    expect(
+      back.firstWhere((i) => i.id == 'dev.example.Hello').missing,
+      isFalse,
+    );
+    // Before the apps are known (an empty registry), nothing is marked missing.
+    expect(
+      dockItems(const {}, [
+        'dev.example.Hello',
+      ], const []).any((i) => i.missing),
+      isFalse,
+    );
   });
 
   test('minimized windows go into their app icon with minimizeToApp', () {
@@ -394,6 +433,106 @@ void liveEntriesTests() {
         ),
         isTrue,
       );
+    },
+  );
+
+  test('the registry\'s apps become entries; hidden ones are left out', () {
+    final entries = entriesFromApps([
+      const SilicaInstalledApp(
+        id: 'dev.example.Viewer',
+        name: 'Viewer',
+        names: {'it': 'Visore'},
+        kind: SilicaInstalledAppKind.bundle,
+        path: '/Applications/Viewer.app',
+        exec: 'silica-launch /Applications/Viewer.app %U',
+        silicaIcon: '/Applications/Viewer.app/Contents/Resources/icon',
+        wmClass: 'dev.example.Viewer',
+        isNew: true,
+      ),
+      const SilicaInstalledApp(
+        id: 'helper',
+        name: 'Helper',
+        exec: 'helper',
+        noDisplay: true,
+      ),
+    ], locale: 'it');
+    expect(entries.keys, ['dev.example.Viewer']);
+    final viewer = entries['dev.example.Viewer']!;
+    expect(viewer.name, 'Visore');
+    expect(viewer.exec, 'silica-launch /Applications/Viewer.app');
+    expect(viewer.rawExec, 'silica-launch /Applications/Viewer.app %U');
+    expect(viewer.kind, 'bundle');
+    expect(viewer.isNew, isTrue);
+    expect(viewer.matchesAppId('dev.example.Viewer'), isTrue);
+    expect(
+      execWithFiles(viewer.rawExec!, ['/tmp/a b']),
+      "silica-launch /Applications/Viewer.app 'file:///tmp/a%20b'",
+    );
+  });
+
+  test(
+    'with the registry running, the store follows it and its signals',
+    () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      var apps = [
+        {'id': 'a.One', 'name': 'One', 'kind': 'system', 'exec': 'one'},
+      ];
+      messenger.setMockMethodCallHandler(SilicaDBus.channel, (call) async {
+        if (call.method == 'subscribe') return 1;
+        if (call.method == 'unsubscribe') return true;
+        final args = call.arguments as Map;
+        if (args['method'] == 'List') {
+          return [
+            [
+              for (final a in apps) [a['id'], a['name'], a['kind'], '', a],
+            ],
+          ];
+        }
+        return const [];
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(SilicaDBus.channel, null),
+      );
+      final root = Directory.systemTemp.createTempSync('silica-service');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final store = DesktopEntryStore(
+        env: {'HOME': root.path, 'XDG_DATA_DIRS': '${root.path}/none'},
+        rescan: Duration.zero,
+        service: true,
+      );
+      addTearDown(store.dispose);
+      var changed = Completer<void>();
+      store.addListener(() {
+        if (!changed.isCompleted) changed.complete();
+      });
+      await changed.future.timeout(const Duration(seconds: 5));
+      expect(store.fromService, isTrue);
+      expect(store.entries.keys, ['a.One']);
+      // An Added signal: the store reads the list again.
+      apps = [
+        ...apps,
+        {'id': 'b.Two', 'name': 'Two', 'kind': 'bundle', 'exec': 'two'},
+      ];
+      changed = Completer<void>();
+      await messenger.handlePlatformMessage(
+        'silica/dbus',
+        const JSONMethodCodec().encodeMethodCall(
+          const MethodCall('signal', {
+            'id': 1,
+            'sender': ':1.5',
+            'path': '/dev/frascella/Silica/Apps1',
+            'interface': 'dev.frascella.Silica.Apps1',
+            'member': 'Added',
+            'args': ['b.Two'],
+          }),
+        ),
+        (_) {},
+      );
+      await changed.future.timeout(const Duration(seconds: 5));
+      expect(store.entries.keys.toSet(), {'a.One', 'b.Two'});
+      expect(store.entries['b.Two']!.kind, 'bundle');
     },
   );
 

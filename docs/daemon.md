@@ -381,6 +381,28 @@ subprocess killed after 15 s. Not yet: SVG, video, text previews. The composed i
 files without a preview: the icon of the app that opens them, its document icons, or the unknown
 extension) are in [`thumbnails.md`](thumbnails.md).
 
+## App bundles: Apps1, Trust1, Volumes1, Updates1
+
+The services of app installation (silica-os#3), specified in `docs/spec/`:
+
+| Interface | Object | Spec |
+| --- | --- | --- |
+| `dev.frascella.Silica.Apps1` | `/dev/frascella/Silica/Apps1` | `spec/launch-services.md`: the app registry, associations, launching |
+| `dev.frascella.Silica.Trust1` | `/dev/frascella/Silica/Trust1` | `spec/trust.md`: Gatekeeper's verdicts, prompts, Open Anyway |
+| `dev.frascella.Silica.Volumes1` | `/dev/frascella/Silica/Volumes1` | `spec/volumes.md`: `.sxv` disk images |
+| `dev.frascella.Silica.Updates1` | `/dev/frascella/Silica/Updates1` | `spec/updates.md`: bundle feeds, AppImages, Flatpak, bootc |
+
+The shared code lives in `crates/apps` (the registry) and `crates/bundle` (signatures, `.sxv`,
+`.silicaapp`, zsync); `crates/launch` is `silica-launch`, the trust check and the sandbox.
+Trying them:
+
+```sh
+busctl --user call dev.frascella.Silica /dev/frascella/Silica/Apps1 dev.frascella.Silica.Apps1 AppsFor s text/plain
+busctl --user call dev.frascella.Silica /dev/frascella/Silica/Trust1 dev.frascella.Silica.Trust1 Assess s ~/Applications/Hello.app
+silica-bundle verify ~/Applications/Hello.app
+silica-launch --print ~/Applications/Hello.app
+```
+
 ## Authentication (polkit agent)
 
 The session's polkit authentication agent (`crates/daemon/src/auth.rs`): when an app asks for

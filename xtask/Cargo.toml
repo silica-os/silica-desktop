@@ -10,6 +10,7 @@ publish = false
 base64 = "0.22"
 png = "0.17"
 serde_json = "1"
+silica-bundle = { path = "../crates/bundle" }
 silica-control = { path = "../crates/control" }
 
 [lints]

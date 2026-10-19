@@ -372,5 +372,22 @@
   "statusClock": "Orologio",
   "statusControlCenter": "Centro di Controllo",
   "statusFocus": "Full immersion",
-  "statusNowPlaying": "In riproduzione"
+  "statusNowPlaying": "In riproduzione",
+  "gkConfirmTitle": "“{app}” è un’app scaricata da Internet. Vuoi davvero aprirla?",
+  "gkFromImage": "Proviene dall’immagine disco “{image}”.",
+  "gkFromSite": "È stata scaricata da {site}.",
+  "gkFromApp": "È stata salvata da {agent}.",
+  "gkDeveloperVerified": "Sviluppatore: {developer} (identificato).",
+  "gkDeveloperSelfSigned": "Sviluppatore: {developer} (non identificato).",
+  "gkBlockTitle": "“{app}” non è stata aperta",
+  "gkBlockUnsigned": "Silica non può verificare che “{app}” sia priva di malware: non è firmata dal suo sviluppatore.",
+  "gkBlockSelfSigned": "Silica non può verificare che “{app}” sia priva di malware: il suo sviluppatore non è identificato.",
+  "gkBlockTampered": "“{app}” è stata modificata dopo la firma dello sviluppatore, oppure è danneggiata.",
+  "gkBlockInvalid": "“{app}” non è un’app valida.",
+  "gkBlockHint": "Se ti fidi, puoi aprirla da Privacy e sicurezza nelle Impostazioni.",
+  "gkMalwareTitle": "“{app}” danneggerà il computer.",
+  "gkMalwareBody": "La chiave del suo sviluppatore è stata revocata. Ti conviene spostarla nel Cestino.",
+  "gkOpen": "Apri",
+  "gkDone": "Fine",
+  "gkMoveToTrash": "Sposta nel Cestino"
 }

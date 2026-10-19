@@ -13,6 +13,7 @@ import 'package:silica_ui/silica_ui.dart'
     show AmalfiGlassBackend, AmalfiGlassBackendScope, SystemLookScope;
 
 import 'auth/auth_dialog.dart';
+import 'trust/gatekeeper_dialog.dart';
 import 'controlcenter/controlcenter.dart';
 import 'l10n/l10n.dart';
 import 'dock/dock.dart';
@@ -119,6 +120,11 @@ class ShellComponent extends StatelessWidget {
             AppSwitcher(entries: desktopEntries()),
             ScreenshotLayer(entries: desktopEntries()),
             ForceQuitLayer(entries: desktopEntries()),
+            // Gatekeeper's alerts (an app downloaded, blocked or damaging).
+            GatekeeperLayer(
+              source: DBusGatekeeper(),
+              entries: desktopEntries(),
+            ),
             // The polkit agent's password dialog, above everything else here.
             AuthLayer(source: DBusAuth(), entries: desktopEntries()),
           ],

@@ -142,6 +142,9 @@ const SHOT_MODE: &[&str] = &["screen", "window", "selection"];
 const TITLE_BAR: &[&str] = &["zoom", "minimize", "none"];
 const MOUSE_SECONDARY: &[&str] = &["right", "left"];
 const TOUCHPAD_SECONDARY: &[&str] = &["twoFinger", "bottomRight", "bottomLeft"];
+/// Where apps may come from (docs/spec/trust.md): Settings offers `trusted`; `anywhere` is set
+/// from the command line.
+const APP_SOURCES: &[&str] = &["trusted", "anywhere"];
 /// What a hot corner does (`hotcorners.*`): Ossido runs the matching catalog command.
 pub const HOT_CORNER_ACTIONS: &[&str] = &[
     "none",
@@ -157,6 +160,11 @@ pub const HOT_CORNER_ACTIONS: &[&str] = &[
 /// Every static key. `passwordDelay` is in seconds, -1 is never. The wallpaper is the first
 /// of `image`, `color`, `id` that is not empty.
 pub const KEYS: &[KeyDef] = &[
+    k(
+        "security.appSources",
+        Kind::Enum(APP_SOURCES),
+        Dflt::Text("trusted"),
+    ),
     k("dock.magnify", Kind::Bool, Dflt::Bool(false)),
     k("dock.recents", Kind::Bool, Dflt::Bool(false)),
     k("dock.autohide", Kind::Bool, Dflt::Bool(false)),

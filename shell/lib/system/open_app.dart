@@ -1,6 +1,8 @@
 // Opening an app from Faro, the Launcher and the menu bar, as the Dock does: a running app
 // is activated and its windows raised, a stopped one is launched.
 
+import 'package:silica_ui/silica_ui.dart' show SilicaApps;
+
 import 'desktop_entries.dart';
 import 'shell_channel.dart';
 
@@ -41,6 +43,8 @@ void openApp(DesktopEntry entry, [ShellChannel? channel]) {
   );
   if (windows.isEmpty) {
     shell.launch(entry.exec);
+    // Launched once, it is no longer new (the Launcher's dot).
+    if (entry.isNew) SilicaApps.noteLaunched(entry.id);
     return;
   }
   for (final id in windows) {
