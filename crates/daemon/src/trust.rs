@@ -2,7 +2,7 @@
 //! (docs/spec/trust.md). Decides whether an app bundle or an AppImage may open, asks the shell to
 //! show the alerts, keeps the approvals and the recently blocked apps.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -116,10 +116,13 @@ pub struct Store {
     pub approvals: HashSet<Approval>,
     pub blocked: Vec<Blocked>,
     pub cache: BTreeMap<String, Cached>,
+    /// AppImages the user runs in the sandbox (Get Info › Run in sandbox), by path.
+    pub sandboxed: BTreeSet<String>,
 }
 
 const MAGIC: &[u8; 4] = b"STRU";
-const VERSION: u8 = 1;
+/// 2 adds the sandboxed AppImages after the cache; 1 is read as having none.
+const VERSION: u8 = 2;
 
 fn put_str(out: &mut Vec<u8>, s: &str) {
     out.extend_from_slice(&u32::try_from(s.len()).unwrap_or(0).to_le_bytes());
@@ -210,12 +213,24 @@ impl Store {
             put_str(&mut out, &c.manifest);
             out.extend_from_slice(&c.cost_ms.to_le_bytes());
         }
+        out.extend_from_slice(
+            &u32::try_from(self.sandboxed.len())
+                .unwrap_or(0)
+                .to_le_bytes(),
+        );
+        for path in &self.sandboxed {
+            put_str(&mut out, path);
+        }
         out
     }
 
     pub fn decode(bytes: &[u8]) -> Option<Store> {
         let mut r = Reader { bytes, at: 0 };
-        if r.take(4)? != MAGIC || r.u8()? != VERSION {
+        if r.take(4)? != MAGIC {
+            return None;
+        }
+        let version = r.u8()?;
+        if version != 1 && version != VERSION {
             return None;
         }
         let mut store = Store::default();
@@ -255,6 +270,11 @@ impl Store {
                 cost_ms: r.u32()?,
             };
             store.cache.insert(path, cached);
+        }
+        if version >= 2 {
+            for _ in 0..r.count()? {
+                store.sandboxed.insert(r.str()?);
+            }
         }
         (r.at == bytes.len()).then_some(store)
     }
@@ -390,6 +410,8 @@ pub struct Assessment {
     pub reason: &'static str,
     /// The approval accepting would record.
     pub approval: Option<Approval>,
+    /// An AppImage the user runs in the sandbox.
+    pub sandbox: bool,
 }
 
 impl Assessment {
@@ -417,6 +439,7 @@ impl Assessment {
             "quarantined".to_owned(),
             Value::from(self.quarantine.is_some()),
         );
+        map.insert("sandbox".to_owned(), Value::from(self.sandbox));
         map
     }
 }
@@ -554,6 +577,7 @@ impl Shared {
             quarantine: quarantine::read(&path),
             reason: "invalid",
             approval: None,
+            sandbox: false,
         };
         if SYSTEM_PREFIXES.iter().any(|p| text.starts_with(p))
             || silica_apps::registry::is_system_path(&path)
@@ -601,6 +625,7 @@ impl Shared {
         }
         if silica_apps::appimage::is_appimage(&path) {
             a.kind = "appimage";
+            a.sandbox = self.state().store.sandboxed.contains(&text);
             a.name = silica_apps::appimage::display_name(&path);
             a.id = silica_apps::appimage::id_for(&path);
             a.approval = file_approval(&path);
@@ -961,6 +986,7 @@ impl Trust {
             quarantine: None,
             reason: "",
             approval: None,
+            sandbox: false,
         };
         let choice = self.ask(connection, &emitter, "volume", &a).await?;
         if choice != "move" {
@@ -974,6 +1000,30 @@ impl Trust {
             Ok(_) => "moved".to_owned(),
             Err(e) => format!("failed: {e}"),
         })
+    }
+
+    /// Runs an AppImage in the sandbox from now on, or not (docs/spec/launch.md): kept in
+    /// trust.bin by path. False for anything but an AppImage.
+    async fn set_sandbox(&self, path: &str, on: bool) -> bool {
+        let path = std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+        let target = path.clone();
+        if !blocking::unblock(move || silica_apps::appimage::is_appimage(&target)).await {
+            return false;
+        }
+        let text = path.to_string_lossy().into_owned();
+        let store = {
+            let mut state = self.shared.state();
+            let changed = if on {
+                state.store.sandboxed.insert(text)
+            } else {
+                state.store.sandboxed.remove(&text)
+            };
+            changed.then(|| state.store.clone())
+        };
+        if let Some(store) = store {
+            self.shared.save(&store);
+        }
+        true
     }
 
     /// The shell registers as the one that draws the alerts; prompts fail at once without it.
@@ -1119,6 +1169,14 @@ mod tests {
                 cost_ms: 250,
             },
         );
+        // A file of version 1 (no sandboxed AppImages) is still read.
+        let mut v1 = store.encode();
+        v1.truncate(v1.len() - 4);
+        v1[4] = 1;
+        assert_eq!(Store::decode(&v1), Some(store.clone()));
+        store
+            .sandboxed
+            .insert("/home/u/Applications/Lemon.AppImage".into());
         let bytes = store.encode();
         assert_eq!(Store::decode(&bytes), Some(store));
         for cut in 0..bytes.len() {

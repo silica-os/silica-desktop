@@ -31,7 +31,7 @@ approves one, as on the reference.
 
 `info`: `name`, `id`, `developer` (`s`), `developer_status` (`verified`, `self-signed`,
 `unsigned`, `revoked`), `origin` (`s`, from the quarantine attribute), `agent` (`s`),
-`quarantined` (`b`), `reason` (`s`, for `block`: `unsigned`, `self-signed`, `tampered`,
+`quarantined` (`b`), `sandbox` (`b`, an AppImage the user runs in the sandbox), `reason` (`s`, for `block`: `unsigned`, `self-signed`, `tampered`,
 `invalid`, `policy`), `kind` (`s`).
 
 ## Prompts
@@ -54,6 +54,12 @@ Without an answer within 10 minutes the choice is `cancel`.
 - `trash` moves the app to the user's Trash (the freedesktop trash of its file system).
 - `block` records the app among the recently blocked: Settings › Privacy & Security shows
   "“Name” was blocked to protect Silica." with Open Anyway for one hour.
+
+## Run in sandbox
+
+`SetSandbox(s path, b on) → b` runs an AppImage in the sandbox from now on, or not
+(`launch.md`); false for anything but an AppImage. The choice is kept in `trust.bin` by path
+(version 2 of the file adds the list; version 1 is read as having none).
 
 ## Move to Applications
 
@@ -90,7 +96,8 @@ for every reason. The behaviour above is the reference's.
   the same developer stays approved (a modified bundle is blocked anyway: integrity is checked
   before approvals), and by (path, inode, size, modification time) for unsigned bundles and
   AppImages: replacing them asks again;
-- the recently blocked list.
+- the recently blocked list;
+- the AppImages run in the sandbox (by path).
 
 Verifying hashes every file of the bundle. A bundle whose full verification takes under
 200 ms (most apps: a Flutter app of 30 MB hashes in about 30 ms) is verified in full at every

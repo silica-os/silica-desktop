@@ -1,10 +1,15 @@
 //! Type-2 AppImages: an ELF runtime followed by a squashfs, marked with `AI\x02` at offset 8.
-//! The registry does not mount them: the name comes from the file name, the update information
-//! from the runtime's `.upd_info` ELF section.
+//! The registry does not mount them: their embedded desktop entry and icon (in the squashfs
+//! root) are extracted once with `unsquashfs` into a cache keyed by the file's identity
+//! (docs/spec/launch-services.md); without it the name comes from the file name. The update
+//! information is the runtime's `.upd_info` ELF section.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+use crate::desktop::{self, DesktopEntry};
 
 /// Whether the file starts like a type-2 AppImage.
 pub fn is_appimage(path: &Path) -> bool {
@@ -73,6 +78,141 @@ pub fn update_info(path: &Path) -> Option<String> {
     let text = String::from_utf8(text).ok()?;
     let text = text.trim();
     (!text.is_empty()).then(|| text.to_owned())
+}
+
+/// Where the squashfs starts: the end of the ELF runtime (its section header table is last),
+/// checked by the squashfs magic `hsqs` there.
+pub fn payload_offset(path: &Path) -> Option<u64> {
+    let mut file = File::open(path).ok()?;
+    let mut header = [0u8; 64];
+    file.read_exact(&mut header).ok()?;
+    if header.get(..4) != Some(b"\x7fELF") || header.get(4) != Some(&2) || header.get(5) != Some(&1)
+    {
+        return None;
+    }
+    let shoff = u64_at(&header, 0x28)?;
+    let shentsize = u64::from(u16_at(&header, 0x3a)?);
+    let shnum = u64::from(u16_at(&header, 0x3c)?);
+    let end = shoff.checked_add(shentsize.checked_mul(shnum)?)?;
+    let mut magic = [0u8; 4];
+    file.seek(SeekFrom::Start(end)).ok()?;
+    file.read_exact(&mut magic).ok()?;
+    (&magic == b"hsqs").then_some(end)
+}
+
+/// What an AppImage carries about itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Embedded {
+    /// The file name of its desktop entry without `.desktop` (`org.kde.krita`).
+    pub desktop_id: String,
+    pub entry: DesktopEntry,
+    /// Its icon, extracted (`.png` or `.svg`).
+    pub icon: Option<PathBuf>,
+}
+
+/// The cache folder of one AppImage: named after its path, size and modification time, so that
+/// a replaced or updated file is read again.
+pub fn cache_dir(cache: &Path, path: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(path).ok()?;
+    // FNV-1a over the identity: stable across runs (std's hasher is not).
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut feed = |bytes: &[u8]| {
+        for b in bytes {
+            hash ^= u64::from(*b);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    feed(path.as_os_str().as_encoded_bytes());
+    feed(&meta.size().to_le_bytes());
+    feed(&meta.mtime().to_le_bytes());
+    feed(&meta.mtime_nsec().to_le_bytes());
+    Some(cache.join(format!("{hash:016x}")))
+}
+
+/// The embedded metadata from the cache, when it was extracted before.
+pub fn cached(cache: &Path, path: &Path) -> Option<Embedded> {
+    read_extracted(&cache_dir(cache, path)?)
+}
+
+fn read_extracted(dir: &Path) -> Option<Embedded> {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    entries.sort();
+    let file = entries
+        .iter()
+        .find(|p| p.extension().is_some_and(|e| e == "desktop"))?;
+    let text = std::fs::read_to_string(file).ok()?;
+    if text.len() > 64 * 1024 {
+        return None;
+    }
+    let entry = desktop::parse(&text);
+    if !entry.is_application() && entry.name.is_none() {
+        return None;
+    }
+    let desktop_id = file
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    // The icon the entry names, else `.DirIcon`.
+    let named = entry.icon.as_deref().filter(|i| !i.contains('/'));
+    let icon = named
+        .and_then(|name| {
+            ["png", "svg"]
+                .iter()
+                .map(|ext| dir.join(format!("{name}.{ext}")))
+                .find(|p| p.is_file())
+        })
+        .or_else(|| Some(dir.join(".DirIcon")).filter(|p| p.is_file()));
+    Some(Embedded {
+        desktop_id,
+        entry,
+        icon,
+    })
+}
+
+/// Extracts the desktop entry and the icons of the squashfs root into the cache (once per
+/// file identity) and reads them. Needs `unsquashfs` (squashfs-tools).
+pub fn extract(cache: &Path, path: &Path) -> Option<Embedded> {
+    let dir = cache_dir(cache, path)?;
+    if let Some(found) = read_extracted(&dir) {
+        return Some(found);
+    }
+    let offset = payload_offset(path)?;
+    std::fs::create_dir_all(cache).ok()?;
+    let staging = dir.with_extension(format!("tmp{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&staging);
+    let status = Command::new("unsquashfs")
+        .args(["-no-progress", "-quiet", "-no-xattrs", "-o"])
+        .arg(offset.to_string())
+        .arg("-d")
+        .arg(&staging)
+        .arg(path)
+        .args(["*.desktop", "*.png", "*.svg", ".DirIcon"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .ok()?;
+    // Only regular files are kept: a link (`.DirIcon` often is one) could point anywhere.
+    if let Ok(read) = std::fs::read_dir(&staging) {
+        for e in read.flatten() {
+            if e.file_type().is_ok_and(|t| !t.is_file()) {
+                let _ = std::fs::remove_file(e.path());
+                let _ = std::fs::remove_dir_all(e.path());
+            }
+        }
+    }
+    if !status.success() && read_extracted(&staging).is_none() {
+        let _ = std::fs::remove_dir_all(&staging);
+        return None;
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::rename(&staging, &dir).ok()?;
+    read_extracted(&dir)
 }
 
 fn u16_at(b: &[u8], at: usize) -> Option<u16> {
@@ -186,6 +326,73 @@ mod tests {
         file[0x3c..0x3e].copy_from_slice(&3u16.to_le_bytes());
         file[0x3e..0x40].copy_from_slice(&1u16.to_le_bytes());
         file
+    }
+
+    #[test]
+    fn the_embedded_entry_and_icon_are_extracted_once() {
+        let have = |tool: &str| {
+            std::process::Command::new(tool)
+                .arg("-version")
+                .output()
+                .is_ok()
+        };
+        if !have("mksquashfs") || !have("unsquashfs") {
+            eprintln!("squashfs-tools missing: skipped");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("appimage-embed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let root = dir.join("root");
+        std::fs::create_dir_all(root.join("usr/bin")).unwrap();
+        std::fs::write(
+            root.join("org.example.Lemon.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Lemon\nName[it]=Limone\nExec=lemon %F\n\
+             Icon=lemon\nCategories=Office;\nMimeType=text/x-lemon;\nStartupWMClass=lemon\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("lemon.png"), b"png").unwrap();
+        std::os::unix::fs::symlink("/etc/passwd", root.join(".DirIcon")).unwrap();
+        std::fs::write(root.join("usr/bin/lemon"), b"#!/bin/sh\n").unwrap();
+        let squash = dir.join("payload.squashfs");
+        let made = std::process::Command::new("mksquashfs")
+            .arg(&root)
+            .arg(&squash)
+            .args(["-quiet", "-no-progress", "-noappend"])
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let mut file = tiny_elf(b"\0");
+        let elf_len = file.len() as u64;
+        file.extend_from_slice(&std::fs::read(&squash).unwrap());
+        let app = dir.join("Lemon-1.0-x86_64.AppImage");
+        std::fs::write(&app, &file).unwrap();
+        assert_eq!(payload_offset(&app), Some(elf_len));
+        let cache = dir.join("cache");
+        assert_eq!(cached(&cache, &app), None);
+        let found = extract(&cache, &app).unwrap();
+        assert_eq!(found.desktop_id, "org.example.Lemon");
+        assert_eq!(found.entry.name.as_deref(), Some("Lemon"));
+        assert_eq!(
+            found.entry.names.get("it").map(String::as_str),
+            Some("Limone")
+        );
+        let icon = found.icon.clone().unwrap();
+        assert_eq!(icon.file_name().unwrap(), "lemon.png");
+        // Only the root's entries and icons, and no links.
+        let dir_of = cache_dir(&cache, &app).unwrap();
+        assert!(!dir_of.join("usr").exists());
+        assert!(dir_of.join(".DirIcon").symlink_metadata().is_err());
+        // From the cache from now on; a changed file is read again.
+        assert_eq!(cached(&cache, &app), Some(found));
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::fs::write(&app, &file).unwrap();
+        assert_eq!(cached(&cache, &app), None);
+        // Not an AppImage with a squashfs: nothing.
+        let plain = dir.join("Plain.AppImage");
+        std::fs::write(&plain, tiny_elf(b"\0")).unwrap();
+        assert_eq!(payload_offset(&plain), None);
+        assert_eq!(extract(&cache, &plain), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

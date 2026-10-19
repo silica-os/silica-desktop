@@ -31,9 +31,17 @@ Rules:
   that bundle is registered, used as a plain entry otherwise.
 - Hidden entries (`Hidden=true`) are dropped; `NoDisplay=true` entries are registered (they can
   open types) with `no_display = true`, and the shell does not list them.
-- An AppImage's name is its file name without `.AppImage` and the version suffix; its embedded
-  desktop entry is not read (it lives in a squashfs the daemon does not mount for a listing).
-  Its id is `appimage.<name>` until its first run, when the window's app id is learned.
+- An AppImage carries a desktop entry and its icon in the root of its squashfs (which starts
+  where the ELF runtime ends: after its section header table, magic `hsqs`). The daemon's
+  registry extracts them once with `unsquashfs -o <offset>` (the root's `*.desktop`, `*.png`,
+  `*.svg` and `.DirIcon`, regular files only) into `$XDG_CACHE_HOME/silica/appimages/<key>/`,
+  the key a hash of the file's path, size and modification time (a replaced or updated
+  AppImage is read again); Ossido and `silica-launch` only read that cache. The app then has
+  the entry's name, localized names, comment, categories, keywords, types, URL schemes and
+  window class, the extracted icon, and the entry's file name as its id when that is a
+  reverse-DNS id (silica-desktop#257). Without an entry (no `unsquashfs`, a damaged image) its
+  name is the file name without `.AppImage` and the version suffix, and its id
+  `appimage.<name>`.
 
 ## Watching
 

@@ -435,6 +435,45 @@ impl Info {
         })
     }
 
+    /// The description an AppImage run in the sandbox gets (docs/spec/launch.md): a native app
+    /// on the Silica platform (the image's `/usr`, which AppImages expect), its file as `exec`
+    /// run with `--appimage-extract-and-run` (no FUSE inside), with the network, the GPU and the
+    /// Downloads and Documents folders.
+    pub fn for_appimage(id: &str, name: &str, file_name: &str) -> Info {
+        Info {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            names: BTreeMap::new(),
+            version: String::new(),
+            build: 0,
+            minimum_silica: None,
+            kind: AppKind::Native,
+            runtime: Runtime::Ref {
+                name: PLATFORM.to_owned(),
+                branch: "1".to_owned(),
+            },
+            exec: file_name.to_owned(),
+            args: vec!["--appimage-extract-and-run".to_owned()],
+            categories: Vec::new(),
+            keywords: Vec::new(),
+            url_schemes: Vec::new(),
+            generic_name: String::new(),
+            comment: String::new(),
+            share: false,
+            types: BTreeMap::new(),
+            documents: BTreeMap::new(),
+            permissions: Permissions {
+                network: true,
+                devices: Devices::Gpu,
+                filesystem: vec!["xdg-download".to_owned(), "xdg-documents".to_owned()],
+                talk: Vec::new(),
+                background: false,
+            },
+            update: Update::default(),
+            developer: Developer::default(),
+        }
+    }
+
     /// Reads `<bundle>/Contents/Info.toml`.
     pub fn read(bundle: &Path) -> Result<Info, Error> {
         let path = bundle.join("Contents/Info.toml");

@@ -24,10 +24,14 @@ through the same check.
 3. **Run**, by kind:
    - `system`: the bundle's command directly (no sandbox; it is part of the image).
    - `bundle`: the sandbox below.
-   - `appimage`: directly, after the first-launch confirmation; with `sandbox = true` in the
-     app's approval record (Settings, "Run in sandbox") the sandbox below with `runtime = none`
-     and the AppImage bound at `/app/<name>.AppImage` (it needs FUSE inside: not granted, so
-     only AppImages that support `--appimage-extract-and-run` work sandboxed).
+   - `appimage`: directly, after the first-launch confirmation. With "Run in sandbox" (Mustache
+     › Get Info of the AppImage, `Trust1.SetSandbox`; `Assess` reports it as `sandbox`) the
+     sandbox below, with the description of `Info::for_appimage`: a native app on
+     `dev.silica.Platform//1` (the image's `/usr`: AppImages expect the libraries of the host,
+     not an empty `/usr`), the AppImage alone bound read-only at `/app/<file name>` (not its
+     folder), run with `--appimage-extract-and-run` (FUSE is not granted inside; type-2
+     runtimes extract into the sandbox's private `/tmp`), with the network, the GPU, and the
+     Downloads and Documents folders (silica-desktop#257).
    - `flatpak`: `flatpak run <id> <URI…>`.
 
    `--print` prints the command (one argument per line) instead of running it, for tests.

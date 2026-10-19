@@ -192,6 +192,12 @@ pub struct Dirs {
     pub app_folders: Vec<(PathBuf, Location)>,
     /// The Flatpak export folders (`…/exports/share`): entries under them are Flatpak apps.
     pub flatpak_exports: Vec<PathBuf>,
+    /// The cache of AppImages' embedded desktop entries and icons
+    /// (`$XDG_CACHE_HOME/silica/appimages`); None: they are named after their file.
+    pub appimage_cache: Option<PathBuf>,
+    /// Whether a scan extracts what the cache lacks (`unsquashfs`): the daemon's registry does;
+    /// other readers (Ossido, `silica-launch`) only read the cache.
+    pub extract_appimages: bool,
 }
 
 impl Dirs {
@@ -245,6 +251,12 @@ impl Dirs {
             data_dirs,
             app_folders,
             flatpak_exports,
+            appimage_cache: Some(
+                absolute("XDG_CACHE_HOME")
+                    .map_or_else(|| PathBuf::from(format!("{home}/.cache")), PathBuf::from)
+                    .join("silica/appimages"),
+            ),
+            extract_appimages: false,
         }
     }
 
@@ -362,8 +374,46 @@ pub fn app_of_info(info: &Info, path: &Path, location: Location) -> App {
     }
 }
 
-/// The app of an AppImage file.
-pub fn appimage_app(path: &Path, location: Location) -> App {
+/// The app of an AppImage file, with what it embeds when known: its desktop entry (name,
+/// localized names, comment, categories, keywords, types, window class, and its id when the
+/// entry's file name is a reverse-DNS id) and its icon.
+pub fn appimage_app(
+    path: &Path,
+    location: Location,
+    embedded: Option<&crate::appimage::Embedded>,
+) -> App {
+    let mut app = appimage_plain(path, location);
+    let Some(e) = embedded else {
+        return app;
+    };
+    let entry = &e.entry;
+    if let Some(name) = entry.name.as_deref().filter(|n| !n.trim().is_empty()) {
+        app.name = name.to_owned();
+    }
+    app.names.clone_from(&entry.names);
+    app.generic_name = entry.generic_name.clone().unwrap_or_default();
+    app.comment = entry.comment.clone().unwrap_or_default();
+    app.categories.clone_from(&entry.categories);
+    app.keywords.clone_from(&entry.keywords);
+    app.keywords_l10n.clone_from(&entry.keywords_l10n);
+    app.mime_types.clone_from(&entry.mime_types);
+    app.url_schemes = entry
+        .mime_types
+        .iter()
+        .filter_map(|m| m.strip_prefix("x-scheme-handler/"))
+        .map(str::to_owned)
+        .collect();
+    app.wm_class = entry.wm_class.clone().unwrap_or_default();
+    if let Some(icon) = &e.icon {
+        app.icon = icon.to_string_lossy().into_owned();
+    }
+    if crate::info::valid_bundle_id(&e.desktop_id) {
+        app.id.clone_from(&e.desktop_id);
+    }
+    app
+}
+
+fn appimage_plain(path: &Path, location: Location) -> App {
     let name = crate::appimage::display_name(path);
     App {
         id: crate::appimage::id_for(path),
@@ -508,7 +558,14 @@ impl Registry {
                     && path.is_file()
                     && crate::appimage::is_appimage(&path)
                 {
-                    Some(appimage_app(&path, *location))
+                    let embedded = dirs.appimage_cache.as_deref().and_then(|cache| {
+                        if dirs.extract_appimages {
+                            crate::appimage::extract(cache, &path)
+                        } else {
+                            crate::appimage::cached(cache, &path)
+                        }
+                    });
+                    Some(appimage_app(&path, *location, embedded.as_ref()))
                 } else {
                     None
                 };
@@ -719,6 +776,8 @@ mod tests {
                 (root.join("usr/Applications"), Location::System),
             ],
             flatpak_exports: vec![root.join("flatpak/exports/share")],
+            appimage_cache: Some(root.join("cache/appimages")),
+            extract_appimages: true,
         }
     }
 

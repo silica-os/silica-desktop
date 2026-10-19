@@ -205,10 +205,10 @@ fn is_system(path: &Path) -> bool {
 }
 
 /// The trust verdict: the daemon's (with its prompt), or without the daemon a local check that
-/// lets only `allow` through.
-fn trusted(path: &Path, bus: &Bus) -> Result<(), String> {
+/// lets only `allow` through. `Ok(true)`: an AppImage the user runs in the sandbox.
+fn trusted(path: &Path, bus: &Bus) -> Result<bool, String> {
     if is_system(path) {
-        return Ok(());
+        return Ok(false);
     }
     let text = path.to_string_lossy().into_owned();
     if let Some(bus) = bus.get() {
@@ -222,13 +222,17 @@ fn trusted(path: &Path, bus: &Bus) -> Result<(), String> {
             )
         };
         if let Ok(reply) = call("Assess")
-            && let Ok((verdict, _)) = reply
+            && let Ok((verdict, info)) = reply
                 .body()
                 .deserialize::<(String, HashMap<String, OwnedValue>)>()
         {
             trace(&format!("assessed: {verdict}"));
+            let sandbox = info
+                .get("sandbox")
+                .and_then(|v| bool::try_from(v.clone()).ok())
+                .unwrap_or(false);
             if verdict == "allow" {
-                return Ok(());
+                return Ok(sandbox);
             }
             // The alert in the shell; the user's choice comes back.
             let choice = call("Prompt")
@@ -236,7 +240,7 @@ fn trusted(path: &Path, bus: &Bus) -> Result<(), String> {
                 .and_then(|r| r.body().deserialize::<String>().ok())
                 .unwrap_or_else(|| "cancel".to_owned());
             return if choice == "open" {
-                Ok(())
+                Ok(sandbox)
             } else {
                 Err(format!("not opened ({verdict}, {choice})"))
             };
@@ -254,7 +258,7 @@ fn trusted(path: &Path, bus: &Bus) -> Result<(), String> {
         };
         let (verdict, reason) = decide_bundle(&facts, Policy::Trusted);
         if verdict == Verdict::Allow {
-            return Ok(());
+            return Ok(false);
         }
         return Err(format!(
             "the trust service is not running and the app is not allowed by itself ({}{})",
@@ -284,8 +288,50 @@ fn launch_path(
             &format!("{}: not an app bundle or an AppImage", path.display()),
         );
     }
-    if !print && let Err(why) = trusted(path, bus) {
-        return fail(REFUSED, &why);
+    let sandboxed = if print {
+        false
+    } else {
+        match trusted(path, bus) {
+            Ok(sandboxed) => sandboxed,
+            Err(why) => return fail(REFUSED, &why),
+        }
+    };
+    if !is_bundle && sandboxed {
+        // An AppImage the user runs in the sandbox (Get Info › Run in sandbox).
+        let dirs = silica_apps::registry::Dirs::from_env(env);
+        let embedded = dirs
+            .appimage_cache
+            .as_deref()
+            .and_then(|cache| silica_apps::appimage::cached(cache, path));
+        let id = embedded
+            .as_ref()
+            .map(|e| e.desktop_id.clone())
+            .filter(|id| silica_apps::info::valid_bundle_id(id))
+            .unwrap_or_else(|| silica_apps::appimage::id_for(path));
+        let name = embedded
+            .as_ref()
+            .and_then(|e| e.entry.name.clone())
+            .unwrap_or_else(|| silica_apps::appimage::display_name(path));
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let info = Info::for_appimage(&id, &name, &file_name);
+        let runtime = match resolve_runtime(&info.runtime, &session) {
+            Ok(r) => r,
+            Err(e) => return fail(NO_SANDBOX, &e),
+        };
+        let folder = path.parent().unwrap_or(Path::new("/"));
+        return run_sandboxed(
+            &info,
+            folder,
+            Some(path),
+            runtime,
+            &session,
+            uris,
+            print,
+            bus.get().is_some(),
+        );
     }
     if !is_bundle {
         // AppImages run as they are, after their confirmation.
@@ -320,6 +366,7 @@ fn launch_path(
     run_sandboxed(
         &info,
         &contents,
+        None,
         runtime,
         &session,
         uris,
@@ -360,9 +407,11 @@ fn wait_for(path: &Path, limit: Duration) -> bool {
     path.exists()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_sandboxed(
     info: &Info,
     contents: &Path,
+    app_file: Option<&Path>,
     runtime: RuntimeFiles,
     session: &Session,
     uris: &[String],
@@ -399,6 +448,7 @@ fn run_sandboxed(
         bus_socket: address.as_ref().map(|_| bus_socket.as_path()),
         registry: Some(&registry),
         targets: uris,
+        app_file,
     };
     let args = bwrap_args(&sandbox);
     trace("sandbox prepared");

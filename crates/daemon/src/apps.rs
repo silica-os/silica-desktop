@@ -76,7 +76,11 @@ impl AppsConfig {
             .filter(|v| v.starts_with('/'))
             .unwrap_or_else(|| format!("{}/.cache", env("HOME").unwrap_or_default()));
         AppsConfig {
-            dirs: Dirs::from_env(env),
+            // The daemon's registry extracts what AppImages embed (their entry and icon).
+            dirs: Dirs {
+                extract_appimages: true,
+                ..Dirs::from_env(env)
+            },
             db_path: Path::new(&cache).join("silica/apps.bin"),
             mime_dirs: mime::data_dirs(env),
             compat: true,

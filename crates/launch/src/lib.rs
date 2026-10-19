@@ -310,6 +310,9 @@ pub struct Sandbox<'a> {
     pub bus_socket: Option<&'a Path>,
     /// Files from the launch, bound read-write at their own paths (document portal not used).
     pub targets: &'a [String],
+    /// A single file as the app (an AppImage): bound read-only at `/app/<its name>`, instead of
+    /// `contents` at `/app`.
+    pub app_file: Option<&'a Path>,
 }
 
 fn s(p: &Path) -> String {
@@ -419,7 +422,19 @@ pub fn bwrap_args(sb: &Sandbox<'_>) -> Vec<String> {
         "../tmp".to_owned(),
         "/var/tmp".to_owned(),
     ]);
-    bind(&mut a, "--ro-bind", sb.contents, Path::new("/app"));
+    match sb.app_file {
+        Some(file) => {
+            a.extend(["--dir".to_owned(), "/app".to_owned()]);
+            let name = file.file_name().map(|n| n.to_string_lossy().into_owned());
+            bind(
+                &mut a,
+                "--ro-bind",
+                file,
+                &Path::new("/app").join(name.unwrap_or_default()),
+            );
+        }
+        None => bind(&mut a, "--ro-bind", sb.contents, Path::new("/app")),
+    }
     bind(
         &mut a,
         "--ro-bind",
@@ -572,6 +587,7 @@ mod tests {
             bus_socket: Some(Path::new("/run/user/1000/silica-launch/abc/bus")),
             registry: Some(Path::new("/run/user/1000/silica-launch/abc/apps")),
             targets: &["/home/u/Documents/a.txt".to_owned()],
+            app_file: None,
         };
         let args = bwrap_args(&sb);
         // No network without the permission; the GPU only.
@@ -642,6 +658,38 @@ mod tests {
     }
 
     #[test]
+    fn an_appimage_in_the_sandbox_is_its_file_at_app() {
+        let i = Info::for_appimage("org.example.Lemon", "Lemon", "Lemon-1.0.AppImage");
+        let sess = session();
+        let sb = Sandbox {
+            info: &i,
+            contents: Path::new("/home/u/Applications"),
+            runtime: RuntimeFiles::Host,
+            session: &sess,
+            info_file: Path::new("/i"),
+            bus_socket: None,
+            registry: None,
+            targets: &[],
+            app_file: Some(Path::new("/home/u/Applications/Lemon-1.0.AppImage")),
+        };
+        let args = bwrap_args(&sb);
+        // Only the file, not its folder.
+        let ro = pairs(&args, "--ro-bind");
+        assert!(ro.contains(&(
+            "/home/u/Applications/Lemon-1.0.AppImage".into(),
+            "/app/Lemon-1.0.AppImage".into()
+        )));
+        assert!(!ro.iter().any(|(from, _)| from == "/home/u/Applications"));
+        let dash = args.iter().position(|a| a == "--").unwrap();
+        assert_eq!(
+            &args[dash + 1..],
+            ["/app/Lemon-1.0.AppImage", "--appimage-extract-and-run"]
+        );
+        // The network, and no home but Downloads and Documents.
+        assert!(args.iter().all(|a| a != "--unshare-net"));
+    }
+
+    #[test]
     fn files_reach_the_app_as_paths() {
         let i = info("", "flutter", "dev.silica.Platform//1", "");
         let argv = app_command(
@@ -682,6 +730,7 @@ mod tests {
             bus_socket: None,
             registry: None,
             targets: &[],
+            app_file: None,
         };
         let args = bwrap_args(&sb);
         assert!(!args.contains(&"--unshare-net".to_owned()));
