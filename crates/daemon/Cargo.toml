@@ -30,6 +30,8 @@ resvg = { version = "0.48", default-features = false }
 rustix = { version = "1", features = ["event", "fs", "process"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha1 = "0.10"
+toml = "0.9"
 silica-apps = { path = "../apps" }
 silica-bundle = { path = "../bundle" }
 silica-assets = { path = "../silica-assets", default-features = false, features = ["compose"] }
@@ -41,4 +43,3 @@ zbus = "5.19"
 
 [dev-dependencies]
 silica-assets = { path = "../silica-assets", features = ["compile"] }
-toml = "0.9"

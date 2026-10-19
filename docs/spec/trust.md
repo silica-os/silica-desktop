@@ -66,8 +66,10 @@ The alert texts and layout are provisional until the Amalfi masters arrive (mark
 
 - the cache of assessments, keyed by (path, inode, modification time of `Info.toml` and of
   `_Signature/manifest`, SHA-256 of the manifest): a bundle that changes is verified again;
-- the approvals, keyed by (id, SHA-256 of the manifest) for bundles and (path, inode, size,
-  modification time) for AppImages: an update or a modification asks again;
+- the approvals, keyed by (id, developer key id) for signed bundles, so that an update signed by
+  the same developer stays approved (a modified bundle is blocked anyway: integrity is checked
+  before approvals), and by (path, inode, size, modification time) for unsigned bundles and
+  AppImages: replacing them asks again;
 - the recently blocked list.
 
 Verifying hashes every file of the bundle. A bundle whose full verification takes under
@@ -75,7 +77,7 @@ Verifying hashes every file of the bundle. A bundle whose full verification take
 launch. A larger one is answered from the cache while its stamp (inode and modification times of
 the bundle, `Contents/`, `Info.toml` and the manifest) is unchanged, and verified again in the
 background: a file changed in place, which no folder time shows, moves the app to `block` for the
-next launch and removes its approval.
+next launch.
 
 ## Developers, CA and revocation
 

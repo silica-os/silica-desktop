@@ -38,7 +38,9 @@ fn now() -> u64 {
 
 // ------------------------------------------------------------------------------- the store
 
-/// An approval: a bundle by (id, manifest hash), an AppImage by (path, inode, size, mtime).
+/// An approval: a signed bundle by (id, developer key id), so an update by the same developer
+/// stays approved (a modified bundle is still blocked: integrity comes first); an unsigned
+/// bundle or an AppImage by (path, inode, size, mtime).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Approval {
     Bundle {
@@ -458,22 +460,14 @@ impl Shared {
             && now_stamp.inode != 0
             && c.cost_ms >= CACHE_FROM_MS
         {
+            // Checked again in full in the background: a file changed in place updates the cache,
+            // and the next launch is blocked (integrity comes before any approval).
             let shared = Arc::clone(self);
             let path = bundle.to_path_buf();
-            let old = c.manifest.clone();
             let _ = std::thread::Builder::new()
                 .name("trust-reverify".to_owned())
                 .spawn(move || {
-                    let (integrity, _, manifest) = shared.verify_now(&path, now_stamp);
-                    if integrity != Integrity::Valid || manifest != old {
-                        let mut state = shared.state();
-                        state.store.approvals.retain(
-                            |a| !matches!(a, Approval::Bundle { manifest: m, .. } if *m == old),
-                        );
-                        let store = state.store.clone();
-                        drop(state);
-                        shared.save(&store);
-                    }
+                    shared.verify_now(&path, now_stamp);
                 });
             return (
                 integrity_of(c.integrity, &c.reason),
@@ -489,7 +483,8 @@ impl Shared {
         let started = std::time::Instant::now();
         let v = verify_bundle(bundle, &self.roots());
         let cost_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
-        let manifest = v.manifest_sha256.clone().unwrap_or_default();
+        // What approvals are keyed on: the developer key (empty for an unsigned bundle).
+        let manifest = v.key_id.map(|k| k.to_string()).unwrap_or_default();
         let (code, reason) = integrity_code(&v.integrity);
         let mut state = self.state();
         state.store.cache.insert(
@@ -534,7 +529,9 @@ impl Shared {
             reason: "invalid",
             approval: None,
         };
-        if SYSTEM_PREFIXES.iter().any(|p| text.starts_with(p)) {
+        if SYSTEM_PREFIXES.iter().any(|p| text.starts_with(p))
+            || silica_apps::registry::is_system_path(&path)
+        {
             a.verdict = Verdict::Allow;
             a.kind = "system";
             a.reason = "";

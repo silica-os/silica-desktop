@@ -404,9 +404,7 @@ pub(crate) fn bundle_icon(
     flags: u32,
 ) -> Answer {
     let path = uri_to_path(uri)?;
-    if !path.extension().is_some_and(|e| e == "app")
-        || !path.join("Contents/Info.toml").is_file()
-    {
+    if !path.extension().is_some_and(|e| e == "app") || !path.join("Contents/Info.toml").is_file() {
         return None;
     }
     let folder = path.join("Contents/Resources/icon");
@@ -415,8 +413,13 @@ pub(crate) fn bundle_icon(
     }
     let appearance = (flags >> ICON_APPEARANCE_SHIFT) & 7;
     let accent = flags >> ICON_ACCENT_SHIFT;
-    if let Some(png) = app_icons.icon(&folder.to_string_lossy(), size_px, scale, appearance, accent)
-    {
+    if let Some(png) = app_icons.icon(
+        &folder.to_string_lossy(),
+        size_px,
+        scale,
+        appearance,
+        accent,
+    ) {
         return Some((png, false));
     }
     // A bundle with only a flat icon.png.
@@ -645,7 +648,10 @@ mod tests {
             Some((bundle.join("Contents/Resources/icon/icon.png"), false))
         );
         // A folder named .app without Info.toml is a folder.
-        assert_eq!(bundle_icon(&icons, &uri(&root.join("Plain.app")), 64, 1.0, 0), None);
+        assert_eq!(
+            bundle_icon(&icons, &uri(&root.join("Plain.app")), 64, 1.0, 0),
+            None
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
