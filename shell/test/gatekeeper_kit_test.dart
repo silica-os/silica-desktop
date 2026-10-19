@@ -1,4 +1,4 @@
-// The Gatekeeper alerts against the Amalfi kit (silica-design cbf75649,
+// The Gatekeeper alerts against the Amalfi kit (silica-design 57b36a85,
 // `kit/symbols/Alerts/Gatekeeper/<Variant>/Rest/Light`, copied to
 // `test/fixtures/kit/gatekeeper/`): the alert's width, the text block's place and width, the
 // title's box and every button's frame equal the master's, for the kit's example app "Lemon"
