@@ -402,6 +402,16 @@ fn app_package(dir: &Path) -> Result<String> {
         .ok_or_else(|| "pubspec.yaml without name".to_owned())
 }
 
+/// The `version:` of a Dart project's `pubspec.yaml`, without the build number (`0.3.0+4` →
+/// `0.3.0`).
+pub fn pubspec_version(project: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(project.join("pubspec.yaml")).ok()?;
+    text.lines()
+        .find_map(|l| l.strip_prefix("version:"))
+        .map(|v| v.trim().split('+').next().unwrap_or("").trim().to_owned())
+        .filter(|v| !v.is_empty())
+}
+
 /// The Dart projects of the repo: the shell and the test apps in `testapps/`, as relative
 /// paths (`shell`, `testapps/demo`). `silica_ui` and the apps have their own repositories.
 pub fn projects() -> Result<Vec<String>> {

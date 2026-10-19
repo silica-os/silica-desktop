@@ -15,6 +15,15 @@ use crate::mimeapps::MimeApps;
 pub const DESKTOP: &str = "Silica";
 /// The command that starts bundles and AppImages.
 pub const LAUNCHER: &str = "silica-launch";
+/// The development VM's system apps (`cargo xtask os deploy --apps`): treated like
+/// `/usr/Applications` (root-owned; absent from released images).
+pub const DEV_SYSTEM_APPS: &str = "/var/lib/silica-dev/Applications";
+
+/// Whether `path` is a system app: in the image's `/usr`, or the development VM's stand-in.
+pub fn is_system_path(path: &Path) -> bool {
+    path.starts_with("/usr/") || path.starts_with(DEV_SYSTEM_APPS)
+}
+
 /// The folder of the compatibility entries, under `$XDG_DATA_HOME/applications`.
 pub const COMPAT_DIR: &str = "silica-bundles";
 
@@ -46,7 +55,7 @@ impl Kind {
 pub enum Location {
     /// `/usr/Applications`.
     System,
-    /// `/Applications` (and the development folder of the VM).
+    /// `/Applications`.
     Local,
     /// `~/Applications`.
     User,
@@ -221,10 +230,8 @@ impl Dirs {
             ));
         }
         app_folders.push((PathBuf::from("/Applications"), Location::Local));
-        app_folders.push((
-            PathBuf::from("/var/lib/silica-dev/Applications"),
-            Location::Local,
-        ));
+        // The development VM's stand-in for /usr/Applications (`cargo xtask os deploy`).
+        app_folders.push((PathBuf::from(DEV_SYSTEM_APPS), Location::System));
         app_folders.push((PathBuf::from("/usr/Applications"), Location::System));
         Dirs {
             config_home: absolute("XDG_CONFIG_HOME")
