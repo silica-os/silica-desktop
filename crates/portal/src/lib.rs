@@ -183,9 +183,55 @@ pub fn find_mustache_exec(env: &HashMap<String, String>) -> Option<String> {
         })
 }
 
+/// Marks a file an app saves through the dialog with the quarantine attribute (silica-os
+/// `docs/app-bundles.md` § 6): the file is created empty when it does not exist yet, so that the
+/// attribute is there before the app writes it (writing keeps it; a save that replaces the
+/// file with a renamed temporary one drops it, a documented limit), and `app_id` is the agent.
+pub fn mark_saved(path: &std::path::Path, app_id: &str) -> std::io::Result<()> {
+    use silica_bundle::quarantine::{FROM_PORTAL, Quarantine, write};
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e),
+    }
+    write(path, &Quarantine::now(FROM_PORTAL, app_id, ""))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_files_are_marked() {
+        let dir = std::env::temp_dir().join(format!("portal-mark-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let new = dir.join("download.AppImage");
+        let _ = std::fs::remove_file(&new);
+        match mark_saved(&new, "org.example.Browser") {
+            Ok(()) => {
+                assert_eq!(std::fs::read(&new).unwrap(), b"");
+                let q = silica_bundle::quarantine::read(&new).unwrap();
+                assert_eq!(q.agent, "org.example.Browser");
+                assert_eq!(q.flags, silica_bundle::quarantine::FROM_PORTAL);
+                // An existing file keeps its contents and gets the mark.
+                std::fs::write(&new, "data").unwrap();
+                silica_bundle::quarantine::clear(&new).unwrap();
+                mark_saved(&new, "org.example.Other").unwrap();
+                assert_eq!(std::fs::read(&new).unwrap(), b"data");
+                assert_eq!(
+                    silica_bundle::quarantine::read(&new).unwrap().agent,
+                    "org.example.Other"
+                );
+            }
+            // A file system without user attributes: the file is still created.
+            Err(e) => assert_eq!(e.raw_os_error(), Some(95), "{e}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn exec_words_respect_quotes_and_drop_field_codes() {

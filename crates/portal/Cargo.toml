@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 async-io = "2"
 futures-lite = "2"
+silica-bundle = { path = "../bundle" }
 zbus = "5.19"
 
 [dev-dependencies]

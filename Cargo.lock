@@ -2496,6 +2496,7 @@ version = "0.0.0"
 dependencies = [
  "async-io",
  "futures-lite",
+ "silica-bundle",
  "zbus",
 ]
 

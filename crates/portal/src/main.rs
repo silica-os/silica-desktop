@@ -121,18 +121,57 @@ impl FileChooser {
     async fn save_file(
         &self,
         _handle: ObjectPath<'_>,
-        _app_id: &str,
+        app_id: &str,
         parent_window: &str,
         title: &str,
         options: HashMap<String, OwnedValue>,
     ) -> (u32, Results) {
-        run_dialog(DialogKind::Save, request(parent_window, title, &options)).await
+        let (response, results) =
+            run_dialog(DialogKind::Save, request(parent_window, title, &options)).await;
+        // What an app saves arrives from outside: the quarantine attribute (docs/spec/trust.md).
+        if response == RESPONSE_OK
+            && let Some(uris) = results
+                .get("uris")
+                .and_then(|v| Vec::<String>::try_from(v.clone()).ok())
+        {
+            for uri in uris {
+                if let Some(path) = uri
+                    .strip_prefix("file://")
+                    .and_then(|p| silica_portal::path_from_bytes(&percent_decode(p)))
+                    && let Err(err) = silica_portal::mark_saved(std::path::Path::new(&path), app_id)
+                {
+                    eprintln!("silica-portal: quarantine {path}: {err}");
+                }
+            }
+        }
+        (response, results)
     }
 
     #[zbus(property)]
     fn version(&self) -> u32 {
         4
     }
+}
+
+/// Decodes `%XX` escapes of a URI path.
+fn percent_decode(text: &str) -> Vec<u8> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while let Some(&b) = bytes.get(i) {
+        if b == b'%'
+            && let Some(hex) = bytes.get(i + 1..i + 3)
+            && let Ok(text) = std::str::from_utf8(hex)
+            && let Ok(v) = u8::from_str_radix(text, 16)
+        {
+            out.push(v);
+            i += 3;
+            continue;
+        }
+        out.push(b);
+        i += 1;
+    }
+    out
 }
 
 const USAGE: &str = "usage: silica-portal [--address ADDRESS]
