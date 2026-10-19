@@ -6,6 +6,7 @@
 //! (`dev.frascella.Silica.Sound1`). See `docs/daemon.md`.
 
 pub mod actions;
+pub mod apps;
 pub mod auth;
 pub mod clipboard;
 pub mod icons;

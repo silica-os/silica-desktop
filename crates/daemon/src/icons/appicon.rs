@@ -38,6 +38,10 @@ impl AppIcons {
     }
 
     fn apps(&self) -> Option<Arc<Apps>> {
+        // The live registry of the Apps1 service is always current: no time-to-live.
+        if crate::apps::live(&self.dirs).is_some() {
+            return Some(Arc::new(Apps::load(self.dirs.clone())));
+        }
         let mut guard = self.apps.lock().ok()?;
         if let Some((at, apps)) = guard.as_ref()
             && at.elapsed() < APPS_TTL

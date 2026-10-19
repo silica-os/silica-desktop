@@ -122,6 +122,10 @@ impl Icons {
     }
 
     fn apps(&self) -> Arc<Apps> {
+        // The live registry of the Apps1 service is always current: no time-to-live.
+        if crate::apps::live(&self.dirs).is_some() {
+            return Arc::new(Apps::load(self.dirs.clone()));
+        }
         let Ok(mut guard) = self.apps.lock() else {
             return Arc::new(Apps::load(self.dirs.clone()));
         };

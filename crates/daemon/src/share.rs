@@ -8,8 +8,7 @@
 //!
 //! The menu itself (its look and order) belongs to the app's toolkit (silica_ui).
 
-use std::path::{Path, PathBuf};
-
+use silica_apps::registry::{Dirs, Registry};
 use zbus::interface;
 
 use crate::clipboard;
@@ -39,127 +38,22 @@ pub struct ShareApp {
     pub exec: String,
 }
 
-/// The `applications/` folders, most important first (XDG_DATA_HOME, then XDG_DATA_DIRS).
-fn application_dirs(env: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
-    let home = env("HOME").unwrap_or_default();
-    let data_home = env("XDG_DATA_HOME")
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| format!("{home}/.local/share"));
-    let data_dirs = env("XDG_DATA_DIRS")
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "/usr/local/share:/usr/share".to_owned());
-    std::iter::once(data_home)
-        .chain(
-            data_dirs
-                .split(':')
-                .filter(|d| !d.is_empty())
-                .map(str::to_owned),
-        )
-        .map(|d| Path::new(&d).join("applications"))
-        .collect()
-}
-
-/// The share app of the `[Desktop Entry]` group of `text`, or None when the entry is not an
-/// application, is hidden, has no Exec, or does not opt in.
-pub fn parse_entry(id: &str, text: &str) -> Option<ShareApp> {
-    let mut in_entry = false;
-    let (mut name, mut icon, mut exec, mut kind) = (None, String::new(), None, None);
-    let (mut hidden, mut share) = (false, false);
-    for line in text.lines().map(str::trim) {
-        if line.starts_with('[') {
-            in_entry = line == "[Desktop Entry]";
-            continue;
-        }
-        if !in_entry {
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let (key, value) = (key.trim(), value.trim());
-        match key {
-            "Name" => name = Some(value.to_owned()),
-            "Icon" => icon = value.to_owned(),
-            "Exec" => exec = Some(value.to_owned()),
-            "Type" => kind = Some(value.to_owned()),
-            "Hidden" | "NoDisplay" if value == "true" => hidden = true,
-            SHARE_KEY => share = value == "true",
-            _ => {}
-        }
-    }
-    if hidden || !share || kind.as_deref() != Some("Application") {
-        return None;
-    }
-    Some(ShareApp {
-        id: id.to_owned(),
-        name: name.unwrap_or_else(|| id.to_owned()),
-        icon,
-        exec: exec.filter(|e| !e.is_empty())?,
-    })
-}
-
-/// The applications that opt in, by name; an id found in an earlier folder wins.
+/// The applications that opt in, by name, from the session's app registry (the live one of the
+/// `Apps1` service, else a scan of the same folders).
 pub fn share_apps(env: &dyn Fn(&str) -> Option<String>) -> Vec<ShareApp> {
-    let mut apps: Vec<ShareApp> = Vec::new();
-    for dir in application_dirs(env) {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
-        paths.sort();
-        for path in paths {
-            let Some(id) = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .and_then(|n| n.strip_suffix(".desktop"))
-            else {
-                continue;
-            };
-            if apps.iter().any(|a| a.id == id) {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            if let Some(app) = parse_entry(id, &text) {
-                apps.push(app);
-            }
-        }
-    }
-    apps.sort_by_key(|a| a.name.to_lowercase());
-    apps
-}
-
-/// Splits an `Exec` line into words (double quotes group, `\` escapes inside them).
-fn split_exec(exec: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut word = String::new();
-    let (mut quoted, mut started) = (false, false);
-    let mut chars = exec.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '"' => {
-                quoted = !quoted;
-                started = true;
-            }
-            '\\' if quoted => {
-                if let Some(next) = chars.next() {
-                    word.push(next);
-                }
-            }
-            c if c.is_whitespace() && !quoted => {
-                if started || !word.is_empty() {
-                    words.push(std::mem::take(&mut word));
-                    started = false;
-                }
-            }
-            c => word.push(c),
-        }
-    }
-    if started || !word.is_empty() {
-        words.push(word);
-    }
-    words
+    let dirs = Dirs::from_env(env);
+    let registry =
+        crate::apps::live(&dirs).unwrap_or_else(|| std::sync::Arc::new(Registry::scan(dirs)));
+    registry
+        .share_targets()
+        .into_iter()
+        .map(|a| ShareApp {
+            id: a.id.clone(),
+            name: a.name.clone(),
+            icon: a.icon.clone(),
+            exec: a.exec.clone(),
+        })
+        .collect()
 }
 
 /// The local path of a `file://` URI (percent-decoded), or the argument itself.
@@ -191,31 +85,13 @@ pub(crate) fn local_path(uri: &str) -> String {
 /// every file in one run, `%f`/`%u` one run per file, and an Exec without them gets the files
 /// at the end. `%%` is a `%`; the other codes are dropped.
 pub fn command_lines(exec: &str, uris: &[String]) -> Vec<Vec<String>> {
-    let words = split_exec(exec);
-    let paths: Vec<String> = uris.iter().map(|u| local_path(u)).collect();
-    let has = |code: &str| words.iter().any(|w| w == code);
-    let expand = |single: Option<&String>| -> Vec<String> {
-        let mut out = Vec::new();
-        for word in &words {
-            match word.as_str() {
-                "%F" => out.extend(paths.iter().cloned()),
-                "%U" => out.extend(uris.iter().cloned()),
-                "%f" => out.extend(single.map(|u| local_path(u))),
-                "%u" => out.extend(single.cloned()),
-                w if w.len() == 2 && w.starts_with('%') && w != "%%" => {}
-                w => out.push(w.replace("%%", "%")),
-            }
-        }
-        out
-    };
-    if has("%f") || has("%u") {
-        return uris.iter().map(|u| expand(Some(u))).collect();
-    }
-    let mut line = expand(None);
-    if !has("%F") && !has("%U") {
-        line.extend(paths);
-    }
-    vec![line]
+    silica_apps::exec::launch_lines(
+        exec,
+        &silica_apps::exec::Context {
+            targets: uris,
+            ..silica_apps::exec::Context::default()
+        },
+    )
 }
 
 /// The Share menu's targets: `copy`, then the applications.
@@ -295,37 +171,16 @@ mod tests {
 
     #[test]
     fn copy_comes_first_then_the_apps() {
-        let app = parse_entry("dev.frascella.Mail", MAIL).expect("opts in");
+        let app = ShareApp {
+            id: "dev.frascella.Mail".to_owned(),
+            name: "Mail".to_owned(),
+            icon: "dev.frascella.Mail".to_owned(),
+            exec: "mail --compose %F".to_owned(),
+        };
         let targets = targets_for(vec![app]);
         let ids: Vec<&str> = targets.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids, ["copy", "dev.frascella.Mail"]);
         assert_eq!(targets[1].icon, "dev.frascella.Mail");
-    }
-
-    #[test]
-    fn only_apps_that_opt_in_are_targets() {
-        let app = parse_entry("dev.frascella.Mail", MAIL);
-        assert_eq!(
-            app,
-            Some(ShareApp {
-                id: "dev.frascella.Mail".to_owned(),
-                name: "Mail".to_owned(),
-                icon: "dev.frascella.Mail".to_owned(),
-                exec: "mail --compose %F".to_owned(),
-            })
-        );
-        assert_eq!(
-            parse_entry("x", &MAIL.replace("X-Silica-Share=true\n", "")),
-            None
-        );
-        assert_eq!(parse_entry("x", &format!("{MAIL}NoDisplay=true\n")), None);
-        assert_eq!(
-            parse_entry("x", &MAIL.replace("Type=Application", "Type=Link")),
-            None
-        );
-        // Keys of other groups don't count.
-        let action = "[Desktop Entry]\nType=Application\nName=A\nExec=a\n[Desktop Action b]\nX-Silica-Share=true\n";
-        assert_eq!(parse_entry("a", action), None);
     }
 
     #[test]
@@ -378,10 +233,22 @@ mod tests {
             MAIL.replace("Name=Mail", "Name=Archive"),
         )
         .unwrap();
+        // Hidden ones and those that do not opt in are not targets.
+        std::fs::write(
+            sys.join("applications/b.desktop"),
+            MAIL.replace("X-Silica-Share=true\n", ""),
+        )
+        .unwrap();
+        std::fs::write(
+            sys.join("applications/c.desktop"),
+            format!("{MAIL}NoDisplay=true\n"),
+        )
+        .unwrap();
         let (h, s) = (home.display().to_string(), sys.display().to_string());
         let env = move |k: &str| match k {
             "XDG_DATA_HOME" => Some(h.clone()),
             "XDG_DATA_DIRS" => Some(s.clone()),
+            "HOME" => Some("/nonexistent".to_owned()),
             _ => None,
         };
         let names: Vec<String> = share_apps(&env).into_iter().map(|a| a.name).collect();

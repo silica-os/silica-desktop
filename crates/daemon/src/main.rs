@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 use futures_lite::{StreamExt, future};
 use silica_daemon::actions::{ACTIONS_PATH, Actions};
+use silica_daemon::apps::{AppsConfig, AppsService};
 use silica_daemon::settings::{SETTINGS_PATH, Settings};
 use silica_daemon::share::{SHARE_PATH, Share};
 use silica_daemon::sound::{SOUND_PATH, Sound, SoundConfig};
@@ -81,6 +82,13 @@ async fn run(address: Option<String>, replace: bool) -> zbus::Result<()> {
         },
     )
     .await?;
+    // Launch Services: the app registry, kept current, for the shell, the apps and the rest of
+    // the daemon (app icons, the Share menu).
+    let apps = AppsService::serve(
+        connection.clone(),
+        AppsConfig::from_env(&|k| std::env::var(k).ok()),
+    )
+    .await?;
     // Faro's clipboard and actions scopes.
     let clipboard = ClipboardService::serve(connection.clone()).await?;
     connection.object_server().at(ACTIONS_PATH, Actions).await?;
@@ -125,7 +133,10 @@ async fn run(address: Option<String>, replace: bool) -> zbus::Result<()> {
     future::or(
         future::or(
             future::or(
-                future::or(future::or(daemon.run(), system.run()), clipboard.run()),
+                future::or(
+                    future::or(future::or(daemon.run(), system.run()), clipboard.run()),
+                    apps.run(),
+                ),
                 auth.run(),
             ),
             lost,
