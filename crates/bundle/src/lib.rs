@@ -10,6 +10,7 @@ pub mod quarantine;
 pub mod sxv;
 pub mod trust;
 pub mod zip;
+pub mod zsync;
 
 /// The folder of a bundle's signature files, inside `Contents/`.
 pub const SIGNATURE_DIR: &str = "_Signature";
