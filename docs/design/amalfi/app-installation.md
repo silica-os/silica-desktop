@@ -206,3 +206,27 @@ These are Amalfi decisions, not observed on the reference:
 - the Locations position (after Places) and the label plate on custom backgrounds;
 - the "Flathub" policy item, which needs a new Settings1 value;
 - the Storage Applications card and the five Default apps rows.
+
+## Implementation notes
+
+Implemented in silica-desktop (the shell's Gatekeeper alerts, Launcher dot and Dock tile; the
+`flathub` policy in Trust1 and Settings1), Mustache (volume window, Locations, Eject and Quit
+and Move alerts) and Settings (Security card and menu, Storage applications, Default apps),
+with kit-parity tests against these masters. Where the code differs from the kit:
+
+- **Text measure.** Text wraps where the engine measures it: Confirm's long title takes four
+  lines in Flutter and three in the kit; the tests compare what is below the text block from
+  its actual bottom. Button widths add half a point to the measured label before rounding,
+  because the kit measures "Move to Trash" at 88 and the engine at 87.5; with it every width
+  of the masters (72, 80, 116, 156) comes out exact.
+- **Confirm origin.** A disk image origin (`file://…/Lemon.sxv`) has no host: the detail shows
+  the image's file name.
+- **Alias badge.** At (4, 92) from the icon's top-left, as the master's frame has it (the table
+  above says −4).
+- **Label plates.** Padding, radius and fill as specified; the label keeps the icon view's text
+  style (Callout), so a plate is 20 tall instead of 22.
+- **Default apps.** Four rows: nothing in Silica opens "the default terminal" yet, so the
+  Terminal row is left out until something does (no dead controls).
+- **App menu items.** Settings' in-window app menu uses silica_ui's menu item, where the icon
+  takes the check column; the master's separate icon column waits for silica_ui.
+
