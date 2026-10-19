@@ -76,8 +76,10 @@ portal (`$XDG_RUNTIME_DIR/doc/by-app/<id>` is the sandbox's `doc/`), OpenURI, No
 Screenshot. The files of the launch itself (opened from Mustache or the Dock) are bound
 read-write at their own paths, so the app gets the path it was asked to open.
 
-A bundle started from a disk image (`location = volume`) runs the same way (its `Contents/` is
-already read-only), and the shell shows the "Move to Applications" suggestion (`trust.md`).
+A bundle started from a disk image (under `$XDG_RUNTIME_DIR/silica-volumes`) runs the same way
+(its `Contents/` is already read-only); meanwhile `silica-launch` calls
+`Trust1.SuggestMove(path)` on a thread of its own, and the shell shows the "Move to
+Applications" suggestion (`trust.md`, silica-desktop#255).
 
 ## Start time
 

@@ -53,6 +53,18 @@ impl VolumesConfig {
     }
 }
 
+/// The volume `path` lies on, from the daemon's record of attached volumes in `volumes_dir`:
+/// its mount point and its image.
+pub fn volume_of(volumes_dir: &Path, path: &Path) -> Option<(PathBuf, PathBuf)> {
+    let text = std::fs::read_to_string(volumes_dir.join(".attached")).ok()?;
+    text.lines().find_map(|line| {
+        let (mount, image) = line.split_once('\t')?;
+        let mount = PathBuf::from(mount);
+        (mount.starts_with(volumes_dir) && path.starts_with(&mount))
+            .then(|| (mount, PathBuf::from(image)))
+    })
+}
+
 /// An attached volume.
 #[derive(Clone, Debug)]
 struct Volume {

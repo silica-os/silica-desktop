@@ -65,6 +65,7 @@ trait Trust1 {
     fn register_agent(&self) -> zbus::Result<()>;
     fn blocked(&self) -> zbus::Result<Vec<(String, String, u64)>>;
     fn open_anyway(&self, path: &str) -> zbus::Result<bool>;
+    fn suggest_move(&self, path: &str) -> zbus::Result<String>;
     #[zbus(signal)]
     fn prompt_requested(
         &self,
@@ -139,6 +140,8 @@ fn verdicts_prompts_and_approvals() {
         revocation_lists: vec![],
         system_bus: None,
         launcher: "true".to_owned(),
+        applications_dir: root.join("Applications"),
+        volumes_dir: root.join("volumes"),
     };
     let bus = Bus::start();
     async_io::block_on(async {
@@ -239,6 +242,43 @@ fn verdicts_prompts_and_approvals() {
         );
         // A bad answer is refused.
         assert!(trust.answer(999, "open").await.is_err());
+
+        // An app started from a disk image: the shell suggests Move to Applications; Move copies
+        // it into Applications in quarantine, beside an app of the same name.
+        let mount = root.join("volumes/Lemon 2.1");
+        let on_volume = bundle(&mount, "Lemon", &dev);
+        sign_bundle(&on_volume, &dev, None).unwrap();
+        std::fs::write(
+            root.join("volumes/.attached"),
+            format!("{}\t/home/u/Downloads/Lemon.sxv\n", mount.display()),
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("Applications/Lemon.app")).unwrap();
+        let shell = async {
+            let signal = requests.next().await.unwrap();
+            let args = signal.args().unwrap();
+            assert_eq!(args.verdict, "volume");
+            assert_eq!(s(&args.info, "name"), "Lemon");
+            trust.answer(args.id, "move").await.unwrap();
+            futures_lite::future::pending::<()>().await;
+        };
+        let target = path(&on_volume);
+        let moved = trust.suggest_move(&target).or(async {
+            shell.await;
+            panic!("the stand-in shell stopped")
+        });
+        assert_eq!(moved.await.unwrap(), "moved");
+        let copy = root.join("Applications/Lemon 2.app");
+        assert!(copy.join("Contents/Info.toml").is_file());
+        assert_eq!(
+            quarantine::read(&copy).map(|q| q.origin),
+            Some("file:///home/u/Downloads/Lemon.sxv".to_owned())
+        );
+        // Not on an attached disk image: nothing to suggest.
+        assert_eq!(
+            trust.suggest_move(&path(&unsigned)).await.unwrap(),
+            "cancel"
+        );
     });
     let _ = std::fs::remove_dir_all(&root);
 }

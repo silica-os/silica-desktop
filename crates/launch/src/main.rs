@@ -309,6 +309,10 @@ fn launch_path(
             app_command(&info, &contents, &session.embedder, uris),
         );
     }
+    // Started from a disk image: the suggestion to move it to Applications, while it runs.
+    if !print && path.starts_with(session.runtime_dir.join("silica-volumes")) {
+        suggest_move(path);
+    }
     let runtime = match resolve_runtime(&info.runtime, &session) {
         Ok(r) => r,
         Err(e) => return fail(NO_SANDBOX, &e),
@@ -322,6 +326,26 @@ fn launch_path(
         print,
         bus.get().is_some(),
     )
+}
+
+/// Asks Trust1 to suggest moving the bundle to Applications (the shell's alert; the copy is
+/// the daemon's), on a thread of its own: the app starts meanwhile.
+fn suggest_move(path: &Path) {
+    let text = path.to_string_lossy().into_owned();
+    let _ = std::thread::Builder::new()
+        .name("suggest-move".to_owned())
+        .spawn(move || {
+            let Ok(bus) = zbus::blocking::Connection::session() else {
+                return;
+            };
+            let _ = bus.call_method(
+                Some("dev.frascella.Silica"),
+                "/dev/frascella/Silica/Trust1",
+                Some("dev.frascella.Silica.Trust1"),
+                "SuggestMove",
+                &(text.as_str(),),
+            );
+        });
 }
 
 /// Waits until `path` exists, at most `limit`.

@@ -329,6 +329,10 @@ pub struct TrustConfig {
     pub system_bus: Option<Connection>,
     /// The command that opens an approved app (`silica-launch`).
     pub launcher: String,
+    /// Where "Move to Applications" copies an app started from a disk image (`/Applications`).
+    pub applications_dir: PathBuf,
+    /// Where disk images are mounted (`$XDG_RUNTIME_DIR/silica-volumes`).
+    pub volumes_dir: PathBuf,
 }
 
 impl TrustConfig {
@@ -347,6 +351,14 @@ impl TrustConfig {
             ca_dir: PathBuf::from(silica_bundle::trust::SYSTEM_CA_DIR),
             system_bus,
             launcher: "silica-launch".to_owned(),
+            applications_dir: PathBuf::from("/Applications"),
+            volumes_dir: PathBuf::from(
+                std::env::var("XDG_RUNTIME_DIR")
+                    .ok()
+                    .filter(|v| v.starts_with('/'))
+                    .unwrap_or_else(|| format!("/run/user/{}", rustix::process::getuid().as_raw())),
+            )
+            .join("silica-volumes"),
         }
     }
 }
@@ -719,35 +731,16 @@ impl Trust {
     }
 }
 
-type PendingTuple = (u32, String, HashMap<String, Value<'static>>);
-
-#[interface(name = "dev.frascella.Silica.Trust1")]
 impl Trust {
-    /// The verdict on an app bundle or an AppImage, with what it is made of.
-    async fn assess(&self, path: &str) -> (String, HashMap<String, Value<'static>>) {
-        let shared = Arc::clone(&self.shared);
-        let path = PathBuf::from(path);
-        let a = blocking::unblock(move || shared.assess(&path)).await;
-        (a.verdict.as_str().to_owned(), a.info())
-    }
-
-    /// Assesses again and, unless allowed, shows the alert in the shell and waits for the
-    /// choice: `open`, `cancel` or `trash`.
-    async fn prompt(
+    /// Shows an alert through the shell (the registered agent) and waits for the choice:
+    /// `cancel` at once without a shell, or after [`PROMPT_TIMEOUT`].
+    async fn ask(
         &self,
-        path: &str,
-        #[zbus(connection)] connection: &Connection,
-        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+        connection: &Connection,
+        emitter: &SignalEmitter<'_>,
+        verdict: &str,
+        a: &Assessment,
     ) -> fdo::Result<String> {
-        let shared = Arc::clone(&self.shared);
-        let target = PathBuf::from(path);
-        let a = blocking::unblock(move || shared.assess(&target)).await;
-        if a.verdict == Verdict::Allow {
-            return Ok("open".to_owned());
-        }
-        if a.verdict == Verdict::Block {
-            self.shared.note_blocked(&a);
-        }
         // Nobody to ask (no shell, or it went away): not opened, at once.
         let agent = self.shared.state().agent.clone();
         let present = match agent {
@@ -780,7 +773,7 @@ impl Trust {
             );
             id
         };
-        Self::prompt_requested(&emitter, id, a.verdict.as_str(), a.info())
+        Self::prompt_requested(emitter, id, verdict, a.info())
             .await
             .map_err(|e| fdo::Error::Failed(e.to_string()))?;
         let wait = async {
@@ -804,7 +797,123 @@ impl Trust {
         };
         let choice = future::or(wait, timeout).await;
         self.shared.state().prompts.remove(&id);
-        let _ = Self::prompt_closed(&emitter, id, &choice).await;
+        let _ = Self::prompt_closed(emitter, id, &choice).await;
+        Ok(choice)
+    }
+}
+
+/// Copies the bundle `source` (on a disk image) into `applications` as Move to Applications
+/// does (docs/spec/launch.md): under its own name, or the next free one ("Name 2.app"), marked
+/// with the quarantine attribute of the image it came from; through the polkit helper when
+/// the folder is not writable. Returns the installed path.
+pub fn move_to_applications(
+    source: &Path,
+    applications: &Path,
+    origin: &str,
+) -> Result<PathBuf, String> {
+    let name = source
+        .file_name()
+        .ok_or_else(|| format!("{}: no name", source.display()))?
+        .to_string_lossy()
+        .into_owned();
+    let free = |n: &str| applications.join(n).symlink_metadata().is_err();
+    let stem = name.strip_suffix(".app").unwrap_or(&name).to_owned();
+    let target_name = if free(&name) {
+        name.clone()
+    } else {
+        (2..10_000)
+            .map(|n| format!("{stem} {n}.app"))
+            .find(|n| free(n))
+            .ok_or("no free name")?
+    };
+    let mark = quarantine::Quarantine::now(quarantine::FROM_VOLUME, "dev.frascella.Silica", origin);
+    let copy = |from: &Path, to: &Path| -> Result<(), String> {
+        let status = std::process::Command::new("cp")
+            .args(["-a", "--no-preserve=ownership"])
+            .arg(from)
+            .arg(to)
+            .status()
+            .map_err(|e| format!("cp: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("cp: {status}"))
+        }
+    };
+    let probe = applications.join(format!(".silica-move-{}", std::process::id()));
+    let writable = std::fs::write(&probe, b"").is_ok();
+    let _ = std::fs::remove_file(&probe);
+    if writable {
+        let staging = applications.join(format!(".{target_name}.installing"));
+        let _ = std::fs::remove_dir_all(&staging);
+        if let Err(e) = copy(source, &staging) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(e);
+        }
+        let _ = quarantine::write(&staging, &mark);
+        let target = applications.join(&target_name);
+        return std::fs::rename(&staging, &target)
+            .map(|()| target)
+            .map_err(|e| {
+                let _ = std::fs::remove_dir_all(&staging);
+                e.to_string()
+            });
+    }
+    // Through polkit, as Mustache does: a staging folder of the helper's, the copy, commit.
+    let helper = |args: &[&str]| -> Result<String, String> {
+        let out = std::process::Command::new("pkexec")
+            .arg(APPLICATIONS_HELPER)
+            .args(args)
+            .output()
+            .map_err(|e| format!("pkexec: {e}"))?;
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+        } else {
+            Err("not allowed".to_owned())
+        }
+    };
+    let staging = PathBuf::from(helper(&["begin"])?);
+    let inside = staging.join(&target_name);
+    copy(source, &inside)?;
+    let _ = quarantine::write(&inside, &mark);
+    helper(&["commit", &staging.to_string_lossy()]).map(PathBuf::from)
+}
+
+/// The privileged helper of /Applications (pkexec runs only this path).
+const APPLICATIONS_HELPER: &str = "/usr/libexec/silica/silica-applications-helper";
+
+type PendingTuple = (u32, String, HashMap<String, Value<'static>>);
+
+#[interface(name = "dev.frascella.Silica.Trust1")]
+impl Trust {
+    /// The verdict on an app bundle or an AppImage, with what it is made of.
+    async fn assess(&self, path: &str) -> (String, HashMap<String, Value<'static>>) {
+        let shared = Arc::clone(&self.shared);
+        let path = PathBuf::from(path);
+        let a = blocking::unblock(move || shared.assess(&path)).await;
+        (a.verdict.as_str().to_owned(), a.info())
+    }
+
+    /// Assesses again and, unless allowed, shows the alert in the shell and waits for the
+    /// choice: `open`, `cancel` or `trash`.
+    async fn prompt(
+        &self,
+        path: &str,
+        #[zbus(connection)] connection: &Connection,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) -> fdo::Result<String> {
+        let shared = Arc::clone(&self.shared);
+        let target = PathBuf::from(path);
+        let a = blocking::unblock(move || shared.assess(&target)).await;
+        if a.verdict == Verdict::Allow {
+            return Ok("open".to_owned());
+        }
+        if a.verdict == Verdict::Block {
+            self.shared.note_blocked(&a);
+        }
+        let choice = self
+            .ask(connection, &emitter, a.verdict.as_str(), &a)
+            .await?;
         let choice = match (choice.as_str(), a.verdict) {
             ("open", Verdict::Confirm) => {
                 self.shared.approve(&a);
@@ -823,6 +932,50 @@ impl Trust {
         Ok(choice.to_owned())
     }
 
+    /// For an app bundle started from a disk image: asks the shell to suggest moving it to
+    /// Applications (the alert `volume`: Move to Applications, Not Now) and, on `move`, copies
+    /// it there in quarantine (docs/spec/launch.md). Returns `moved`, `cancel`, or `failed:
+    /// <reason>`; `cancel` at once for anything not a bundle on an attached disk image.
+    async fn suggest_move(
+        &self,
+        path: &str,
+        #[zbus(connection)] connection: &Connection,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) -> fdo::Result<String> {
+        let path = std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+        let volumes = self.shared.config.volumes_dir.clone();
+        let Some((_, image)) = crate::volumes::volume_of(&volumes, &path) else {
+            return Ok("cancel".to_owned());
+        };
+        let Ok(info) = Info::read(&path) else {
+            return Ok("cancel".to_owned());
+        };
+        let a = Assessment {
+            verdict: Verdict::Allow,
+            path: path.clone(),
+            kind: "bundle",
+            id: info.id,
+            name: info.name,
+            developer: info.developer.name,
+            developer_status: DeveloperStatus::Unsigned,
+            quarantine: None,
+            reason: "",
+            approval: None,
+        };
+        let choice = self.ask(connection, &emitter, "volume", &a).await?;
+        if choice != "move" {
+            return Ok("cancel".to_owned());
+        }
+        let applications = self.shared.config.applications_dir.clone();
+        let origin = format!("file://{}", image.display());
+        let moved =
+            blocking::unblock(move || move_to_applications(&path, &applications, &origin)).await;
+        Ok(match moved {
+            Ok(_) => "moved".to_owned(),
+            Err(e) => format!("failed: {e}"),
+        })
+    }
+
     /// The shell registers as the one that draws the alerts; prompts fail at once without it.
     fn register_agent(&self, #[zbus(header)] header: zbus::message::Header<'_>) -> fdo::Result<()> {
         let sender = header
@@ -834,7 +987,7 @@ impl Trust {
 
     /// The shell's answer to a prompt.
     fn answer(&self, id: u32, choice: &str) -> fdo::Result<()> {
-        if !matches!(choice, "open" | "cancel" | "trash") {
+        if !matches!(choice, "open" | "cancel" | "trash" | "move") {
             return Err(fdo::Error::InvalidArgs(format!("not a choice: {choice}")));
         }
         let mut state = self.shared.state();

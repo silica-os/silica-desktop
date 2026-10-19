@@ -133,6 +133,8 @@ fn a_bundle_runs_in_its_sandbox() {
         revocation_lists: vec![],
         system_bus: None,
         launcher: "true".to_owned(),
+        applications_dir: root.join("Applications"),
+        volumes_dir: root.join("volumes"),
     };
     let address = bus.address.clone();
     let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
