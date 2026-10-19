@@ -116,7 +116,8 @@ impl Control {
         {
             return Err("zsync: unsupported Hash-Lengths".to_owned());
         }
-        let count = usize::try_from(length.div_ceil(blocksize as u64)).map_err(|e| e.to_string())?;
+        let count =
+            usize::try_from(length.div_ceil(blocksize as u64)).map_err(|e| e.to_string())?;
         let per = rsum_bytes + checksum_bytes;
         if body.len() < count.saturating_mul(per) {
             return Err("zsync: the block checksums are truncated".to_owned());
@@ -158,13 +159,16 @@ pub fn make(data: &[u8], blocksize: usize, filename: &str, url: &str) -> Vec<u8>
     let seq_matches = if blocks > 1 { 2 } else { 1 };
     let bits = (length as f64).log2() + (blocksize as f64).log2();
     let rsum_bytes = (((bits - 8.6) / seq_matches as f64 / 8.0).ceil() as usize).clamp(2, 4);
-    let checksum_bytes = (((20.0 + ((1.0 + length as f64 / blocksize as f64).log2()
-        + (length as f64).log2()))
+    let checksum_bytes = (((20.0
+        + ((1.0 + length as f64 / blocksize as f64).log2() + (length as f64).log2()))
         / seq_matches as f64
         / 8.0)
         .ceil() as usize)
         .clamp(3, 16);
-    let sha1: String = Sha1::digest(data).iter().map(|b| format!("{b:02x}")).collect();
+    let sha1: String = Sha1::digest(data)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     let mut out = format!(
         "zsync: 0.6.2\nFilename: {filename}\nBlocksize: {blocksize}\nLength: {length}\n\
          Hash-Lengths: {seq_matches},{rsum_bytes},{checksum_bytes}\nURL: {url}\nSHA-1: {sha1}\n\n"
@@ -312,7 +316,9 @@ pub fn assemble(
         );
         let len = end - start;
         let Some(offset) = known else { continue };
-        let from = seed.get(*offset..*offset + len).ok_or("zsync: seed too short")?;
+        let from = seed
+            .get(*offset..*offset + len)
+            .ok_or("zsync: seed too short")?;
         out.get_mut(start..end)
             .ok_or("zsync: block out of range")?
             .copy_from_slice(from);
@@ -347,7 +353,14 @@ mod tests {
         let (old, new) = (fixture("old.bin"), fixture("new.bin"));
         assert_eq!(control.blocksize, 2048);
         assert_eq!(control.length, new.len() as u64);
-        assert_eq!((control.seq_matches, control.rsum_bytes, control.checksum_bytes), (2, 2, 3));
+        assert_eq!(
+            (
+                control.seq_matches,
+                control.rsum_bytes,
+                control.checksum_bytes
+            ),
+            (2, 2, 3)
+        );
         let plan = plan(&control, &old);
         let reused = plan.iter().filter(|p| p.is_some()).count();
         // Every block made only of old bytes is reused (blocks 0, 1, 4-7, 9-11): only those
@@ -389,7 +402,10 @@ mod tests {
         let plan = plan(&control, &[]);
         assert!(plan.iter().all(Option::is_none));
         assert_eq!(missing(&control, &plan), [(0, 10_000)]);
-        assert_eq!(assemble(&control, &[], &plan, &[(0, data.clone())]).unwrap(), data);
+        assert_eq!(
+            assemble(&control, &[], &plan, &[(0, data.clone())]).unwrap(),
+            data
+        );
         assert!(Control::parse(b"garbage").is_err());
     }
 }

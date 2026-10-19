@@ -124,7 +124,11 @@ fn adopt(fd: &OwnedFd, group: Gid, depth: usize) -> Result<(), String> {
                 rustix::fs::fchown(&file, Some(Uid::ROOT), Some(group))
                     .map_err(|e| e.to_string())?;
                 // Keep only the execute bits the owner had, for everyone.
-                let exec = if st.st_mode & 0o100 != 0 { 0o755 } else { 0o644 };
+                let exec = if st.st_mode & 0o100 != 0 {
+                    0o755
+                } else {
+                    0o644
+                };
                 rustix::fs::fchmod(&file, Mode::from_raw_mode(exec)).map_err(|e| e.to_string())?;
             }
             _ => return Err("a bundle holds only files, folders and links".to_owned()),
@@ -192,8 +196,13 @@ fn commit(staging: &str, uid: Uid, replace: bool) -> Result<PathBuf, String> {
         RenameFlags::NOREPLACE
     };
     let target = CString::new(name.clone()).map_err(|e| e.to_string())?;
-    match rustix::fs::renameat_with(&staging_fd, bundle.as_c_str(), &apps, target.as_c_str(), flags)
-    {
+    match rustix::fs::renameat_with(
+        &staging_fd,
+        bundle.as_c_str(),
+        &apps,
+        target.as_c_str(),
+        flags,
+    ) {
         Ok(()) => {}
         // Nothing to exchange with: a plain move.
         Err(rustix::io::Errno::NOENT) if replace => rustix::fs::renameat_with(
@@ -228,7 +237,10 @@ fn remove(name: &str) -> Result<(), String> {
     getrandom::fill(&mut random).map_err(|e| e.to_string())?;
     let gone = Path::new(APPLICATIONS).join(format!(
         ".remove-{}",
-        random.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        random
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
     ));
     std::fs::rename(&path, &gone).map_err(|e| e.to_string())?;
     std::fs::remove_dir_all(&gone).map_err(|e| e.to_string())
