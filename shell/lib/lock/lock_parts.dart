@@ -735,21 +735,50 @@ class LockGlyphGlass extends StatelessWidget {
     super.key,
     required this.look,
     this.inset = 0,
+    this.advances,
   });
 
   final String text;
   final LockLook look;
   final double inset;
 
+  /// The advance of each character of [text], to draw the whole string in one glass (one
+  /// backdrop blur and one mask for the clock instead of one per digit, which the virtio-gpu
+  /// Venus ring of the dev VM does not always keep up with, silica-desktop#253): each
+  /// character starts where the previous one's advance ends. Null: [text] is one run.
+  final List<double>? advances;
+
   @override
   Widget build(BuildContext context) {
     final m = AmalfiGlyphMaterials.clock;
     final style = lockClockStyle;
-    Widget layer(TextStyle s) => Positioned(
-      left: inset,
-      top: 0,
-      child: Text(text, style: s, softWrap: false, maxLines: 1),
-    );
+    final steps = advances;
+    Widget layer(TextStyle s) {
+      if (steps == null) {
+        return Positioned(
+          left: inset,
+          top: 0,
+          child: Text(text, style: s, softWrap: false, maxLines: 1),
+        );
+      }
+      final chars = text.characters.toList();
+      var x = inset;
+      final parts = <Widget>[];
+      for (var i = 0; i < chars.length; i++) {
+        parts.add(
+          Positioned(
+            left: x,
+            top: 0,
+            child: Text(chars[i], style: s, softWrap: false, maxLines: 1),
+          ),
+        );
+        x += i < steps.length ? steps[i] : 0;
+      }
+      return Positioned.fill(
+        child: Stack(clipBehavior: Clip.none, children: parts),
+      );
+    }
+
     Paint stroke(double width, Color color) => Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = width * 2
@@ -795,6 +824,7 @@ class LockGlyphGlass extends StatelessWidget {
             text: text,
             style: style,
             inset: inset,
+            advances: steps,
             child: Stack(
               children: [
                 // Off the mask's edges (silica-desktop#250): see [_GlyphMask.edge].
@@ -850,12 +880,14 @@ class _GlyphMask extends StatefulWidget {
     required this.text,
     required this.style,
     required this.inset,
+    this.advances,
     required this.child,
   });
 
   final String text;
   final TextStyle style;
   final double inset;
+  final List<double>? advances;
   final Widget child;
 
   @override
@@ -873,23 +905,36 @@ class _GlyphMaskState extends State<_GlyphMask> {
   }
 
   ui.Image? _maskOf(Size size, double dpr) {
-    final key = (widget.text, widget.style, widget.inset, size, dpr);
+    final key = (
+      widget.text,
+      widget.style,
+      widget.inset,
+      Object.hashAll(widget.advances ?? const <double>[]),
+      size,
+      dpr,
+    );
     if (key == _maskFor) return _mask;
     final width = (size.width * dpr).ceil();
     final height = (size.height * dpr).ceil();
     if (width <= 0 || height <= 0 || !size.isFinite) return null;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder)..scale(dpr);
-    final painter = TextPainter(
-      text: TextSpan(
-        text: widget.text,
-        style: widget.style.copyWith(color: const Color(0xFFFFFFFF)),
-      ),
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-    )..layout();
-    painter.paint(canvas, Offset(widget.inset, 0));
-    painter.dispose();
+    final white = widget.style.copyWith(color: const Color(0xFFFFFFFF));
+    final steps = widget.advances;
+    final chars = steps == null
+        ? [widget.text]
+        : widget.text.characters.toList();
+    var x = widget.inset;
+    for (var i = 0; i < chars.length; i++) {
+      final painter = TextPainter(
+        text: TextSpan(text: chars[i], style: white),
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+      )..layout();
+      painter.paint(canvas, Offset(x, 0));
+      painter.dispose();
+      if (steps != null) x += i < steps.length ? steps[i] : 0;
+    }
     final picture = recorder.endRecording();
     _mask?.dispose();
     _mask = picture.toImageSync(width, height);
@@ -1033,7 +1078,9 @@ class LockClockState extends State<LockClock>
         builder: (context, _) {
           var digit = 0;
           final cells = <Widget>[];
+          final steps = <double>[];
           final chars = time.characters.toList();
+          final rolling = _roll.isAnimating && _old.length == time.length;
           final old = _old.characters.toList();
           for (var i = 0; i < chars.length; i++) {
             final c = chars[i];
@@ -1045,6 +1092,7 @@ class LockClockState extends State<LockClock>
                 old[i] != c &&
                 _roll.isAnimating;
             final width = _advance(isDigit ? '0' : c);
+            steps.add(width);
             Widget glyph(String s, {double dy = 0, double opacity = 1}) =>
                 Positioned(
                   left: -_bleed,
@@ -1057,7 +1105,10 @@ class LockClockState extends State<LockClock>
                   ),
                 );
             Widget inner;
-            if (!changing) {
+            if (!rolling) {
+              // At rest the glass of all the digits is drawn once, under the row.
+              inner = const SizedBox.shrink();
+            } else if (!changing) {
               inner = Stack(clipBehavior: Clip.none, children: [glyph(c)]);
             } else {
               final p = _progress(_roll.value, index);
@@ -1111,7 +1162,27 @@ class LockClockState extends State<LockClock>
               ),
             );
           }
-          return Row(mainAxisSize: MainAxisSize.min, children: cells);
+          final row = Row(mainAxisSize: MainAxisSize.min, children: cells);
+          if (rolling) return row;
+          final total = steps.fold<double>(0, (a, b) => a + b);
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              row,
+              Positioned(
+                left: -_bleed,
+                top: 0,
+                width: total + 2 * _bleed,
+                height: LockMetrics.timeHeight,
+                child: LockGlyphGlass(
+                  time,
+                  look: look,
+                  inset: _bleed,
+                  advances: steps,
+                ),
+              ),
+            ],
+          );
         },
       ),
     );

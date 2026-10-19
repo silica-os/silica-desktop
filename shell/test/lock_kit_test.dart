@@ -160,13 +160,14 @@ void main() {
         expect(glass.backgroundBlur, blur['radius']);
         expect(glass.saturation, blur['saturation']);
         expect(glass.brightness, blur['brightness']);
-        // The glass digits are drawn: the backdrop under the glyph mask.
+        // The glass digits are drawn: one backdrop under one mask of all the glyphs at rest
+        // (silica-desktop#253).
         expect(
           find.descendant(
             of: find.byKey(const ValueKey('lock time')),
             matching: find.byType(BackdropFilter),
           ),
-          findsNWidgets(5),
+          findsOneWidget,
         );
         // The digits: tops at about y 169, baseline about 314 (lock-screen.md), 145 tall.
         final top = block.top + LockMetrics.timeTop + digitInset();
