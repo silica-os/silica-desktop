@@ -146,7 +146,7 @@ fn run_plain(print: bool, argv: Vec<String>) -> ExitCode {
 
 /// Whether `path` belongs to the system image.
 fn is_system(path: &Path) -> bool {
-    path.starts_with("/usr/")
+    silica_apps::registry::is_system_path(path)
 }
 
 /// The trust verdict: the daemon's (with its prompt), or without the daemon a local check that
@@ -291,9 +291,10 @@ fn run_sandboxed(
     let dir = session.runtime_dir.join("silica-launch").join(&instance);
     let info_file = dir.join("info");
     let bus_socket = dir.join("bus");
+    let registry = dir.join("apps");
     let data = session.data_dir(&info.id);
     if !print {
-        if let Err(e) = std::fs::create_dir_all(&dir)
+        if let Err(e) = std::fs::create_dir_all(&registry)
             .and_then(|()| std::fs::write(&info_file, flatpak_info(info, &instance)))
         {
             return fail(NO_SANDBOX, &format!("{}: {e}", dir.display()));
@@ -314,6 +315,7 @@ fn run_sandboxed(
         session,
         info_file: &info_file,
         bus_socket: address.as_ref().map(|_| bus_socket.as_path()),
+        registry: Some(&registry),
         targets: uris,
     };
     let args = bwrap_args(&sandbox);
@@ -360,6 +362,11 @@ fn run_sandboxed(
             }
         }
     }
+    let relay = if print {
+        None
+    } else {
+        registry_relay(&session.runtime_dir, &info.id, &registry)
+    };
     let status = Command::new("bwrap")
         .args(&args)
         .stdin(Stdio::null())
@@ -369,9 +376,57 @@ fn run_sandboxed(
         let _ = child.kill();
         let _ = child.wait();
     }
+    if let Some(socket) = relay {
+        let _ = std::fs::remove_file(socket);
+    }
     let _ = std::fs::remove_dir_all(&dir);
     match status {
         Ok(status) => ExitCode::from(u8::try_from(status.code().unwrap_or(1)).unwrap_or(1)),
         Err(e) => fail(NO_SANDBOX, &format!("bwrap: {e} (install bubblewrap)")),
     }
+}
+
+/// Relays the session's app registry to the app in the sandbox: a socket
+/// `$XDG_RUNTIME_DIR/silica-apps/<id>.<pid of silica-launch>.sock` (this process lives as long
+/// as the app) whose connections go to the socket the app made in its own registry folder (its
+/// pid there means nothing outside its pid namespace). Returns the relay socket.
+fn registry_relay(runtime_dir: &Path, id: &str, inner: &Path) -> Option<PathBuf> {
+    use std::os::unix::net::{UnixListener, UnixStream};
+    let folder = runtime_dir.join("silica-apps");
+    std::fs::create_dir_all(&folder).ok()?;
+    let socket = folder.join(format!("{id}.{}.sock", std::process::id()));
+    let _ = std::fs::remove_file(&socket);
+    let listener = UnixListener::bind(&socket).ok()?;
+    let inner = inner.to_path_buf();
+    let prefix = format!("{id}.");
+    let _ = std::thread::Builder::new()
+        .name("registry-relay".to_owned())
+        .spawn(move || {
+            for client in listener.incoming().flatten() {
+                let target = std::fs::read_dir(&inner).ok().and_then(|read| {
+                    read.flatten().map(|e| e.path()).find(|p| {
+                        p.file_name()
+                            .and_then(|n| n.to_str())
+                            .is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".sock"))
+                    })
+                });
+                let Some(target) = target else { continue };
+                let Ok(app) = UnixStream::connect(&target) else {
+                    continue;
+                };
+                let (Ok(mut client_r), Ok(mut app_w)) = (client.try_clone(), app.try_clone())
+                else {
+                    continue;
+                };
+                let _ = std::thread::Builder::new()
+                    .name("registry-relay-in".to_owned())
+                    .spawn(move || {
+                        let _ = std::io::copy(&mut client_r, &mut app_w);
+                        let _ = app_w.shutdown(std::net::Shutdown::Write);
+                    });
+                let (mut app_r, mut client_w) = (app, client);
+                let _ = std::io::copy(&mut app_r, &mut client_w);
+            }
+        });
+    Some(socket)
 }

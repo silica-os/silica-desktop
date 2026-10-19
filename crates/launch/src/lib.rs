@@ -297,6 +297,10 @@ pub struct Sandbox<'a> {
     pub session: &'a Session,
     /// The `/.flatpak-info` file to bind.
     pub info_file: &'a Path,
+    /// The app registry folder of the sandbox (its `$XDG_RUNTIME_DIR/silica-apps`): the app's
+    /// socket is relayed to the session's registry by `silica-launch` (the app's own pid means
+    /// nothing outside its pid namespace).
+    pub registry: Option<&'a Path>,
     /// The D-Bus proxy's socket, when there is a session bus.
     pub bus_socket: Option<&'a Path>,
     /// Files from the launch, bound read-write at their own paths (document portal not used).
@@ -396,6 +400,13 @@ pub fn bwrap_args(sb: &Sandbox<'_>) -> Vec<String> {
         ),
         Devices::All => bind(&mut a, "--dev-bind", Path::new("/dev"), Path::new("/dev")),
     }
+    // The GPU drivers find their device through /sys (libdrm): without it Mesa falls back to
+    // software rendering. Read-only, the parts Flatpak gives its apps too.
+    if p.devices != Devices::None {
+        for sys in ["/sys/dev", "/sys/devices", "/sys/class", "/sys/bus"] {
+            bind(&mut a, "--ro-bind-try", Path::new(sys), Path::new(sys));
+        }
+    }
     a.extend(["--tmpfs".to_owned(), "/tmp".to_owned()]);
     a.extend(["--dir".to_owned(), "/var".to_owned()]);
     a.extend([
@@ -428,6 +439,10 @@ pub fn bwrap_args(sb: &Sandbox<'_>) -> Vec<String> {
         &run.join("pipewire-0"),
         &run.join("pipewire-0"),
     );
+    // The app registry (silica-control `apps`): a folder of the instance, relayed.
+    if let Some(registry) = sb.registry {
+        bind(&mut a, "--bind", registry, &run.join("silica-apps"));
+    }
     if let Some(bus) = sb.bus_socket {
         bind(&mut a, "--bind", bus, &run.join("bus"));
     }
@@ -550,6 +565,7 @@ mod tests {
             session: &sess,
             info_file: Path::new("/run/user/1000/silica-launch/abc/info"),
             bus_socket: Some(Path::new("/run/user/1000/silica-launch/abc/bus")),
+            registry: Some(Path::new("/run/user/1000/silica-launch/abc/apps")),
             targets: &["/home/u/Documents/a.txt".to_owned()],
         };
         let args = bwrap_args(&sb);
@@ -574,6 +590,9 @@ mod tests {
                 .contains(&("/var/lib/silica-dev".into(), "/var/lib/silica-dev".into()))
         );
         assert!(pairs(&args, "--dev-bind-try").contains(&("/dev/dri".into(), "/dev/dri".into())));
+        assert!(
+            pairs(&args, "--ro-bind-try").contains(&("/sys/devices".into(), "/sys/devices".into()))
+        );
         let rw = pairs(&args, "--bind");
         assert!(rw.contains(&(
             "/home/u/.var/app/dev.example.Hello".into(),
@@ -633,6 +652,7 @@ mod tests {
             session: &sess,
             info_file: Path::new("/i"),
             bus_socket: None,
+            registry: None,
             targets: &[],
         };
         let args = bwrap_args(&sb);
