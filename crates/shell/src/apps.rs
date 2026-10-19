@@ -21,6 +21,12 @@ pub struct DesktopEntry {
     pub no_display: bool,
     /// `X-Silica-Icon`: a Silica app's icon folder (a path) or a shell icon's name.
     pub silica_icon: String,
+    /// `Categories`.
+    pub categories: Vec<String>,
+    /// `Keywords` and `GenericName`, for searching.
+    pub keywords: Vec<String>,
+    /// Not an app to show (`Hidden`, `Type` other than Application, `OnlyShowIn` others).
+    pub hidden: bool,
 }
 
 /// The data folders: `XDG_DATA_HOME`, then `XDG_DATA_DIRS`.
@@ -63,6 +69,12 @@ pub fn parse(id: &str, text: &str) -> DesktopEntry {
             "Icon" => e.icon = v.trim().to_string(),
             "NoDisplay" => e.no_display = v.trim() == "true",
             "X-Silica-Icon" => e.silica_icon = v.trim().to_string(),
+            "Categories" => e.categories = list(v),
+            "Keywords" => e.keywords.extend(list(v)),
+            "GenericName" => e.keywords.push(v.trim().to_string()),
+            "Hidden" => e.hidden |= v.trim() == "true",
+            "Type" => e.hidden |= v.trim() != "Application",
+            "OnlyShowIn" => e.hidden |= !list(v).iter().any(|d| d == "Silica"),
             _ => {}
         }
     }
@@ -70,6 +82,43 @@ pub fn parse(id: &str, text: &str) -> DesktopEntry {
         e.name = id.rsplit('.').next().unwrap_or(id).to_string();
     }
     e
+}
+
+fn list(v: &str) -> Vec<String> {
+    v.split(';')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Every app to show, by name (the first data folder wins for an id).
+pub fn all() -> Vec<DesktopEntry> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for d in data_dirs() {
+        let Ok(rd) = std::fs::read_dir(d.join("applications")) else {
+            continue;
+        };
+        for f in rd.flatten() {
+            let name = f.file_name().to_string_lossy().into_owned();
+            let Some(id) = name.strip_suffix(".desktop") else {
+                continue;
+            };
+            if !seen.insert(id.to_string()) {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(f.path()) else {
+                continue;
+            };
+            let e = parse(id, &text);
+            if !e.no_display && !e.hidden {
+                out.push(e);
+            }
+        }
+    }
+    out.sort_by_key(|e| e.name.to_lowercase());
+    out
 }
 
 /// The desktop entry of app `id`, from the first data folder that has it.

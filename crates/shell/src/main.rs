@@ -10,6 +10,7 @@
 mod apps;
 mod cc;
 mod dock;
+mod faro;
 mod lock;
 mod menubar;
 mod motion;
@@ -40,6 +41,8 @@ struct Shell {
     system: system::Shared,
     /// Control Center.
     cc: cc::Shared,
+    /// Faro and the Launcher.
+    faro: faro::Shared,
     /// The desktop wallpaper and its surfaces.
     wallpaper: Rc<RefCell<Option<wallpaper::Choice>>>,
     backgrounds: RefCell<Vec<vetro_lib::core::ViewId>>,
@@ -63,6 +66,7 @@ impl Shell {
             dock: Rc::new(RefCell::new(dock::DockState::default())),
             system: Rc::default(),
             cc: Rc::default(),
+            faro: Rc::default(),
             wallpaper: Rc::new(RefCell::new(None)),
             backgrounds: RefCell::new(Vec::new()),
         }
@@ -88,6 +92,26 @@ impl Shell {
         }
     }
 
+    /// Opens or closes Control Center under the first menu bar.
+    fn toggle_cc(&self, ui: &mut Ui) {
+        let Some(w) = self.bar.borrow().bars.first().map(|b| b.0) else {
+            return;
+        };
+        let width = ui.window(w).map_or(0.0, |w| w.size.width);
+        let bar = self.bar.clone();
+        menubar::set_status_active(ui, &bar, status::Kind::ControlCenter, true);
+        cc::toggle(
+            ui,
+            &self.cc,
+            &self.system,
+            w,
+            width,
+            Rc::new(move |ui: &mut Ui| {
+                menubar::set_status_active(ui, &bar, status::Kind::ControlCenter, false)
+            }),
+        );
+    }
+
     fn event(&self, ui: &mut Ui, e: &AppEvent) {
         match e {
             AppEvent::Shell(ShellEvent::Broadcast { topic, value })
@@ -99,9 +123,13 @@ impl Shell {
                     lock::forget(ui, &self.lock);
                 }
             }
-            AppEvent::Shell(ShellEvent::Command(id)) if id == "lock.now" => {
-                lock::lock(ui, &self.lock);
-            }
+            AppEvent::Shell(ShellEvent::Command(id)) => match id.as_str() {
+                "lock.now" => lock::lock(ui, &self.lock),
+                "faro.toggle" => faro::toggle(ui, &self.faro, faro::Mode::Faro),
+                "launcher.toggle" => faro::toggle(ui, &self.faro, faro::Mode::Launcher),
+                "controlcenter.toggle" => self.toggle_cc(ui),
+                _ => tracing::debug!("shell command {id} not handled"),
+            },
             AppEvent::Shell(ShellEvent::Toplevel {
                 identifier,
                 app_id,
@@ -145,9 +173,7 @@ fn install_status(ui: &mut Ui, shell: &Rc<Shell>) {
             return;
         };
         match kind {
-            status::Kind::Search => ui.shell(vetro_lib::core::shell::ShellRequest::Execute(
-                "faro.toggle".into(),
-            )),
+            status::Kind::Search => faro::toggle(ui, &s.faro, faro::Mode::Faro),
             status::Kind::Clock => {}
             _ => {
                 let Some(w) = ui.window_of(item) else {

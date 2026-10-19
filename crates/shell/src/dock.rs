@@ -905,6 +905,7 @@ fn activate(ui: &mut Ui, state: &Shared, i: usize) {
                 None => {
                     let params = serde_json::json!({ "app": app.entry.id }).to_string();
                     ui.shell(ShellRequest::ExecuteWith("app.launch".into(), params));
+                    crate::faro::note_launched(&app.entry.id);
                     // A bounce always lands: a new launch waits for the current hop.
                     if let Some(t) = state.borrow_mut().tiles.get_mut(i)
                         && t.launched.is_none_or(|l| now - l > LAUNCH_TIMEOUT)
