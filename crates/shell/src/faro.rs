@@ -216,18 +216,17 @@ fn state_file() -> Option<PathBuf> {
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
-    Some(dir.join("silica/recent-apps"))
+    Some(dir.join("silica/recent-apps.json"))
 }
 
-/// The recently opened apps, the newest first.
+/// The recently opened apps, the newest first (the Flutter shell's file: a JSON list).
 pub fn recents() -> Vec<String> {
     state_file()
         .and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|t| {
-            t.lines()
-                .map(str::to_string)
-                .filter(|l| !l.is_empty())
-                .collect()
+        .and_then(|t| serde_json::from_str::<Vec<String>>(&t).ok())
+        .map(|mut v| {
+            v.truncate(metrics::COLUMNS);
+            v
         })
         .unwrap_or_default()
 }
@@ -237,12 +236,14 @@ pub fn note_launched(id: &str) {
     let mut list = recents();
     list.retain(|l| l != id);
     list.insert(0, id.to_string());
-    list.truncate(14);
+    list.truncate(metrics::COLUMNS);
     if let Some(p) = state_file() {
         if let Some(d) = p.parent() {
             let _ = std::fs::create_dir_all(d);
         }
-        let _ = std::fs::write(p, list.join("\n"));
+        if let Ok(t) = serde_json::to_string(&list) {
+            let _ = std::fs::write(p, t);
+        }
     }
 }
 
